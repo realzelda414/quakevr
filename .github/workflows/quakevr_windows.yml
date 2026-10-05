@@ -1,0 +1,42 @@
+name: Quake VR Windows package
+on:
+  push:
+    branches: [vr-ironwail]
+  workflow_dispatch:
+
+env:
+  FTEQCC_ZIP_URL: https://fastdl.idtech.space/bin/fteqcc-win-x86_64-2026-07-13.zip
+
+jobs:
+  package:
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v7
+
+    # package-quakevr.ps1 needs FTEQCC to compile the QuakeC (progs.dat).
+    - name: Get FTEQCC
+      shell: pwsh
+      run: |
+        $dir = "${env:RUNNER_TEMP}\fteqcc"
+        mkdir $dir -Force | out-null
+        Invoke-WebRequest "${env:FTEQCC_ZIP_URL}" -OutFile "$dir\fteqcc.zip"
+        Expand-Archive "$dir\fteqcc.zip" -DestinationPath $dir -Force
+        $exe = Get-ChildItem $dir -Recurse -Filter "fteqcc*.exe" | Select-Object -First 1
+        if (-not $exe) { throw "No fteqcc*.exe found in the zip" }
+        Write-Host "Using $($exe.FullName)"
+        echo "FTEQCC=$($exe.FullName)" >> ${env:GITHUB_ENV}
+
+    # Builds ironwail.sln (Release|x64), compiles QC\ into quakevr\progs.dat,
+    # and assembles dist\QuakeVR (exe, DLLs, paks, quakevr folder, QuakeVR.bat).
+    - name: Build engine, compile QuakeC, package
+      shell: pwsh
+      run: |
+        powershell -ExecutionPolicy Bypass -File Windows\package-quakevr.ps1 -Build -Fteqcc "${env:FTEQCC}"
+        if (-not $?) { throw "Packaging failed" }
+        if (-not (Test-Path dist\QuakeVR\quakevr)) { throw "dist\QuakeVR\quakevr was not produced" }
+
+    - name: Upload package
+      uses: actions/upload-artifact@v7
+      with:
+        name: QuakeVR-win64-${{ github.sha }}
+        path: dist/QuakeVR/
