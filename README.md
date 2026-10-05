@@ -5,7 +5,7 @@
 Quake VR is a VR mod of Quake by Vittorio Romeo. You play the whole game, both mission packs included, with your
 own hands and body: a weapon in each hand, aimed with one hand or two, holstered at your hips and shoulders, thrown
 across the room or swung as a club. You walk around your room, crouch behind cover, punch, parry, headbutt, and swim
-with your arms.
+with your arms just as you would intuitively.
 
 This version runs on the [Ironwail](https://github.com/andrei-drexler/ironwail) engine (0.8.2) and talks to your
 headset through [OpenXR](https://www.khronos.org/openxr/). It is a new version of the
