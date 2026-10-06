@@ -186,6 +186,8 @@ World Types:
 
 void() worldspawn =
 {
+    vr_save_campaign = cvar("vr_campaign");
+    vr_save_packmask = 1 + VR_Pack_Hipnotic() + 2 * VR_Pack_Rogue();
     lastspawn = world;
     vr_fire_spots = 0; // QVR: the map's flames, as they spawn (vr_walltorch.qc)
 
@@ -359,24 +361,32 @@ void() worldspawn =
     //MED 10/21/96 added flies sound
     precache_sound("misc/flys.wav");
     precache_sound("misc/null.wav"); // QVR: stops the flies (VR_Head_StopFlies)
-    //MED 01/13/97 added explosion sounds
-    precache_sound("misc/shortexp.wav");
-    precache_sound("misc/longexpl.wav");
-    precache_sound("misc/foot1.wav");
-    precache_sound("misc/foot2.wav");
-    precache_sound("misc/foot3.wav");
-    precache_sound("misc/foot4.wav");
-    precache_sound("misc/foot5.wav");
-    precache_sound("misc/foot6.wav");
-    precache_sound("misc/foot7.wav");
+    if(VR_Pack_Hipnotic())
+    {
+        //MED 01/13/97 added explosion sounds
+        precache_sound("misc/shortexp.wav");
+        precache_sound("misc/longexpl.wav");
+        precache_sound("misc/foot1.wav");
+        precache_sound("misc/foot2.wav");
+        precache_sound("misc/foot3.wav");
+        precache_sound("misc/foot4.wav");
+        precache_sound("misc/foot5.wav");
+        precache_sound("misc/foot6.wav");
+        precache_sound("misc/foot7.wav");
+
+    }
 
     precache_model("progs/player.mdl");
     precache_model("progs/eyes.mdl");
     precache_model("progs/h_player.mdl");
 
-    //HIPNOTIC
-    //MED 12/03/96 added player with hammer
-    precache_model("progs/playham.mdl");
+    if(VR_Pack_Hipnotic())
+    {
+        //HIPNOTIC
+        //MED 12/03/96 added player with hammer
+        precache_model("progs/playham.mdl");
+
+    }
 
     precache_model("progs/gib1.mdl");
     precache_model("progs/gib2.mdl");
@@ -393,21 +403,29 @@ void() worldspawn =
     precache_model("progs/v_nail2.mdl");
     precache_model("progs/v_rock2.mdl");
 
-    // HIPNOTIC
-    //MED 10/31/96 added precache for hip view models
-    precache_model("progs/v_laserg.mdl");
-    precache_model("progs/v_hammer.mdl");
-    precache_model("progs/v_prox.mdl");
-    precache_model("progs/proxbomb.mdl");
+    if(VR_Pack_Hipnotic())
+    {
+        // HIPNOTIC
+        //MED 10/31/96 added precache for hip view models
+        precache_model("progs/v_laserg.mdl");
+        precache_model("progs/v_hammer.mdl");
+        precache_model("progs/v_prox.mdl");
+        precache_model("progs/proxbomb.mdl");
+
+    }
 
     precache_model("progs/bolt.mdl");        // for lightning gun
     precache_model("progs/bolt2.mdl");        // for lightning gun
     precache_model("progs/bolt3.mdl");        // for boss shock
     precache_model("progs/lavaball.mdl");    // for testing
 
-    // HIPNOTIC
-    //MED 10/18/96 added precache for laser cannon
-    precache_model("progs/lasrspik.mdl");
+    if(VR_Pack_Hipnotic())
+    {
+        // HIPNOTIC
+        //MED 10/18/96 added precache for laser cannon
+        precache_model("progs/lasrspik.mdl");
+
+    }
 
     precache_model("progs/missile.mdl");
     precache_model("progs/grenade.mdl");
@@ -428,43 +446,47 @@ void() worldspawn =
     precache_sound("forcegrab.wav");      // force grab
     precache_sound("reload1.wav");        // reload
 
-    // ROGUE
-    // PGM Addition Sounds
-    precache_sound("enforcer/enfstop.wav");    // shield impact
-    precache_sound("plasma/explode.wav");
-    precache_sound("plasma/flight.wav");
-    precache_sound("plasma/fire.wav");
-    precache_sound("shield/hit.wav");
-    precache_sound("belt/use.wav");
-    precache_sound("items/damage2.wav");
+    if(VR_Pack_Rogue())
+    {
+        // ROGUE
+        // PGM Addition Sounds
+        precache_sound("enforcer/enfstop.wav");    // shield impact
+        precache_sound("plasma/explode.wav");
+        precache_sound("plasma/flight.wav");
+        precache_sound("plasma/fire.wav");
+        precache_sound("shield/hit.wav");
+        precache_sound("belt/use.wav");
+        precache_sound("items/damage2.wav");
 
-    // ROGUE
-    // Lava Gun models - pgm change
-    precache_model("progs/v_lava.mdl");
-    precache_model("progs/v_lava2.mdl");
-    precache_model("progs/v_multi.mdl");
-    precache_model("progs/v_multi2.mdl");
+        // ROGUE
+        // Lava Gun models - pgm change
+        precache_model("progs/v_lava.mdl");
+        precache_model("progs/v_lava2.mdl");
+        precache_model("progs/v_multi.mdl");
+        precache_model("progs/v_multi2.mdl");
 
-    // ROGUE
-    // PGM addition
-    precache_model("progs/mervup.mdl");
+        // ROGUE
+        // PGM addition
+        precache_model("progs/mervup.mdl");
 
-    // ROGUE
-    precache_model("progs/rockup.mdl");
-    precache_model("progs/rockup_d.mdl");
-    precache_model("progs/lspike.mdl");
-    precache_model("progs/shield.mdl");
-    precache_model("progs/p_shield.mdl");
-    precache_model("progs/plasma.mdl");
-    precache_model("progs/v_plasma.mdl");
+        // ROGUE
+        precache_model("progs/rockup.mdl");
+        precache_model("progs/rockup_d.mdl");
+        precache_model("progs/lspike.mdl");
+        precache_model("progs/shield.mdl");
+        precache_model("progs/p_shield.mdl");
+        precache_model("progs/plasma.mdl");
+        precache_model("progs/v_plasma.mdl");
 
-    // ROGUE
-    //ZOID--
-    // hook for CTF
-    precache_model("progs/hook.mdl");
-    precache_model("progs/v_grpple.mdl");
-    //--ZOID
+        // ROGUE
+        //ZOID--
+        // hook for CTF
+        precache_model("progs/hook.mdl");
+        precache_model("progs/v_grpple.mdl");
+        //--ZOID
 
+
+    }
 
     // Setup light animation tables. 'a' is total darkness, 'z' is maxbright.
 
@@ -526,6 +548,9 @@ void() StartFrame =
     teamplay = cvar_hget(cvarh_teamplay);
     skill = cvar_hget(cvarh_skill);
     VR_CVars_Frame();
+    MG_WorldFrame();
+    MG_TestFrame();
+    MG_TriggerTestFrame();
     VR_Liquids_Frame(); // VR: monsters in slime and lava burn (vr_liquids.qc)
     VR_Wounds_Frame(); // VR: wet up to where the liquid comes (vr_wounds.qc)
     VR_Crates_Frame(); // VR: at a new map's first frame, its crates (vr_crates.qc; before the rocks and bricks: they keep clear)
@@ -533,6 +558,7 @@ void() StartFrame =
     VR_SmallGib_TestFrame(); // VR: the small gibs' tests (vr_smallgibs_test, vr_smallgibs_test.qc)
     VR_Decap_TestFrame(); // VR: decapitation's tests (vr_decap_test, vr_decap.qc)
     VR_Burn_TestFrame(); // VR: the burning tests (vr_burn_test, vr_burning.qc)
+    VR_Burn_MapFrame(); // VR: visible mapper flames burn tracked hands/body (vr_burning.qc)
     VR_Burn_NailFrame(); // VR: nails through a torch's flame become lava nails (vr_burning.qc)
     VR_Grapple_WorldFrame(); // VR: the grappling hooks whose guns lie about (vr_grapple.qc)
     VR_Throw_SelfFrame(); // VR: things you threw hurt you once vr_throw_self_grace is over (vr_carry.qc)

@@ -6,7 +6,7 @@
 // map's own models they must be precached before setmodel.
 void() VR_PrecacheOwnModel =
 {
-    if(self.model != NULLSTR && substring(self.model, 0, 1) != "*")
+    if(strlen(self.model) > 0 && substring(self.model, 0, 1) != "*")
     {
         precache_model(self.model);
     }
@@ -81,6 +81,17 @@ string vr_button_how; // what pressed the button now firing, for vr_debug_wallbu
 
 void() button_fire =
 {
+    if(self.buttonEffect == 3 &&
+        ((substring(self.targetname, 0, 26) == "vr_activestartpaknameidx 1; " && !VR_Pack_Hipnotic()) ||
+         (substring(self.targetname, 0, 26) == "vr_activestartpaknameidx 2; " && !VR_Pack_Rogue())))
+    {
+        if(self.enemy.classname == "player")
+        {
+            centerprint(self.enemy, "Mission pack unavailable. Restore its owned data; Quake is available.");
+        }
+        return;
+    }
+
     if(self.state == STATE_UP || self.state == STATE_TOP || self.state == STATE_DISABLED)
     {
         return;
@@ -94,6 +105,10 @@ void() button_fire =
     vr_button_how = NULLSTR;
     particle2(realorigin(self), '0 0 0', QVR_PARTICLE_PRESET_SPARKS, 64);
 
+    if(MG_WorldCampaign() && self.items) {
+        sound(self, CHAN_ITEM, self.noise4, 1, ATTN_NORM);
+        if(!(self.spawnflags & 32)) self.items = 0;
+    }
     sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM);
 
     self.state = STATE_UP;
@@ -133,6 +148,7 @@ void() button_touch =
         return;
     }
 
+    if(!MG_ButtonCanTouch(other)) return;
     VRButtonPressHaptic(other);
 
     self.enemy = other;
@@ -240,10 +256,11 @@ float(entity xButton) VR_Button_Pressable =
 void(entity xPlayer, float xHand, entity xButton) VR_Button_PressBy =
 {
     xPlayer.touchinghand = xHand; // the buzz's hand (VRButtonPressHaptic)
-    VRButtonPressHaptic(xPlayer);
     entity oself = self;
     self = xButton;
+    if(!MG_ButtonCanTouch(xPlayer)) { self = oself; return; }
     self.enemy = xPlayer;
+    VRButtonPressHaptic(xPlayer);
     button_fire();
     self = oself;
 };
@@ -397,6 +414,7 @@ void() button_touch_any =
     {
         who = other.carry_letgo;
     }
+    if(!MG_ButtonCanTouch(who)) return;
     vr_button_how = sprintf("%s thrown at it, %.0f u/s", other.classname, speed);
     self.enemy = who;
     button_fire();
@@ -431,6 +449,15 @@ N) code button
 */
 void() func_button =
 {
+    if(MG_MonsterInhibited()) return;
+    if(MG_WorldCampaign()) MG_ButtonInit();
+    if(self.buttonEffect == 3 &&
+       ((substring(self.targetname, 0, 26) == "vr_activestartpaknameidx 1; " && !VR_Pack_Hipnotic()) ||
+        (substring(self.targetname, 0, 26) == "vr_activestartpaknameidx 2; " && !VR_Pack_Rogue())))
+    {
+        self.worldtext = strcat(self.worldtext, "\n(unavailable)");
+    }
+
     if(self.sounds == 0)
     {
         precache_sound("buttons/airbut1.wav");
@@ -452,6 +479,7 @@ void() func_button =
         self.noise = "buttons/switch04.wav";
     }
 
+    float mgExplicitMove = MG_WorldCampaign() && self.movedir != '0 0 0';
     SetMovedir();
 
     self.movetype = MOVETYPE_PUSH;
@@ -487,17 +515,18 @@ void() func_button =
         self.lip = 4;
 
     // HONEY
-    if(self.items) {
+    if(!MG_WorldCampaign() && self.items) {
         self.flags = self.flags | FL_SPECIFICDAMAGE;
     }
 
     self.state = STATE_BOTTOM;
 
     self.pos1 = self.origin;
-    self.pos2 = self.pos1 + self.movedir*(fabs(self.movedir*self.size) - self.lip);
+    if(mgExplicitMove) self.pos2 = self.pos1 + self.movedir;
+    else self.pos2 = self.pos1 + self.movedir*(fabs(self.movedir*self.size) - self.lip);
 
     // HONEY
-    if(self.spawnflags & START_DISABLED) {
+    if(!MG_WorldCampaign() && (self.spawnflags & START_DISABLED)) {
         button_disable(self);
     }
 
@@ -743,7 +772,8 @@ void() func_enemy_dispenser_use =
 
     // Not installed: say what it needs instead.
     string mdl = VR_EnemyDispenser_Model(choice);
-    if(mdl != NULLSTR && !fileexists(mdl))
+    if((choice >= 12 && choice <= 13 && !VR_Pack_Hipnotic()) ||
+       (choice >= 14 && choice <= 19 && !VR_Pack_Rogue()) || (mdl != NULLSTR && !fileexists(mdl)))
     {
         if(activator.classname == "player")
         {
@@ -811,7 +841,8 @@ void() func_enemy_dispenser =
         // The model now, if installed (no hitch at the first press); the monster's other models and
         // its sounds are precached (late) when it first spawns.
         string mdl = VR_EnemyDispenser_Model(self.weapon);
-        if(mdl != NULLSTR && fileexists(mdl))
+        if(!(self.weapon >= 12 && self.weapon <= 13 && !VR_Pack_Hipnotic()) &&
+           !(self.weapon >= 14 && self.weapon <= 19 && !VR_Pack_Rogue()) && mdl != NULLSTR && fileexists(mdl))
         {
             precache_model(mdl);
         }

@@ -22,8 +22,10 @@
 #include "vr_protocol.hpp"
 #include "vr_ropesim.hpp"
 #include "vr_server.hpp"
+#include "vr_selfcollide.hpp"
 #include "vr_twohand.hpp"
 #include "vr_cvars.hpp"
+#include "vr_tips.hpp"
 #include "vr_worldtext.hpp"
 #include "vr_view.hpp"
 #include "vr_weapons.hpp"
@@ -392,6 +394,62 @@ void PF_floattext()
 }
 
 // ----------------------------------------------------------------------------
+// Map tips (func_vr_tip: QC/vr_tips.qc; see vr_tips.hpp)
+
+[[nodiscard]] int tipHandle()
+{
+    return static_cast<int>(G_FLOAT(OFS_PARM0));
+}
+
+void PF_vr_tip_make()
+{
+    G_FLOAT(OFS_RETURN) = static_cast<float>(tips::serverMake());
+}
+
+void PF_vr_tip_setname()
+{
+    tips::serverSetName(tipHandle(), G_STRING(OFS_PARM1));
+}
+
+void PF_vr_tip_settext()
+{
+    tips::serverSetText(tipHandle(), G_STRING(OFS_PARM1));
+}
+
+void PF_vr_tip_setpos()
+{
+    tips::serverSetPos(tipHandle(), vecParm1());
+}
+
+// void(float h, entity e) vr_tip_setentity: the tip follows that entity (the client follows it live). The world: a
+// fixed point in the map (the client is told -1).
+void PF_vr_tip_setentity()
+{
+    const int num = NUM_FOR_EDICT(G_EDICT(OFS_PARM1));
+    tips::serverSetEntity(tipHandle(), num > 0 ? num : -1);
+}
+
+void PF_vr_tip_setdistance()
+{
+    tips::serverSetDistance(tipHandle(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_vr_tip_setsize()
+{
+    tips::serverSetSize(tipHandle(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_vr_tip_setdelay()
+{
+    tips::serverSetDelay(tipHandle(), G_FLOAT(OFS_PARM1));
+}
+
+void PF_vr_tip_setflags()
+{
+    tips::serverSetFlags(tipHandle(), static_cast<int>(G_FLOAT(OFS_PARM1)));
+}
+
+// ----------------------------------------------------------------------------
 // Files
 
 // float(string path) fileexists: whether a file is in the game's search path. Precaching a missing
@@ -530,6 +588,34 @@ void PF_torchflametouch()
         {
             pr_global_struct->trace_endpos[i] = at[i];
             pr_global_struct->trace_plane_normal[i] = out[i];
+        }
+    }
+}
+
+// A visible map flame capsule against the local tracked body, using the held torch contact shapes.
+void PF_mapflametouch()
+{
+    G_FLOAT(OFS_RETURN) = 0.f;
+    if(NUM_FOR_EDICT(G_EDICT(OFS_PARM0)) != cl.viewentity || cls.state != ca_connected)
+    {
+        return;
+    }
+    selfcollide::keepShapes();
+    if(G_FLOAT(OFS_PARM3) < 0.f)
+    {
+        return; // request shapes between the QC contact polls, even when the body solve is off
+    }
+    const float* a = G_VECTOR(OFS_PARM1);
+    const float* b = G_VECTOR(OFS_PARM2);
+    const auto t = selfcollide::flameTouch(glm::vec3{a[0], a[1], a[2]}, glm::vec3{b[0], b[1], b[2]},
+        za::max(0.f, G_FLOAT(OFS_PARM3)), -1, static_cast<unsigned>(G_FLOAT(OFS_PARM4)) & 63);
+    G_FLOAT(OFS_RETURN) = static_cast<float>(t.parts | (t.deepest << 8));
+    if(t.parts)
+    {
+        for(int i = 0; i < 3; i++)
+        {
+            pr_global_struct->trace_endpos[i] = t.at[i];
+            pr_global_struct->trace_plane_normal[i] = t.out[i];
         }
     }
 }
@@ -1788,6 +1874,15 @@ constexpr VrBuiltin vrBuiltins[] = {
     {"carry2hoff", PF_carry2hoff},
     {"carry2hkeep", PF_carry2hkeep},
     {"floattext", PF_floattext},
+    {"vr_tip_make", PF_vr_tip_make},
+    {"vr_tip_setname", PF_vr_tip_setname},
+    {"vr_tip_settext", PF_vr_tip_settext},
+    {"vr_tip_setpos", PF_vr_tip_setpos},
+    {"vr_tip_setentity", PF_vr_tip_setentity},
+    {"vr_tip_setdistance", PF_vr_tip_setdistance},
+    {"vr_tip_setsize", PF_vr_tip_setsize},
+    {"vr_tip_setdelay", PF_vr_tip_setdelay},
+    {"vr_tip_setflags", PF_vr_tip_setflags},
     {"ejectcasings", PF_ejectcasings},
     {"weaponfired", PF_weaponfired},
     {"tracer", PF_tracer},
@@ -1812,6 +1907,7 @@ constexpr VrBuiltin vrBuiltins[] = {
     {"hitmodel_rest", PF_hitmodel_rest},
     {"debughitzone", PF_debughitzone},
     {"torchflametouch", PF_torchflametouch},
+    {"mapflametouch", PF_mapflametouch},
     {"anglemod", PF_anglemod},
     {"meleerun", PF_meleerun},
     {"meleewristspeed", PF_meleewristspeed},
@@ -1912,6 +2008,7 @@ void resetBuiltinState()
     cvarHandles.clear();
     woundsSent.clear();
     worldtext::serverReset();
+    tips::serverReset();
 }
 
 } // namespace qvr::progs

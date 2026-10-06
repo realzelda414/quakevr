@@ -301,6 +301,7 @@ QVR_CVAR(vr_window_zoom, "1.2", CVAR_ARCHIVE)         // smoothed mirror: 1 the 
 QVR_CVAR(vr_spectator_fov, "90", CVAR_ARCHIVE)        // spectator camera: horizontal field of view, degrees (40 .. 160; the slider 60 .. 150)
 QVR_CVAR(vr_spectator_scale, "0.75", CVAR_ARCHIVE)    // spectator camera: its resolution, times the window's (0.25 .. 2)
 QVR_CVAR(vr_spectator_rate, "60", CVAR_ARCHIVE)        // spectator camera: drawn every frame (1), every 2nd or 3rd (2, 3), or at most this many times a second (more than 3); the window shows the last between
+QVR_CVAR(vr_spectator_bullettime_fx, "1", CVAR_ARCHIVE) // 1: bullet time's colour, tint and darkened edges in the spectator camera; 0: its normal look (headset unchanged)
 QVR_CVAR(vr_spectator_aa, "1", CVAR_ARCHIVE)           // spectator camera: 1 the window's MSAA (vid_fsaa), as the eyes; 0 none
 QVR_CVAR(vr_spectator_pos_smooth, "0.05", CVAR_ARCHIVE) // spectator camera: seconds, the steadied position's lag (0 none .. 0.3)
 // Slow motion (vr_timescale.cpp; ROUND21.md, "Slow motion"): the whole simulation slowed (the server, the client's time,
@@ -325,7 +326,7 @@ QVR_CVAR(vr_bullettime_recharge, "20", CVAR_ARCHIVE)   // real seconds the meter
 QVR_CVAR(vr_bullettime_cooldown, "2", CVAR_ARCHIVE)    // real seconds after it ends before it can start again (the meter waits too)
 QVR_CVAR(vr_bullettime_min, "0.25", CVAR_ARCHIVE)      // the least meter it starts with (0.01 .. 1)
 QVR_CVAR(vr_bullettime_sandevistan, "0", CVAR_ARCHIVE) // 1: while it runs, the player runs in its own time (as vr_sandevistan)
-QVR_CVAR(vr_bullettime_fx, "1", CVAR_ARCHIVE)          // its look's strength in the eyes (0 off .. 1); never for the recording's vr_timescale
+QVR_CVAR(vr_bullettime_fx, "1", CVAR_ARCHIVE)          // its look's strength (0 off .. 1; spectator: vr_spectator_bullettime_fx); never for the recording's vr_timescale
 QVR_CVAR(vr_bullettime_fx_desat, "0.7", CVAR_ARCHIVE)  // ... how much of the colour it takes out (0 .. 1)
 QVR_CVAR(vr_bullettime_fx_vignette, "0.5", CVAR_ARCHIVE) // ... how dark the view's edges (0 .. 1)
 QVR_CVAR(vr_bullettime_fx_tint, "0.85 0.95 1.15", CVAR_ARCHIVE) // ... the colour it multiplies by (red green blue)
@@ -487,6 +488,7 @@ QVR_CVAR(vr_sbar_offset_yaw, "1.6", CVAR_ARCHIVE)
 QVR_CVAR(vr_sbar_offset_roll, "-0.3", CVAR_ARCHIVE)
 QVR_CVAR(vr_height_calibration, "1.646099", CVAR_ARCHIVE)
 QVR_CVAR(vr_menu_distance, "80", CVAR_ARCHIVE)
+QVR_CVAR(vr_menu_status, "1", CVAR_ARCHIVE)            // a status box in the menus' top right corner (vr_menuui.cpp): VR / mock / flat, the runtime, the resolution rendered, the target rate, fps, CPU/GPU ms, RAM/VRAM
 QVR_CVAR(vr_menu_vr_style, "1", CVAR_ARCHIVE)          // menus made for the headset (vr_menuui.cpp): filling the panel, rows spaced out, modern sliders and switches, a laser pointer
 QVR_CVAR(vr_menu_laser_hue, "-1", CVAR_ARCHIVE)        // that laser's colour: hue (degrees; 35 amber; -1 vr_player_hue)
 QVR_CVAR(vr_menu_bigfont, "1", CVAR_ARCHIVE)          // the main menu's rows as text in Quake's own lettering (vr_bigfont.cpp; 0: Quake's picture, VR Calibration above it in the console's letters)
@@ -706,7 +708,7 @@ QVR_CVAR(vr_burn_flame_tilt, "12", CVAR_ARCHIVE)         // degrees the other fl
 QVR_CVAR(vr_burn_corpses, "1", CVAR_ARCHIVE)             // 1: corpses catch fire too (Gibs and Corpses' corpses), and a monster dying burning burns on
 QVR_CVAR(vr_burn_corpse_time, "8", CVAR_ARCHIVE)         // s a corpse burns
 QVR_CVAR(vr_burn_corpse_damage, "0", CVAR_ARCHIVE)       // a burning corpse's damage, times a monster's (it gibs at its corpse health; 0: it just burns)
-QVR_CVAR(vr_burn_touch, "1", CVAR_ARCHIVE)               // 1: a lit torch (held, thrown or lying) touching a monster or a corpse sets it on fire, no blow needed
+QVR_CVAR(vr_burn_touch, "1", CVAR_ARCHIVE)               // 1: lit torch touch ignites monsters/corpses; mapper flames touching your body use the same burn
 QVR_CVAR(vr_burn_lava_nails, "1", CVAR_ARCHIVE)          // 1: your lava nails (the nailguns' lava ammo) set what they hit on fire
 QVR_CVAR(vr_burn_crates, "1", CVAR_ARCHIVE)              // 1: wooden crates catch fire (a torch's blow or touch, a lava nail, a burning crate touching them)
 QVR_CVAR(vr_burn_crate_time, "10", CVAR_ARCHIVE)         // s a crate burns before it breaks (vr_burn_crate_break) or goes out
@@ -724,7 +726,7 @@ QVR_CVAR(vr_burn_piece_flame_size, "0.7", CVAR_ARCHIVE)  // a piece's flames' si
 QVR_CVAR(vr_burn_nail_convert, "1", CVAR_ARCHIVE)        // 1: a nail passing through a lit torch's flame (held, thrown, lying, on its wall) becomes a lava nail
 QVR_CVAR(vr_burn_nail_reach, "10", CVAR_ARCHIVE)         // units from a torch's flame a nail must pass to catch fire
 QVR_CVAR(vr_burn_nail_sound, "0.5", CVAR_ARCHIVE)        // the volume of the short fizz a nail makes catching fire in a torch's flame (0: none)
-QVR_CVAR(vr_burn_self, "0", CVAR_ARCHIVE)                // 1: the flame of the torch you hold, kept on your other hand, an arm or your body (the body's collision shapes), sets you on fire after vr_burn_self_time
+QVR_CVAR(vr_burn_self, "0", CVAR_ARCHIVE)                // 1: your held torch burns you after vr_burn_self_time; mapper flames use the same hand/arm warnings and delay
 QVR_CVAR(vr_burn_self_time, "0.6", CVAR_ARCHIVE)         // s a held torch's flame must stay on you before you catch fire (haptic warnings till then)
 QVR_CVAR(vr_burn_self_haptic, "1", CVAR_ARCHIVE)         // the warnings' strength (the hand buzzing as the flame stays on you; 0: none)
 QVR_CVAR(vr_burn_drop, "0", CVAR_ARCHIVE)                // 1: a torch held upside down whose flame stays on the hand holding it for vr_burn_drop_time is dropped (a burn on the hand)
@@ -2187,3 +2189,21 @@ QVR_CVAR(vr_prop_query_verify, "0", CVAR_NONE)
 QVR_CVAR(vr_maps_fetch, "1", CVAR_ARCHIVE)              // the index is fetched at start-up (0: never; a cached copy is still read). -nomapindex turns it off for one run
 QVR_CVAR(vr_maps_index_url, "https://www.quaddicted.com/api/v1/", CVAR_ARCHIVE) // where the index comes from (a paged API: ?q=*:*&rows=200&start=N). Another URL re-fetches: a cached copy of a different one is not used
 QVR_CVAR(vr_maps_allow_progs, "0", CVAR_ARCHIVE)       // packages that carry their own progs.dat: 0 left out of the list (they replace the game's code), 1 included. They are in the index either way (maps_info shows them; maps_stats counts them)
+
+// Mission-pack installation state, derived from the owned data (vr_gamedir.cpp).
+QVR_CVAR(vr_hipnotic_available, "0", CVAR_ROM)
+QVR_CVAR(vr_rogue_available, "0", CVAR_ROM)
+QVR_CVAR(vr_hipnotic_status, "0", CVAR_ROM)
+QVR_CVAR(vr_rogue_status, "0", CVAR_ROM)
+
+// Official native campaign ABI: id1, hipnotic, rogue, dopa, mg1, mg3 (0..5).
+QVR_CVAR(vr_campaign, "0", CVAR_ROM)
+QVR_CVAR(vr_campaign_schema, "0", CVAR_ROM)
+QVR_CVAR(vr_dopa_status, "0", CVAR_ROM)
+QVR_CVAR(vr_mg1_status, "0", CVAR_ROM)
+QVR_CVAR(vr_mg3_status, "0", CVAR_ROM)
+QVR_CVAR(vr_honey_context, "0", CVAR_ROM) // actual start map source is Honey, never inferred from its name
+
+QVR_CVAR(vr_mg_world_test, "0", CVAR_NONE) // Debug > Tests: 1 report authored native fog; 2 environment acceptance with a destructive e5m1 barrel test
+
+QVR_CVAR(vr_mg_trigger_test, "0", CVAR_NONE) // Debug > Tests: 1 shared triggers, 2 authored mge5m2 route, 3 lightning damage, 4 slipgate retarget

@@ -625,17 +625,32 @@ char reviewListHeader[64];
 
 // The old Single Player and Bot Control menus' extras.
 void playCalibration() { Cbuf_AddText("vr_setup\n"); }
-void playHub() { Cbuf_AddText("map vrstart\n"); }
+void playHub() { Cbuf_AddText("vr_campaign_hub\n"); }
 void playTutorial() { Cbuf_AddText("map vrtutorial\n"); }
 void playFiringRange() { Cbuf_AddText("map vrfiringrange\n"); }
 void addBotTeam0() { Cbuf_AddText("impulse 100\n"); }
 void addBotTeam1() { Cbuf_AddText("impulse 101\n"); }
 void kickBot() { Cbuf_AddText("impulse 102\n"); }
 
+[[nodiscard]] za::Vector<Item> pageCampaigns()
+{
+    za::Vector<Item> items{header("Official Campaigns")};
+    for(int i = 0; i < 6; ++i)
+    {
+        Item choice = row(VR_CampaignLabel, VR_CampaignHelp, VR_SelectCampaign, i, -1);
+        choice.dimArg = [](int index) -> bool { return VR_CampaignUnavailable(index) != 0; };
+        items.pushBack(choice);
+    }
+    items.pushBack(command("Campaign Data Status", "vr_campaign_status"));
+    items.pushBack(action("Return to VR Hub", playHub));
+    return items;
+}
+
 [[nodiscard]] za::Vector<Item> pagePlay()
 {
     return {
         header("Maps"),
+        open("Official Campaigns", pageIndex(pageCampaigns)),
         action("VR Calibration", playCalibration)
             .help("The calibration room: height, body and main hand calibrated as you arrive; buttons for the main options."),
         action("VR Hub", playHub),
@@ -2150,6 +2165,9 @@ void hologramTestMessage()
         command("Show the Torch Tip Now", "vr_tips_test walltorch")
             .help("The wall torch tip on the nearest wall torch in view, as soon as you close the menu (however far; it is "
                   "not counted as shown): to try the two ways and these settings."),
+        command("List This Map's Tips", "vr_tips_test list")
+            .help("Names every tip available here: the built-in ones and this map's func_vr_tip placed by hand. "
+                  "vr_tips_test <name> shows one of them now, however far, to try it."),
         open("Wrist Gadget Messages", pageIndex(pageScreens)).help("The hologram's size, height and look (HUD and Menus > Screens)."),
     };
 }
@@ -2697,6 +2715,7 @@ void hologramTestMessage()
         header("What Sets Things on Fire"),
         toggle("Torch Touch", vr_burn_touch)
             .help("A lit torch, held or thrown, sets a monster or a corpse on fire just by touching it: no blow needed. "
+                  "Mapper flames touching your body burn you in the same way as a dropped lit torch. "
                   "Off: a lit torch's blow, or one thrown into it."),
         toggle("Lava Nails", vr_burn_lava_nails)
             .help("Your lava nails (the nailgun's and super nailgun's lava ammo) set what they hit on fire."),
@@ -2762,7 +2781,8 @@ void hologramTestMessage()
         toggle("Its Flame Burns You", vr_burn_self)
             .help("The flame of the torch you hold, kept on your other hand, an arm, your body or your head, sets you on fire "
                   "there after a moment (Catch Fire After), as it does a monster: flames on you, burns on your skin, Burn "
-                  "Damage. Till then the hand buzzes, harder as it comes."),
+                  "Damage. Till then the hand buzzes, harder as it comes. Mapper flames touching your hands or arms use "
+                  "the same warning and delay."),
         slider("Catch Fire After", vr_burn_self_time, 0.f, 3.f, 0.1f, "%.1f s").extend(0.f, 10.f)
             .help("How long the flame must stay on you before you catch fire (off it, it eases back twice as fast)."),
         slider("Warning Buzz", vr_burn_self_haptic, 0.f, 2.f, 0.1f, "%.1fx")
@@ -3910,6 +3930,11 @@ za::Vector<Item> pageDebugReports()
 {
     return {
         header("The Game"),
+        command("Official Campaign Status", "vr_campaign_status").help("Owned data and language readiness; active native campaign context."),
+        command("Dopa Finale Text", "loc_probe $map_dopa_endtext_final").help("Preview the resolved completion text. loc_probe <key> [arguments] also checks formatted expansion strings."),
+        command("Campaign File Sources", "vr_campaign_probe").help("Actual resolved sources for VR progs and colliding official maps; vr_campaign_probe <filename> checks any virtual file."),
+        command("Mission Pack Status", "vr_pack_status")
+            .help("Prints whether Hipnotic and Rogue are available, missing or incomplete/corrupt. Both are optional for the Quake campaign."),
         command("Headset", "vr_status").help("vr_status: the backend, the eyes' sizes, the hidden area, the head's and hands' poses."),
         command("Player", "vr_dumpplayer").help("vr_dumpplayer [client]: a player's VR fields in the game (hands, weapons, hotspots)."),
         command("View", "vr_dumpview").help("vr_dumpview: the hands, grips, palms, fingers and every entity drawn in the view (long)."),
@@ -4186,6 +4211,26 @@ za::Vector<Item> pageSpawnWeapons()
 za::Vector<Item> pageDebugTests()
 {
     return {
+        command("Official Triggers: Acceptance Test", "vr_mg_trigger_test 1")
+            .help("Check native target timing, cancellation, lightning, fades and comfortable quake feedback. Reload afterward."),
+        command("Official Triggers: Retarget Slipgate", "vr_mg_trigger_test 4")
+            .help("Destructive: redirect a visible native slipgate and report the new cached destination. Reload afterward."),
+        command("Official Triggers: Lightning Damage", "vr_mg_trigger_test 3")
+            .help("Check native positional lightning damage, backwards traces and wetsuit protection in a clear corridor."),
+        command("Machine: mge5m2 Trigger Route", "vr_mg_trigger_test 2")
+            .help("Destructive authored rune puzzle and quake sequence on mge5m2. Uses real buttons and engine movement. Reload afterward."),
+        command("Official World: Fog Report", "vr_mg_world_test 1")
+            .help("Print the native campaign's authored world and player fog values."),
+        command("Official World: Environment Test", "vr_mg_world_test 2")
+            .help("Check native movement/fog and explode a test barrel on e5m1. Developer campaign only; reload the map afterward."),
+        command("Official Monsters: Activation Test", "vr_mg_world_test 3")
+            .help("Check triggered official monsters, counts and campaign flag isolation. Reload afterward."),
+        command("Official Campaign: Progress Report", "vr_mg_world_test 4")
+            .help("Print monster counts and both hands' persistent weapon magazines/ids."),
+        command("Dopa: Ordinary Health Pickup", "vr_mg_world_test 11")
+            .help("Destructive acceptance: set health40 and use a real health box; report the cap. Reload afterward."),
+        command("Dopa: Megahealth Carry Setup", "vr_mg_world_test 12")
+            .help("Destructive acceptance: use ordinary and megahealth boxes to check save and level carry. Reload afterward."),
         open("Spawn Pickup Weapons", pageIndex(pageSpawnWeapons))
             .help("Spawn a physical pickup ahead of you, ready to grab and use."),
         header("Physics Stress"),
@@ -5148,6 +5193,7 @@ const Page pages[] = {
     {"Fire Particles", pageFireParticles, pageParticleSettings},
     {"Spawn Pickup Weapons", pageSpawnWeapons, pageDebugTests, LevelDeveloper},
     {"Map Library", pageMaps, pageMain, LevelStandard}, // (the corner's Maps, and Single Player > Map Library; vr_menu_maps.inc)
+    {"Official Campaigns", pageCampaigns, pageMain, LevelStandard},
 };
 constexpr int pageCount = static_cast<int>(sizeof(pages) / sizeof(pages[0]));
 
@@ -5305,6 +5351,7 @@ void openSearchRow()
 za::Vector<Item> pageMain()
 {
     return {
+        open("Official Campaigns", pageIndex(pageCampaigns)).help("Choose an owned campaign; installed data and native gameplay readiness are shown separately."),
         action("Search Settings", openSearchRow)
             .help("Find any setting by its name or what it does: type, and pick one to go to it (also the corner's Search "
                   "button in the headset)."),
@@ -8246,6 +8293,12 @@ extern "C" void VR_Menu_Open()
 }
 
 // Single Player > Map Library (menu.c): the map browser page, from Quake's own menu.
+extern "C" void VR_OpenCampaignSelector()
+{
+    VR_Menu_Open();
+    openInTree(pageIndex(pageCampaigns));
+}
+
 extern "C" void VR_OpenMapLibrary()
 {
     qvr::menu::openMaps();

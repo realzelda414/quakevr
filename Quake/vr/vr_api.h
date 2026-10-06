@@ -137,6 +137,12 @@ void VR_BeforeAddGameDirectory (const char *dir);	// start of COM_AddGameDirecto
 void VR_AfterAddGameDirectory (const char *dir);	// end of COM_AddGameDirectory
 void VR_OnGameDirChanged (void);	// COM_SwitchGame, after Mod_ResetAll and the renderer's reload: caches of models and game files emptied
 int VR_SkipSearchPath (const char *filename, const char *path);	// COM_FindFile: nonzero to skip a search path
+void COM_AddAddonPath (const char *path);
+void VR_ReloadVRGameKeepCampaign (void);	// vr_gamedir.cpp: the game folders rebuilt, the selected campaign kept
+int VR_QuakeVRMounted (void);	// vr_gamedir.cpp: quakevr is on the search path	// common.c: a map package's folder on top of the search path (vr_mapinstall.cpp)
+int VR_AddonForMapCommand (const char *map);	// Host_Map_f: the map package the map is played from made the active one (0: refused)
+void VR_AddonForSave (const char *savepath, const char *map);	// Host_Loadgame_f: the save's map package made the active one
+void VR_AddonOnSave (const char *savepath);	// Host_Savegame_f: the active map package noted beside the save
 const char *VR_ModelFile (const char *name);	// Mod_LoadModel, Mod_LoadLighting: the file to load a model from (relit maps)
 int VR_ModelReplacementOk (const char *name, const char *md5mesh);	// loadMd5Replacement: 0 refuses a jointed hand the rig can't use (vr_handrig.cpp)
 void VR_AliasPosesLoaded (const char *name, void *aliashdr, const stvert_t *stverts, const dtriangle_t *tris, trivertx_t **poses); // Mod_LoadAliasModel, after the frames
@@ -147,6 +153,7 @@ void VR_OnSpawnServerBeforeLoad (void);	// SV_SpawnServer, before ED_LoadFromFil
 void VR_OnEntitySpawned (edict_t *ent);	// ED_LoadFromFile, after an entity's spawn function ran
 void VR_OnSpawnServerSpawned (void);		// SV_SpawnServer, after ED_LoadFromFile (before the settling frames)
 void VR_OnClearMemory (void);			// Host_ClearMemory, before the hunk (edicts, cl_entities, models) is freed: every pointer into it forgotten
+void VR_MonsterFell (edict_t *ent, float speed);	// SV_Physics_Step, a walking monster landed at `speed` (QC VR_Monster_Fall)
 void VR_OnEdictFree (edict_t *ed);	// ED_Free (any VM's)
 void VR_OnSpawnServerAfterLoad (void);	// SV_SpawnServer, after serverinfo is sent
 void VR_OnBeginLoadGame (void);			// Host_Loadgame_f, before SV_SpawnServer
@@ -318,6 +325,7 @@ int VR_MenuDrawTextBox (int x, int y, int width, int lines); // M_DrawTextBox: a
 int VR_MenuDrawHighlight (int cx, int cy);				// M_DrawArrowCursor: the selected row's highlight; nonzero: no cursor (the corner's buttons have the selection)
 // The corner's buttons (vr_menuui.cpp): "Back to game" closing the menu from any page, which reopens
 // there; "Advanced VR" and "Levels" jumping to those from any page.
+void VR_MenuDrawStatus (void);							// M_Draw, last: the status box (vr_menu_status) in the top right corner
 void VR_MenuDrawOverlay (void);							// M_Draw, after the menu: the buttons
 int VR_MenuHidesPlaque (void);							// M_DrawTransPic: the options pages' vertical Quake plaque left out (the VR menu style)
 int VR_MenuKey (int key, int repeat);					// M_Keydown: nonzero if the buttons took the key (a click on one, the sticks' selection on them)
@@ -369,8 +377,31 @@ enum { VR_SNDBENCH_PAINT = 3, VR_SNDBENCH_QUAKE = 12, VR_SNDBENCH_FILTERS = 13 }
 
 int VR_PortalReachMove(struct edict_s* player, const float* start, const float* mins, const float* maxs, const float* end, int type, trace_t* trace);
 
+void VR_RegisterPackStatus(void);
+int VR_CanLoadCampaignMap(const char *map);
+int VR_CanChangeCampaignMap(const char *map);
+int VR_CanLoadCampaignSave(const char *text);
+
+// Official campaign context and read-only source roots.
+const char *VR_GameDirectoryRoot(const char *dir, int index);
+void VR_PrepareCampaignDirectories(const char *paths);
+void VR_InitCampaignDirectories(void);
+char *VR_LoadOwnedLocalization(const char *file);
+int VR_IsNativeCampaignLaunch(void);
+int VR_IsNewCampaignDirectory(const char *dir);
+int VR_ShouldMountCampaignDirectory(const char *dir);
+int VR_HasNativeCampaignDirectory(const char *paths);
+int VR_CampaignDataAvailable(const char *dir);
+void VR_OpenCampaignSelector(void);
+const char *VR_CampaignLabel(int index);
+const char *VR_CampaignHelp(int index);
+void VR_SelectCampaign(int index);
+int VR_CampaignUnavailable(int index);
+
 #ifdef __cplusplus
 }
 #endif
+
+
 
 #endif // QVR_VR_API_H

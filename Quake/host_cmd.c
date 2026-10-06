@@ -600,6 +600,11 @@ qboolean Download (const char *url, download_t *download)
 	curl_easy_setopt (curl, CURLOPT_ACCEPT_ENCODING, "");
 	curl_easy_setopt (curl, CURLOPT_FOLLOWLOCATION, 1L);
 	curl_easy_setopt (curl, CURLOPT_MAXREDIRS, 50L);
+	// QVR: a server that never answers, or a transfer that stalls, ends the download rather than holding its thread
+	// (and its caller's one-job-at-a-time state) for good: 20 s to connect, under 1 byte/s for 30 s is a stall.
+	curl_easy_setopt (curl, CURLOPT_CONNECTTIMEOUT, 20L);
+	curl_easy_setopt (curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+	curl_easy_setopt (curl, CURLOPT_LOW_SPEED_TIME, 30L);
 	//curl_easy_setopt (curl, CURLOPT_VERBOSE, 1L);
 
 	mc = curl_multi_add_handle (multi_handle, curl);
@@ -621,6 +626,20 @@ qboolean Download (const char *url, download_t *download)
 		if (download->abort && SDL_AtomicGet (download->abort))
 			break;
 	} while (still_running);
+
+	if (download->abort && SDL_AtomicGet (download->abort) && !download->error)
+		download->error = "cancelled"; // QVR
+
+	if (mc == CURLM_OK && !download->error)
+	{
+		// QVR: the transfer's own result (a timeout, a refused connection, a TLS failure: the multi API's calls all
+		// succeed then, and the response code is 0).
+		CURLMsg	*msg;
+		int		left = 0;
+		while ((msg = curl_multi_info_read (multi_handle, &left)) != NULL)
+			if (msg->msg == CURLMSG_DONE && msg->easy_handle == curl && msg->data.result != CURLE_OK)
+				download->error = curl_easy_strerror (msg->data.result);
+	}
 
 	if (mc == CURLM_OK)
 	{
@@ -1964,6 +1983,11 @@ static void Host_Map_f (void)
 	if (cmd_source != src_command)
 		return;
 
+	if (!VR_AddonForMapCommand(Cmd_Argv(1))) // QVR: a map package's folder mounted, or the stock game's again
+		return;
+	if (!VR_CanLoadCampaignMap(Cmd_Argv(1)))
+		return;
+
 	VR_OnFreshStart (); // QVR
 	cls.demonum = -1;		// stop demo loop in case this fails
 
@@ -2095,6 +2119,8 @@ static void Host_Changelevel_f (void)
 		return;
 	}
 
+	if (!VR_CanChangeCampaignMap(Cmd_Argv(1)))
+		return;
 	//johnfitz -- check for client having map before anything else
 	q_snprintf (level, sizeof(level), "maps/%s.bsp", Cmd_Argv(1));
 	if (!COM_FileExists(level, NULL))
@@ -2423,6 +2449,7 @@ static void Host_Savegame_f (void)
 	q_strlcpy (relname, Cmd_Argv(1), sizeof(relname));
 	COM_AddExtension (relname, ".sav", sizeof(relname));
 	q_snprintf (name, sizeof(name), "%s/%s", com_gamedir, relname);
+	VR_AddonOnSave (name); // QVR: <save>.addon names the map package it was made in
 
 	// second argument, if present, indicates whether or not text should be printed to the notification area
 	skipnotify = (Cmd_Argc () < 3 || atof (Cmd_Argv (2))) ? "" : "[skipnotify]";
@@ -2561,6 +2588,14 @@ static void Host_Loadgame_f (void)
 		return;
 	}
 
+	if (!VR_CanLoadCampaignSave(start))
+    {
+        VR_HeapFree(start);
+        start = NULL;
+        SCR_EndLoadingPlaque();
+        return;
+    }
+
 	data = start;
 	data = COM_ParseIntNewline (data, &version);
 	if (version == SAVEGAME_VERSION_KEX)
@@ -2605,6 +2640,7 @@ static void Host_Loadgame_f (void)
 	data = COM_ParseStringNewline (data);
 	q_strlcpy (mapname, com_token, sizeof(mapname));
 	data = COM_ParseFloatNewline (data, &time);
+	VR_AddonForSave (name, mapname); // QVR: the map package the save was made in, mounted (before the disconnect below)
 
 // Note: calling CL_Disconnect instead of CL_Disconnect_f to avoid stopping the music
 	CL_Disconnect ();
@@ -3154,6 +3190,22 @@ static void Host_Spawn_f (void)
 // and it won't happen if the game was just loaded, so you wind up
 // with a permanent head tilt
 	ent = EDICT_NUM( 1 + (host_client - svs.clients) );
+	// Native official fog is applied by spawnpoint/trigger QC and saved on the player. Spawn QC's reliable
+	// messages were cleared above; copy its resulting state here for new clients and completed save loads.
+	if (Cvar_VariableValue("vr_campaign") >= 3 && Cvar_VariableValue("vr_campaign") <= 5)
+	{
+		eval_t *valid = GetEdictFieldValueByName(ent, "MG_fog_valid");
+		eval_t *density = GetEdictFieldValueByName(ent, "fog_density");
+		eval_t *color = GetEdictFieldValueByName(ent, "fog_color");
+		if (valid && valid->_float && density && color)
+		{
+			MSG_WriteByte (&host_client->message, svc_fog);
+			MSG_WriteByte (&host_client->message, (int)(CLAMP(0.f, density->_float, 1.f) * 255.f + 0.5f));
+			for (i = 0; i < 3; ++i)
+				MSG_WriteByte (&host_client->message, (int)(CLAMP(0.f, color->vector[i], 1.f) * 255.f + 0.5f));
+			MSG_WriteShort (&host_client->message, 0);
+		}
+	}
 	MSG_WriteByte (&host_client->message, svc_setangle);
 	for (i = 0; i < 2; i++)
 		if (sv.loadgame)

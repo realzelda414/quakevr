@@ -22,6 +22,8 @@ enum MapsButton
     MapButtonSort,
     MapButtonType,
     MapButtonSize,
+    MapButtonRating,
+    MapButtonInstalled,
     MapButtonAction,
     MapButtonCount
 };
@@ -34,13 +36,35 @@ struct MapsSortChoice
     bool newestFirst;
 };
 constexpr MapsSortChoice mapsSorts[] = {
+    {"by rating", mapindex::Sort::Rating, true},
     {"newest", mapindex::Sort::Date, true},
     {"oldest", mapindex::Sort::Date, false},
     {"largest", mapindex::Sort::Bytes, true},
     {"smallest", mapindex::Sort::Bytes, false},
-    {"title", mapindex::Sort::Title, true},
+    {"by title", mapindex::Sort::Title, true},
 };
 constexpr int mapsSortCount = static_cast<int>(sizeof(mapsSorts) / sizeof(mapsSorts[0]));
+
+// The minimum community ratings the Rating button cycles (Entry::score, x100; 0: any, the unrated included).
+struct MapsRatingChoice
+{
+    const char* label;
+    int min;
+};
+constexpr MapsRatingChoice mapsRatings[] = {
+    {"any rating", 0}, {"rated 3+", 300}, {"rated 3.5+", 350}, {"rated 4+", 400}, {"rated 4.5+", 450}};
+constexpr int mapsRatingCount = static_cast<int>(sizeof(mapsRatings) / sizeof(mapsRatings[0]));
+
+// What the Installed button cycles: every package, only the ones installed from here (maps_installed.txt), or only
+// the ones not installed yet.
+enum MapsShown
+{
+    MapsShowAll,
+    MapsShowInstalled,
+    MapsShowNotInstalled,
+    MapsShowCount
+};
+constexpr const char* mapsShownLabels[MapsShowCount] = {"all maps", "installed", "to install"};
 
 // A filter choice read from the index (a type or a map_size a package carries, and how many do).
 struct MapsFacet
@@ -53,7 +77,9 @@ struct MapsFacet
 struct MapsPage
 {
     za::String query;
-    int sort{0};
+    int sort{1}; // newest
+    int rating{0}; // mapsRatings
+    int shown{MapsShowAll}; // MapsShown
     za::Vector<MapsFacet> typeFacets, sizeFacets;
     int typeIdx{0}, sizeIdx{0}; // 0: any; n > 0: facets[n - 1]
     za::I64 facetsAt{-1};       // index().fetchedAt the facets were read from
@@ -61,7 +87,7 @@ struct MapsPage
     za::Vector<const mapindex::Entry*> results;
     za::String sigQuery;
     za::String sigType, sigSize;
-    int sigSort{-1}, sigTypeIdx{-1}, sigSizeIdx{-1};
+    int sigSort{-1}, sigTypeIdx{-1}, sigSizeIdx{-1}, sigRating{-1}, sigShown{-1};
     int sigProgs{-1};
     za::I64 sigFetched{-1};
     int sigInstalled{-1};
@@ -71,10 +97,13 @@ struct MapsPage
     int resultScroll{0};
     int hoverKey{-1}, hoverResult{-1}, hoverButton{-1};  // under the laser
     int focusKey{-1}, focusResult{-1}, focusButton{-1};  // the sticks' selection
+    // The package picked (a click on its row, or the sticks on it): the detail and Install / Play are its until another
+    // is picked, wherever the mouse or the selection goes then (to the button). Kept by its sha256 (the list is built
+    // again as the text or a filter changes, the index itself when it is fetched again), its row found again then.
+    za::String pickedSha;
+    int picked{-1};
     int visibleResults{1};
 
-    za::String status; // the last job's line, shown until the next one
-    int lastPhase{-1};
 
     // measured (maps_page_stats)
     int searchRuns{0};
@@ -169,11 +198,27 @@ void mapsRunSearch()
     {
         q.mapSize = mapPage.sizeFacets[mapPage.sizeIdx - 1].value;
     }
-    q.allowProgs = vr_maps_allow_progs.value != 0.f;
+    // (the installed ones listed whatever vr_maps_allow_progs says: they are there already)
+    q.allowProgs = vr_maps_allow_progs.value != 0.f || mapPage.shown == MapsShowInstalled;
     q.sort = mapsSorts[mapPage.sort].sort;
     q.newestFirst = mapsSorts[mapPage.sort].newestFirst;
+    q.minRating = mapsRatings[mapPage.rating].min;
     q.limit = 0; // every match: the page scrolls, and its header says how many there are
     mapindex::search(q, mapPage.results);
+    if(mapPage.shown != MapsShowAll)
+    {
+        // Installed or not: the installed list (main thread, in memory), kept in the search's order.
+        const bool want = mapPage.shown == MapsShowInstalled;
+        za::Vector<const mapindex::Entry*> kept;
+        for(const mapindex::Entry* e : mapPage.results)
+        {
+            if(mapinstall::installed(za::String{idx.field(e->sha256)}) == want)
+            {
+                kept.pushBack(e);
+            }
+        }
+        mapPage.results = ZA_MOVE(kept);
+    }
 
     mapPage.hiddenProgs = 0;
     if(!q.allowProgs)
@@ -193,11 +238,22 @@ void mapsRunSearch()
     mapPage.sigSort = mapPage.sort;
     mapPage.sigTypeIdx = mapPage.typeIdx;
     mapPage.sigSizeIdx = mapPage.sizeIdx;
+    mapPage.sigRating = mapPage.rating;
+    mapPage.sigShown = mapPage.shown;
     mapPage.sigProgs = q.allowProgs ? 1 : 0;
     mapPage.sigFetched = idx.fetchedAt;
     mapPage.sigInstalled = static_cast<int>(mapinstall::installedList().size());
     mapPage.resultScroll = 0;
     mapPage.focusResult = mapPage.hoverResult = -1;
+    mapPage.picked = -1;
+    for(int r = 0; r < static_cast<int>(mapPage.results.size()) && !mapPage.pickedSha.empty(); r++)
+    {
+        if(za::StringView{idx.field(mapPage.results[r]->sha256)} == za::StringView{mapPage.pickedSha})
+        {
+            mapPage.picked = r;
+            break;
+        }
+    }
     mapPage.searchRuns++;
     mapPage.searchMs += (Sys_DoubleTime() - t0) * 1000.0;
 }
@@ -215,7 +271,7 @@ void mapsShown()
     const int installed = static_cast<int>(mapinstall::installedList().size());
     const int progs = vr_maps_allow_progs.value != 0.f ? 1 : 0;
     if(mapPage.sigQuery != mapPage.query || mapPage.sigSort != mapPage.sort || mapPage.sigTypeIdx != mapPage.typeIdx ||
-        mapPage.sigSizeIdx != mapPage.sizeIdx || mapPage.sigProgs != progs || mapPage.sigFetched != idx.fetchedAt ||
+        mapPage.sigSizeIdx != mapPage.sizeIdx || mapPage.sigRating != mapPage.rating || mapPage.sigShown != mapPage.shown || mapPage.sigProgs != progs || mapPage.sigFetched != idx.fetchedAt ||
         mapPage.sigInstalled != installed)
     {
         mapsRunSearch();
@@ -245,18 +301,30 @@ struct MapsLayout
 {
     const Layout l = layout();
     MapsLayout m;
-    m.s = searchLayout(mapsPageWidth, mapsKeySplit);
-    m.bar.half = m.s.half;
-    m.bar.yc = static_cast<float>(l.helpTop) + m.bar.half / m.s.k + 2.f;
+    // The keys as large as fit (easier to hit with the laser), with more room between them, above the picked package's
+    // detail (a few lines kept for it) and the bar.
+    constexpr float detailRoom = 30.f;
+    for(float half = 9.f;; half -= 0.5f)
+    {
+        m.s = searchLayout(mapsPageWidth, mapsKeySplit, half, half > 7.f ? 1.5f : 1.f);
+        const float keysBottom = m.s.keys.empty() ? m.s.boxY : m.s.keys.back().yc + m.s.half / m.s.k;
+        if(half <= 7.f || keysBottom + detailRoom <= static_cast<float>(l.helpTop))
+        {
+            break;
+        }
+    }
+    m.bar.half = 7.f; // (the bar's buttons as before)
+    // At the page's foot (its status line just under it), well clear of the columns' last lines above.
+    m.bar.yc = static_cast<float>(l.bottom) - m.bar.half - 10.f;
     m.listBottom = static_cast<float>(l.helpTop) - 6.f;
     const float rowStep = (2.f * m.s.half + 3.f) / m.s.k;
     m.detailTop = m.s.keys.empty() ? m.s.boxY + rowStep : m.s.keys.back().yc + rowStep;
 
-    // Three filters across the left, the action (Install / Play) at the right end of the bar.
+    // Five filters across the left, the action (Install / Play) at the right end of the bar.
     const float total = m.s.right - m.s.left;
-    const float action = za::fmin(160.f, total * 0.36f);
-    const float each = (total - action - 6.f) / 3.f;
-    for(int i = 0; i < 3; i++)
+    const float action = za::fmin(110.f, total * 0.24f);
+    const float each = (total - action - 6.f) / static_cast<float>(MapButtonAction);
+    for(int i = 0; i < MapButtonAction; i++)
     {
         m.bar.x0[i] = m.s.left + each * static_cast<float>(i) + 2.f;
         m.bar.x1[i] = m.s.left + each * static_cast<float>(i + 1) - 2.f;
@@ -285,11 +353,20 @@ struct MapsLayout
                : -1;
 }
 
-// The package the detail shows: what the sticks selected, else what the laser is over.
+// The package the detail shows and Install / Play acts on: what the sticks are on, else the one picked, else what the
+// laser is over.
 [[nodiscard]] int mapsSelected()
 {
-    const int r = mapPage.focusResult >= 0 ? mapPage.focusResult : mapPage.hoverResult;
+    const int r = mapPage.focusResult >= 0 ? mapPage.focusResult : mapPage.picked >= 0 ? mapPage.picked : mapPage.hoverResult;
     return r >= 0 && r < static_cast<int>(mapPage.results.size()) ? r : -1;
+}
+
+// Picks row `r` (-1: none).
+void mapsPick(int r)
+{
+    const bool valid = r >= 0 && r < static_cast<int>(mapPage.results.size());
+    mapPage.picked = valid ? r : -1;
+    mapPage.pickedSha = valid ? za::String{mapindex::index().field(mapPage.results[r]->sha256)} : za::String{};
 }
 
 void mapsScrollTo(int r)
@@ -308,33 +385,10 @@ void mapsScrollTo(int r)
 // What the page does
 // ----------------------------------------------------------------------------
 
-// The live job, if any.
+// A job is running (its thread has it: the bar's action is Cancel meanwhile).
 [[nodiscard]] bool mapsBusy()
 {
-    const mapinstall::Phase phase = mapinstall::job().phase;
-    return phase == mapinstall::Phase::Download || phase == mapinstall::Phase::Extract;
-}
-
-// A job finished: its line stays on the bar until the next one.
-void mapsNoteJob()
-{
-    const mapinstall::Job& j = mapinstall::job();
-    const int phase = static_cast<int>(j.phase);
-    if(phase == mapPage.lastPhase)
-    {
-        return;
-    }
-    mapPage.lastPhase = phase;
-    if(phase == static_cast<int>(mapinstall::Phase::Done) || phase == static_cast<int>(mapinstall::Phase::Failed))
-    {
-        mapPage.status = j.title;
-        mapPage.status += ": ";
-        mapPage.status += j.message;
-    }
-    else if(phase == static_cast<int>(mapinstall::Phase::Idle))
-    {
-        mapPage.status = "";
-    }
+    return mapinstall::running();
 }
 
 void mapsInstallAt(int r)
@@ -344,13 +398,13 @@ void mapsInstallAt(int r)
         return;
     }
     const mapindex::Entry* e = mapPage.results[r];
-    if(!mapinstall::begin(e, true))
+    za::String why;
+    if(!mapinstall::begin(e, true, &why))
     {
-        Con_Printf("maps: another package is being downloaded still.\n");
+        Con_Printf("maps: %s not started: %s\n", mapindex::index().field(e->title), why.cStr());
         S_LocalSound("misc/menu1.wav");
         return;
     }
-    mapPage.status = "";
     S_LocalSound("misc/menu3.wav");
 }
 
@@ -403,7 +457,19 @@ void mapsButtonAt(int button)
         case MapButtonSize:
             mapPage.sizeIdx = (mapPage.sizeIdx + 1) % (static_cast<int>(mapPage.sizeFacets.size()) + 1);
             break;
+        case MapButtonRating:
+            mapPage.rating = (mapPage.rating + 1) % mapsRatingCount;
+            break;
+        case MapButtonInstalled:
+            mapPage.shown = (mapPage.shown + 1) % MapsShowCount;
+            break;
         case MapButtonAction:
+            if(mapsBusy())
+            {
+                // While a job runs the action is its Cancel.
+                S_LocalSound(mapinstall::cancel() ? "misc/menu3.wav" : "misc/menu1.wav");
+                return;
+            }
             mapsPrimaryAt(mapsSelected());
             return; // (its own sound)
         default: return;
@@ -440,7 +506,20 @@ void mapsTypeIn(char ch)
 // ----------------------------------------------------------------------------
 
 // The sticks' selection: the keys (left), the packages (right), the bar (bottom).
+void mapsMoveImpl(int dx, int dy);
+
+// The sticks' selection moved; a package it lands on is picked (it stays the detail's as the selection moves on to the
+// bar's Install / Play).
 void mapsMove(int dx, int dy)
+{
+    mapsMoveImpl(dx, dy);
+    if(mapPage.focusResult >= 0)
+    {
+        mapsPick(mapPage.focusResult);
+    }
+}
+
+void mapsMoveImpl(int dx, int dy)
 {
     const MapsLayout m = mapsLayout();
     const int keys = static_cast<int>(m.s.keys.size());
@@ -643,7 +722,18 @@ void mapsKey(int key)
                     return;
                 }
             }
-            mapsPrimaryAt(mapsResultAt(m, m_mousex, m_mousey));
+            if(const int r = mapsResultAt(m, m_mousex, m_mousey); r >= 0)
+            {
+                if(r == mapPage.picked)
+                {
+                    mapsPrimaryAt(r); // (a second click on the picked one: Install or Play, as its button)
+                }
+                else
+                {
+                    mapsPick(r);
+                    S_LocalSound("misc/menu1.wav");
+                }
+            }
             return;
         default: return; // (typing: VR_Menu_Char)
     }
@@ -719,13 +809,13 @@ void mapsPageStatsPrint()
 // The page: drawing
 // ----------------------------------------------------------------------------
 
-// Text in `size`-pixel letters from x, no wider than `width`, wrapped over at most `maxLines` lines. Its end is kept
-// (the tail of a long line is what matters for a title or an author).
+// Text in `size`-pixel letters from x, no wider than `width`, wrapped over at most `maxLines` lines. On one line its end
+// is kept (the tail of a long line is what matters for a title or an author); over more, its start.
 int drawMapsWrapped(const char* text, float x, float y, float size, float width, int maxLines)
 {
     const int fit = q_max(static_cast<int>(width / size), 8);
     const int n = static_cast<int>(strlen(text));
-    const char* start = n > fit ? text + n - fit : text; // its end
+    const char* start = n > fit && maxLines == 1 ? text + n - fit : text; // one line: its end
     int lines = 0;
     for(const char* p = start; *p && lines < maxLines;)
     {
@@ -770,8 +860,10 @@ void drawMapsButton(const menupaint::Painter& p, const MapsLayout& m, int button
         hot ? colors::highlightEdge : colors::boxBorder);
     p.rounded(m.bar.x0[button] + 1.f, m.bar.x1[button] - 1.f, m.bar.yc, m.bar.half - 1.f, 2.f,
         hot ? colors::buttonHover : colors::boxFill);
-    searchText(m.bar.x0[button] + 5.f, m.bar.yc - 4.f, 6.f, m.bar.x1[button] - m.bar.x0[button] - 10.f, label,
-        hot && enabled);
+    // Six-pixel letters, five where that fits the label whole (the bar holds five filters and the action).
+    const float room = m.bar.x1[button] - m.bar.x0[button] - 10.f;
+    const float size = 6.f * static_cast<float>(strlen(label)) <= room ? 6.f : 5.f;
+    searchText(m.bar.x0[button] + 5.f, m.bar.yc - size * 0.5f - 1.f, size, room, label, hot && enabled);
     if(!enabled)
     {
         const float y = m.bar.yc;
@@ -815,10 +907,19 @@ void drawMapsDetail(const MapsLayout& m, const menupaint::Painter& p)
     y += 10.f;
 
     const za::String sizeLabel = mapinstall::formatBytes(e.bytes);
-    q_snprintf(mapsText.meta, sizeof(mapsText.meta), "%s  %s  %s  %d files  %s%s",
+    char rated[48] = "";
+    if(e.userRating)
+    {
+        q_snprintf(rated, sizeof(rated), "  rated %.1f/5", static_cast<double>(e.userRating) / 100.0);
+    }
+    else if(e.rating)
+    {
+        q_snprintf(rated, sizeof(rated), "  rated %d/5", static_cast<int>(e.rating));
+    }
+    q_snprintf(mapsText.meta, sizeof(mapsText.meta), "%s  %s  %s  %d files  %s%s%s",
         idx.field(e.date) ? idx.field(e.date) : "undated",
         idx.field(e.types) ? idx.field(e.types) : "type?",
-        idx.field(e.sizes) ? idx.field(e.sizes) : "size?", e.files, sizeLabel.cStr(), have ? "  INSTALLED" : "");
+        idx.field(e.sizes) ? idx.field(e.sizes) : "size?", e.files, sizeLabel.cStr(), rated, have ? "  INSTALLED" : "");
     drawMapsWrapped(mapsText.meta, x, y, 6.f, width, 2);
     y += 14.f;
 
@@ -841,7 +942,6 @@ void drawMapsPage()
 {
     const double t0 = Sys_DoubleTime();
     mapsShown();
-    mapsNoteJob();
     const MapsLayout m = mapsLayout();
     const menupaint::Painter p;
     namespace colors = menupaint::colors;
@@ -895,7 +995,7 @@ void drawMapsPage()
         const float keyWidth = key.x1 - key.x0 - 2.f;
         const float labelSize = za::fmax(5.f, za::fmin(8.f, keyWidth / q_max(static_cast<float>(strlen(label)), 1.f)));
         const float w = labelSize * static_cast<float>(strlen(label));
-        searchText((key.x0 + key.x1 - w) * 0.5f, key.yc - labelSize, labelSize, keyWidth, label, hot);
+        searchText((key.x0 + key.x1 - w) * 0.5f, key.yc - labelSize * 0.5f, labelSize, keyWidth, label, hot); // (centred)
     }
 
     drawMapsDetail(m, p);
@@ -923,20 +1023,34 @@ void drawMapsPage()
     }
     if(n == 0)
     {
-        searchText(x0, m.s.resultsTop + 2.f, 6.f, width,
-            mapPage.query.empty() && mapindex::index().entries.empty()
-                ? "The index has not arrived yet (maps_stats, Debug > Tools)"
-                : "Nothing matches",
-            false);
+        if(mapindex::index().entries.empty())
+        {
+            // Why there is nothing yet: the fetch's latest step, or how it ended (all of it in the console too).
+            searchText(x0, m.s.resultsTop + 2.f, 6.f, width, "The index has not arrived yet:", false);
+            const za::String state = mapindex::state();
+            drawMapsWrapped(state.cStr(), x0, m.s.resultsTop + 10.f, 5.f, width, 6);
+        }
+        else
+        {
+            searchText(x0, m.s.resultsTop + 2.f, 6.f, width,
+                mapPage.shown == MapsShowInstalled && mapinstall::installedList().empty()
+                    ? "Nothing installed from the Map Library yet"
+                    : "Nothing matches",
+                false);
+        }
     }
     for(int r = mapPage.resultScroll; r < n && r < mapPage.resultScroll + mapPage.visibleResults; r++)
     {
         const mapindex::Entry& e = *mapPage.results[r];
         const mapindex::Index& idx = mapindex::index();
         const float y = m.s.resultsTop + mapsRowHeight * static_cast<float>(r - mapPage.resultScroll);
-        const bool hot = mapPage.hoverResult == r || mapPage.focusResult == r;
+        const bool hot = mapPage.hoverResult == r || mapPage.focusResult == r || mapPage.picked == r;
         const bool have = mapinstall::installed(za::String{idx.field(e.sha256)});
         const bool working = mapinstall::busy(za::String{idx.field(e.sha256)});
+        if(mapPage.picked == r)
+        {
+            p.rounded(x0 - 3.f, m.s.right + 1.f, y + 7.5f, 9.5f * m.s.k, 2.f, colors::highlightEdge); // (picked: an edge)
+        }
         if(hot)
         {
             p.rounded(x0 - 2.f, m.s.right, y + 7.5f, 8.5f * m.s.k, 2.f, colors::listHover);
@@ -964,38 +1078,55 @@ void drawMapsPage()
     // The bottom bar: the filters, and Install or Play for the picked package (its progress while a job runs).
     const int r = mapsSelected();
     const bool have = r >= 0 && mapinstall::installed(za::String{mapindex::index().field(mapPage.results[r]->sha256)});
-    for(int b = 0; b < 3; b++)
+    for(int b = 0; b < MapButtonAction; b++)
     {
         const bool hot = mapPage.hoverButton == b || mapPage.focusButton == b;
+        // Short labels (five filters share the bar): the choice alone where it names itself.
         if(b == MapButtonSort)
         {
-            q_snprintf(mapsText.label, sizeof(mapsText.label), "sort: %s", mapsSorts[mapPage.sort].label);
+            q_snprintf(mapsText.label, sizeof(mapsText.label), "%s", mapsSorts[mapPage.sort].label);
         }
         else if(b == MapButtonType)
         {
-            q_snprintf(mapsText.label, sizeof(mapsText.label), "type: %s",
-                mapPage.typeIdx > 0 ? mapPage.typeFacets[mapPage.typeIdx - 1].value.cStr() : "any");
+            q_snprintf(mapsText.label, sizeof(mapsText.label), "%s",
+                mapPage.typeIdx > 0 ? mapPage.typeFacets[mapPage.typeIdx - 1].value.cStr() : "any type");
+        }
+        else if(b == MapButtonRating)
+        {
+            q_snprintf(mapsText.label, sizeof(mapsText.label), "%s", mapsRatings[mapPage.rating].label);
+        }
+        else if(b == MapButtonInstalled)
+        {
+            q_snprintf(mapsText.label, sizeof(mapsText.label), "%s", mapsShownLabels[mapPage.shown]);
         }
         else
         {
-            q_snprintf(mapsText.label, sizeof(mapsText.label), "size: %s",
-                mapPage.sizeIdx > 0 ? mapPage.sizeFacets[mapPage.sizeIdx - 1].value.cStr() : "any");
+            q_snprintf(mapsText.label, sizeof(mapsText.label), "%s",
+                mapPage.sizeIdx > 0 ? mapPage.sizeFacets[mapPage.sizeIdx - 1].value.cStr() : "any size");
         }
         drawMapsButton(p, m, b, mapsText.label, hot, true);
     }
 
     if(mapsBusy())
     {
-        const mapinstall::Job& j = mapinstall::job();
+        // The job's progress under Cancel (the status line below says what it is doing).
         const int pct = mapinstall::percent();
+        const bool hot = mapPage.hoverButton == MapButtonAction || mapPage.focusButton == MapButtonAction;
         const float x = m.bar.x0[MapButtonAction], x1 = m.bar.x1[MapButtonAction];
         p.rounded(x, x1, m.bar.yc, m.bar.half, 3.f, colors::highlightEdge);
-        p.rounded(x + 1.f, x1 - 1.f, m.bar.yc, m.bar.half - 1.f, 2.f, colors::boxFill);
+        p.rounded(x + 1.f, x1 - 1.f, m.bar.yc, m.bar.half - 1.f, 2.f, hot ? colors::buttonHover : colors::boxFill);
         const float span = x1 - x - 10.f;
         p.rect(x + 5.f, x + 5.f + span * 0.01f * static_cast<float>(pct), m.bar.yc + 4.f / m.s.k, 2.5f,
             colors::scrollThumb);
-        q_snprintf(mapsText.label, sizeof(mapsText.label), "%s %d%%",
-            j.phase == mapinstall::Phase::Download ? "downloading" : "installing", pct);
+        if(mapinstall::cancelling())
+        {
+            q_snprintf(mapsText.label, sizeof(mapsText.label), "stopping...");
+        }
+        else
+        {
+            q_snprintf(mapsText.label, sizeof(mapsText.label), "Cancel (%s %d%%)",
+                mapinstall::job().phase == mapinstall::Phase::Extract ? "unpacking" : "downloading", pct);
+        }
         searchText(x + 5.f, m.bar.yc - 4.f, 6.f, span, mapsText.label, true);
     }
     else
@@ -1013,11 +1144,10 @@ void drawMapsPage()
         }
     }
 
-    if(!mapPage.status.empty())
-    {
-        searchText(m.s.left, m.bar.yc + (m.bar.half + 6.f) / m.s.k, 6.f, m.s.right - m.s.left, mapPage.status.cStr(),
-            false);
-    }
+    // What the downloads are doing, always: the running job (what, how far, the mirror, the seconds), or idle with how
+    // the last one ended (mapinstall::statusLine; maps_status prints the same).
+    const za::String jobLine = mapinstall::statusLine();
+    searchText(m.s.left, m.bar.yc + (m.bar.half + 6.f) / m.s.k, 6.f, m.s.right - m.s.left, jobLine.cStr(), false);
 
     mapPage.drawFrames++;
     mapPage.drawMs += (Sys_DoubleTime() - t0) * 1000.0;

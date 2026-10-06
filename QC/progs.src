@@ -1,6 +1,7 @@
 ../quakevr/progs.dat
 
 defs.qc
+vr_packutil.qc
 // The weapons' records (each weapon's id and magazine): the hands' clip accessors below use them.
 vr_weaponinst.qc
 // First: their inline per-hand getters must precede the callers (fteqcc inlines only what it
@@ -32,12 +33,26 @@ vr_debris.qc
 vr_crates.qc
 vr_smallgibs.qc
 vr_walltorch.qc
+vr_mg_defs.qc
+vr_mg_activation.qc
+vr_mg_fog.qc
+vr_mg_func_bob.qc
+vr_mg_func_toss.qc
+vr_mg_rotate.qc
+vr_mg_lights.qc
+vr_mg_particles.qc
+vr_mg_model.qc
+vr_mg_rope.qc
+vr_mg_corpses.qc
+vr_mg_world.qc
+vr_mg_triggers.qc
 // The grapple after vr_carry.qc and vr_walltorch.qc: it reads their fields.
 vr_grapple.qc
 // Grunts' and enforcers' shoves (ai.qc calls it; the monsters' files use it).
 vr_enemyshove.qc
 
 buttons.qc
+vr_tips.qc
 client.qc
 doors.qc
 misc.qc
@@ -61,6 +76,8 @@ world.qc
 vr_dummy.qc
 vr_motion.qc
 vr_highlights.qc
+vr_mg_world_test.qc
+vr_mg_trigger_test.qc
 
 orig_mon_boss.qc
 orig_mon_demon.qc

@@ -250,7 +250,7 @@ void() PlaceItem =
     self.handtouch = itemTouch;
 
     // HONEY
-    if(self.spawnflags & SPAWNFLAG_TRIGGER_SPAWN)
+    if(!MG_WorldCampaign() && (self.spawnflags & SPAWNFLAG_TRIGGER_SPAWN))
     {
         item_unspawn();
     }
@@ -309,6 +309,7 @@ Sets the clipping size and plants the object on the floor
 */
 void() StartItem =
 {
+    if(MG_MonsterInhibited()) return;
     self.nextthink = time + 0.2;    // items start after other solids
     self.think = PlaceItem;
 };
@@ -1065,6 +1066,15 @@ void() weapon_touch =
 
     bound_other_ammo();
 
+    // A fresh pickup is ready to fire: move rounds from the bounded reserve into its own magazine.
+    // Pool-only firing modes keep their ammo in the reserve. Existing weapon instances never pass here.
+    float clip = 0;
+    if(other.ishuman && VRIsWeaponReloadingEnabled() && WeaponIdToSupportsReload(weaponId))
+    {
+        clip = max(0, min(WeaponIdToBaseClipSize(weaponId), VR_AmmoUtil_GetAmmoCountByAmmoId(other, ammoId)));
+        VR_AmmoUtil_DelAmmoCountByAmmoId(other, ammoId, clip);
+    }
+
     VR_WeaponUtil_EntAddWeapon(other, weaponId);
 
     stemp = self;
@@ -1076,12 +1086,12 @@ void() weapon_touch =
         {
             if(VRIsHandEmpty(other, cVR_MainHand))
             {
-                VRGiveEntWeapon(other, cVR_MainHand, weaponId, 0, 0); // (a new one, its magazine empty as ever)
+                VRGiveEntWeapon(other, cVR_MainHand, weaponId, 0, clip);
                 W_SetCurrentAmmoFor(cVR_MainHand);
             }
             else if(VRIsHandEmpty(other, cVR_OffHand))
             {
-                VRGiveEntWeapon(other, cVR_OffHand, weaponId, 0, 0);
+                VRGiveEntWeapon(other, cVR_OffHand, weaponId, 0, clip);
                 W_SetCurrentAmmoFor(cVR_OffHand);
             }
             else
@@ -1106,7 +1116,7 @@ void() weapon_touch =
             bprint("BUG: Attempting to pick weapon with full hand.");
         }
 
-        VRGiveEntWeapon(other, touchinghand, weaponId, 0, 0);
+        VRGiveEntWeapon(other, touchinghand, weaponId, 0, clip);
         W_SetCurrentAmmoFor(touchinghand);
     }
 
@@ -1133,6 +1143,8 @@ void() weapon_item_think =
 
 void(string xModelName, float xWeaponId) impl_weapon_item =
 {
+    if(!VR_Pack_WeaponAvailable(xWeaponId)) { remove(self); return; }
+
     precache_model(xModelName);
     setmodel(self, xModelName);
     self.weapon = xWeaponId;
@@ -1426,6 +1438,12 @@ void(string xModelNameSmall, string xModelNameBig,
      float xAmmoId, vector xSize)
 impl_item_ammo_pickup =
 {
+    if(!VR_Pack_Rogue() && (xAmmoId == AID_LAVA_NAILS || xAmmoId == AID_MULTI_ROCKETS || xAmmoId == AID_PLASMA))
+    {
+        remove(self);
+        return;
+    }
+
     self.handtouch = ammo_touch;
 
     if(self.spawnflags & WEAPON_BIG2)

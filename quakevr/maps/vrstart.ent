@@ -56,7 +56,7 @@
 "_tb_group" "1"
 "speed" "0.085"
 "worldtext_halign" "1"
-"worldtext" "Pick a mission pack and step\ninto the portal to begin."
+"worldtext" "Choose a campaign and step\ninto the portal to begin.$All campaigns and data status:\n{menu:Official Campaigns}"
 "angle" "0"
 "origin" "-520.182 343.522 317.19"
 "classname" "func_worldtext_banner"
@@ -571,4 +571,13 @@
 "_tb_layer" "6"
 "classname" "func_wall"
 "spawnflags" "1792"
+}
+{
+"message" "Welcome to Quake VR!\nThis tip is at a fixed point in the map:\nit shows once, within its own range."
+"tipname" "testwelcome"
+"distance" "400"
+"tip_size" "1.5"
+"spawnflags" "4"
+"origin" "64 348 280"
+"classname" "func_vr_tip"
 }

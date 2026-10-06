@@ -50,15 +50,17 @@ void() SetChangeParms =
 
     self.gravity = 1.0;
 
-    // cap super health
-    if(self.health > 100)
+    // Dopa Nightmare uses the authored 50 cap and half-cap transition floor.
+    // Other campaigns keep VR's existing 100/50 carry bounds.
+    float carryHealthCap = ((cvar("vr_campaign") == 3) && (skill == 3) && !deathmatch) ? 50 : 100;
+    if(self.health > carryHealthCap)
     {
-        self.health = 100;
+        self.health = carryHealthCap;
     }
 
-    if(self.health < 50)
+    if(self.health < carryHealthCap * 0.5)
     {
-        self.health = 50;
+        self.health = carryHealthCap * 0.5;
     }
 
     // ROGUE
@@ -196,7 +198,7 @@ void() SetNewParms =
         parm1 = IT_SHOTGUN | IT_AXE;
     }
 
-    parm2 = 100;
+    parm2 = ((cvar("vr_campaign") == 3) && (skill == 3) && !deathmatch) ? 50 : 100;
     parm3 = 0;
     parm4 = 25;
     parm5 = 0;
@@ -231,7 +233,7 @@ void() SetNewParms =
     parm17 = 0;
 
     // ROGUE
-    if(deathmatch && teamplay >= TEAM_CTF)
+    if(VR_Pack_Rogue() && deathmatch && teamplay >= TEAM_CTF)
     {
         parm18 = ROGUE_IT_GRAPPLE;
     }
@@ -304,6 +306,30 @@ void() DecodeLevelParms =
     // ROGUE
     if(world.model == "maps/r2m1.bsp" && !deathmatch)
         SetNewParms(); // PGM - 01/29 change to have level 8 reset all your stuff.
+
+    // Changing installations must not resurrect unavailable weapons or powerups from level parms.
+    if(!VR_Pack_Hipnotic())
+    {
+        parm1 = parm1 - (parm1 & (IT_MJOLNIR | IT_LASER_CANNON));
+        parm17 = parm17 - (parm17 & (HIP_IT_WETSUIT | HIP_IT_EMPATHY_SHIELDS | HIP_IT_HORN_OF_CONJURING | HIP_IT_PROXIMITY_GUN));
+    }
+    if(!VR_Pack_Rogue()) { parm18 = parm19 = parm20 = parm21 = 0; }
+    if(!VR_Pack_WeaponAvailable(parm8)) { parm8 = WID_FIST; }
+    parm23 = VR_Pack_WeaponFlags(parm8, parm23);
+    if(!VR_Pack_WeaponAvailable(parm10)) { parm10 = WID_FIST; }
+    parm24 = VR_Pack_WeaponFlags(parm10, parm24);
+    if(!VR_Pack_WeaponAvailable(parm11)) { parm11 = WID_FIST; }
+    parm25 = VR_Pack_WeaponFlags(parm11, parm25);
+    if(!VR_Pack_WeaponAvailable(parm12)) { parm12 = WID_FIST; }
+    parm26 = VR_Pack_WeaponFlags(parm12, parm26);
+    if(!VR_Pack_WeaponAvailable(parm13)) { parm13 = WID_FIST; }
+    parm27 = VR_Pack_WeaponFlags(parm13, parm27);
+    if(!VR_Pack_WeaponAvailable(parm14)) { parm14 = WID_FIST; }
+    parm28 = VR_Pack_WeaponFlags(parm14, parm28);
+    if(!VR_Pack_WeaponAvailable(parm15)) { parm15 = WID_FIST; }
+    parm29 = VR_Pack_WeaponFlags(parm15, parm29);
+    if(!VR_Pack_WeaponAvailable(parm16)) { parm16 = WID_FIST; }
+    parm30 = VR_Pack_WeaponFlags(parm16, parm30);
 
     self.items = parm1;
     self.health = parm2;
@@ -451,6 +477,14 @@ void() ExitIntermission =
     // run some text if at the end of an episode
     if(intermission_running == 2)
     {
+        if(MG_WorldCampaign() && (strlen(MG_intermissiontext) > 0 || strlen(world.endtext) > 0)) {
+            WriteByte(MSG_ALL, SVC_CDTRACK); WriteByte(MSG_ALL, 2); WriteByte(MSG_ALL, 3);
+            WriteByte(MSG_ALL, SVC_FINALE);
+            WriteString(MSG_ALL, strlen(MG_intermissiontext) > 0 ? MG_intermissiontext : world.endtext);
+            MG_intermissiontext = "";
+            return;
+        }
+        if(cvar("vr_campaign") == 3 && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
         if(world.model == "maps/e1m7.bsp")
         {
             WriteByte(MSG_ALL, SVC_CDTRACK);
@@ -544,6 +578,7 @@ void() ExitIntermission =
 
     if(intermission_running == 3)
     {
+        if(cvar("vr_campaign") == 3 && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
         if(!cvar_hget(cvarh_registered))
         {    // shareware episode has been completed, go to sell screen
             WriteByte(MSG_ALL, SVC_SELLSCREEN);
@@ -644,6 +679,8 @@ void() execute_changelevel =
         other.modelindex = 0;
         setorigin(other, pos.origin);
 
+        if(MG_WorldCampaign()) MG_FogPushSettingsFrom(other, pos, 0);
+
         // HONEY
         if(fogsettings != NULLENT && fogsettings.classname == "trigger_fogcontroller") {
             fog_setOverrideConditional(other, fogsettings.view_ofs, fogsettings.ideal_yaw, 1);
@@ -677,10 +714,11 @@ void() changelevel_touch =
     }
 
     nextmap = self.map;
+    if(MG_WorldCampaign()) MG_intermissiontext = self.endtext;
 
     SUB_UseTargets();
 
-    if((self.spawnflags & 1) && (deathmatch == 0))
+    if((self.spawnflags & 1) && (deathmatch == 0) && (!MG_WorldCampaign() || strlen(self.endtext) == 0))
     {    // NO_INTERMISSION
         GotoNextMap();
         return;
@@ -839,6 +877,17 @@ entity() SelectSpawnPoint =
 // choose a info_player_deathmatch point
     if(coop)
     {
+        if(MG_WorldCampaign()) {
+            entity first = find(lastspawn, classname, "info_player_coop");
+            if(!first) first = find(world, classname, "info_player_coop");
+            entity c = first;
+            if(c) do {
+                if(c.state == 73) { lastspawn = c; return c; }
+                c = find(c, classname, "info_player_coop");
+                if(!c) c = find(world, classname, "info_player_coop");
+            } while(c && c != first);
+            return find(world, classname, "info_player_start");
+        }
         lastspawn = find(lastspawn, classname, "info_player_coop");
         if(lastspawn == world)
             lastspawn = find(lastspawn, classname, "info_player_start");
@@ -962,7 +1011,7 @@ void() PutClientInServer =
     self.solid = SOLID_SLIDEBOX;
     self.movetype = MOVETYPE_WALK;
     self.show_hostile = 0;
-    self.max_health = 100;
+    self.max_health = ((cvar("vr_campaign") == 3) && (skill == 3) && !deathmatch) ? 50 : 100;
     self.flags = FL_CLIENT;
     self.air_finished = time + VR_AirSupply();
     self.dmg = 2;           // initial water damage
@@ -1016,6 +1065,11 @@ void() PutClientInServer =
     // paustime is set by teleporters to keep the player from moving a while
     self.pausetime = 0;
 
+    if(MG_WorldCampaign())
+    {
+        self.fog_active_fog_trigger = world;
+        if(!MG_FogPushSettingsFrom(self, spot, 0)) MG_FogPushSettingsFrom(self, world, 0);
+    }
     self.origin = self.oldorigin = spot.origin + '0 0 1';    // 1998-07-21 Respawning where player died fix by Robert Field
     self.angles = spot.angles;
     self.fixangle = TRUE;        // turn this way immediately
@@ -1024,10 +1078,12 @@ void() PutClientInServer =
 
     // oh, this is a hack!
 
-    // VR: This works even if someone does not own SoA because it falls back to
-    // 'progs/player.mdl'. (Hardcoded in C++.)
-    setmodel(self, "progs/playham.mdl");
-    modelindex_hammer = self.modelindex;
+    modelindex_hammer = 0;
+    if(VR_Pack_Hipnotic())
+    {
+        setmodel(self, "progs/playham.mdl");
+        modelindex_hammer = self.modelindex;
+    }
 
     setmodel(self, "progs/eyes.mdl");
     modelindex_eyes = self.modelindex;
@@ -1147,6 +1203,10 @@ potential spawning position for coop games
 */
 void() info_player_coop =
 {
+    if(MG_WorldCampaign()) {
+        if(!coop) { remove(self); return; }
+        if(!self.targetname || (self.spawnflags & 1)) self.state = 73;
+    }
 };
 
 /*

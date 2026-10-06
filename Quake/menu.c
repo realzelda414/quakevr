@@ -1159,10 +1159,10 @@ enum
 	MAIN_VRCALIBRATION, // QVR: the first-time setup (vr_setup.hpp), the first row
 	MAIN_SINGLEPLAYER,
 	MAIN_MULTIPLAYER,
+	MAIN_MAPLIBRARY, // QVR: the map browser (vr_menu_maps.inc)
 	MAIN_OPTIONS,
 	MAIN_MODS,
-	MAIN_HELP,
-	MAIN_QUIT,
+	MAIN_QUIT, // QVR: no Help/Ordering row
 
 	MAIN_ITEMS,
 };
@@ -1171,7 +1171,7 @@ enum
 // (vr_bigfont.cpp), so that VR Calibration looks like the others.
 static const char *const m_main_labels[MAIN_ITEMS] =
 {
-	"VR Calibration", "Single Player", "Multiplayer", "Options", "Mods", "Help/Ordering", "Quit",
+	"VR Calibration", "Single Player", "Multiplayer", "Map Library", "Options", "Mods", "Quit",
 };
 
 const char *M_Main_RowLabel (void) // QVR: menu_vr pos
@@ -1223,22 +1223,24 @@ void M_Main_Draw (void)
 				VR_BigFont_Draw (73, 32 + row++ * 20, m_main_labels[i]);
 	}
 	else
-	{ // QVR: the VR Calibration row above the picture's
+	{ // QVR: the VR Calibration row above the picture's, Map Library after its Multiplayer (in the mods' row's letters)
+		int split = 40; // the picture's Single Player and Multiplayer rows
 		M_PrintEx (74, 32 + 1, 16, "VR CALIBRATION");
 
 		p = Draw_CachePic ("gfx/mainmenu.lmp");
+		M_DrawSubpic (72, 52, p, 0, 0, p->width, split);
+		M_PrintEx (74, 52 + split + 1, 16, "MAP LIBRARY");
+		M_DrawSubpic (72, 52 + split + 20, p, 0, split, p->width, 20); // Options
+		row = 52 + split + 40;
 		if (m_main_mods)
 		{
-			int split = 60;
-			M_DrawSubpic (72, 52, p, 0, 0, p->width, split);
 			if (m_main_mods > 0)
-				M_DrawTransPic (72, 52 + split, Draw_CachePic ("gfx/menumods.lmp"));
+				M_DrawTransPic (72, row, Draw_CachePic ("gfx/menumods.lmp"));
 			else
-				M_PrintEx (74, 52 + split + 1, 16, "MODS");
-			M_DrawSubpic (72, 52 + split + 20, p, 0, split, p->width, p->height - split);
+				M_PrintEx (74, row + 1, 16, "MODS");
+			row += 20;
 		}
-		else
-			M_DrawTransPic (72, 52, Draw_CachePic ("gfx/mainmenu.lmp"));
+		M_DrawSubpic (72, row, p, 0, split + 40, p->width, p->height - split - 40); // Quit (the picture's Help row left out)
 	}
 
 	cursor = m_main_cursor;
@@ -1304,12 +1306,12 @@ void M_Main_Key (int key)
 			M_Menu_MultiPlayer_f ();
 			break;
 
-		case MAIN_OPTIONS:
-			M_Menu_Options_f ();
+		case MAIN_MAPLIBRARY: // QVR
+			VR_OpenMapLibrary ();
 			break;
 
-		case MAIN_HELP:
-			M_Menu_Help_f ();
+		case MAIN_OPTIONS:
+			M_Menu_Options_f ();
 			break;
 
 		case MAIN_MODS:
@@ -1338,10 +1340,9 @@ void M_Main_Mousemove (float cx, float cy)
 
 qboolean m_singleplayer_showlevels;
 int	m_singleplayer_cursor;
-// QVR: one row of our own at the end of Quake's (New Game, Load, Save, the levels, Map Library): the map browser
-// (vr_menu_maps.inc). Its row is the last, so Quake's picture rows keep their places.
+// QVR: append campaigns after Quake's rows; Map Library stays on the main menu.
 #define	SINGLEPLAYER_ITEMS	(4 + m_singleplayer_showlevels)
-#define	SINGLEPLAYER_MAPS	(3 + m_singleplayer_showlevels)
+#define SINGLEPLAYER_CAMPAIGNS (3 + m_singleplayer_showlevels)
 
 void M_Menu_SinglePlayer_f (void)
 {
@@ -1365,12 +1366,14 @@ void M_SinglePlayer_Draw (void)
 	if (m_singleplayer_showlevels)
 		M_DrawTransPic (72, 92, Draw_CachePic ("gfx/sp_maps.lmp") );
 
-	// QVR: the map browser's row, in the letters of Quake's own menu rows (its pictures have no row for it).
-	if (VR_BigFont_CanDraw ("Map Library"))
-		VR_BigFont_Draw (73, 32 + SINGLEPLAYER_MAPS * 20, "Map Library");
+	if (VR_BigFont_CanDraw ("Official Campaigns"))
+	{
+		VR_BigFont_Draw (73, 32 + SINGLEPLAYER_CAMPAIGNS * 20, "Official Campaigns");
+	}
 	else
-		M_PrintEx (74, 32 + SINGLEPLAYER_MAPS * 20 + 1, 16, "MAP LIBRARY");
-
+	{
+		M_PrintEx (74, 32 + SINGLEPLAYER_CAMPAIGNS * 20 + 1, 16, "OFFICIAL CAMPAIGNS");
+	}
 	M_DrawQuakeCursor (54, 32 + m_singleplayer_cursor * 20);
 }
 
@@ -1404,6 +1407,8 @@ void M_SinglePlayer_Key (int key)
 	case K_MOUSE1:
 		m_entersound = true;
 
+        if (m_singleplayer_cursor == SINGLEPLAYER_CAMPAIGNS)
+        { VR_OpenCampaignSelector(); break; }
 		switch (m_singleplayer_cursor)
 		{
 		case 0:
@@ -1436,14 +1441,7 @@ void M_SinglePlayer_Key (int key)
 			break;
 
 		case 3:
-			if (m_singleplayer_showlevels)
-				Cbuf_AddText ("menu_maps\n");
-			else
-				VR_OpenMapLibrary (); // (no levels row: the map browser takes it)
-			break;
-
-		case 4:
-			VR_OpenMapLibrary ();
+			Cbuf_AddText ("menu_maps\n");
 			break;
 		}
 	}
@@ -7217,8 +7215,41 @@ void M_ModInfo_Key (int key)
 //=============================================================================
 /* Credits menu -- used by the 2021 re-release */
 
+static int m_credits_cursor;
+static void M_Credits_Draw (void)
+{
+    const char *title = Cvar_VariableValue("vr_campaign") == 3 ? "Dimension of the Past" : "Quake";
+    M_PrintWhite ((320 - (int)strlen(title) * 8) / 2, 28, title);
+    M_Print (96, 52, "Campaign complete");
+    M_PrintWhite (72, 80, "Quake: id Software");
+    if (Cvar_VariableValue("vr_campaign") >= 3)
+        M_PrintWhite (48, 96, "Expansion: MachineGames");
+    M_PrintWhite (32, 120, "Quake VR: Vittorio Romeo");
+    M_Print (80, 152, "Official Campaigns");
+    M_Print (80, 168, "Main Menu");
+    M_DrawCharacter (64, 152 + 16 * m_credits_cursor, 12 + ((int)(realtime * 4) & 1));
+}
+static void M_Credits_Key (int key)
+{
+    switch (key)
+    {
+    case K_ESCAPE: case K_BBUTTON: case K_MOUSE2: case K_MOUSE4:
+        M_Menu_Main_f (); break;
+    case K_UPARROW: case K_DOWNARROW: case K_MWHEELUP: case K_MWHEELDOWN:
+        m_credits_cursor ^= 1; S_LocalSound ("misc/menu1.wav"); break;
+    case K_ENTER: case K_KP_ENTER: case K_ABUTTON: case K_MOUSE1:
+        if (m_credits_cursor == 0) Cbuf_AddText ("vr_campaign_menu\n");
+        else M_Menu_Main_f ();
+        break;
+    }
+}
 void M_Menu_Credits_f (void)
 {
+    key_dest = key_menu;
+    m_state = m_credits;
+    m_entersound = true;
+    m_credits_cursor = 0;
+    Con_DPrintf ("Credits: native campaign end presentation opened\n");
 }
 
 //=============================================================================
@@ -7392,6 +7423,9 @@ void M_Draw (void)
 		M_ModInfo_Draw ();
 		break;
 
+	case m_credits:
+        M_Credits_Draw ();
+        break;
 	case m_help:
 		M_Help_Draw ();
 		break;
@@ -7428,6 +7462,7 @@ void M_Draw (void)
 	}
 
 	VR_MenuDrawOverlay (); // QVR: the "Back to game" button
+	VR_MenuDrawStatus (); // QVR: the status box (vr_menu_status)
 	draw_textoutline = 0.f; // QVR
 
 	if (m_entersound)
@@ -7542,6 +7577,9 @@ void M_Keydown (int key, qboolean repeat)
 		M_ModInfo_Key (key);
 		return;
 
+	case m_credits:
+        M_Credits_Key (key);
+        return;
 	case m_help:
 		M_Help_Key (key);
 		return;
@@ -7649,6 +7687,9 @@ void M_Mousemove (int screenx, int screeny)
 		M_Mods_Mousemove (x, y);
 		return;
 
+	case m_credits:
+        if (y >= 148 && y < 180) m_credits_cursor = y >= 164;
+        return;
 	//case m_help:
 	//	M_Help_Mousemove (x, y);
 	//	return;

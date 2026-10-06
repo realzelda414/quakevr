@@ -46,7 +46,7 @@ Quake VR needs the game data of the original Quake: the `id1` folder with `PAK0.
 
 - **Steam:** the Quake folder (usually `C:\Program Files (x86)\Steam\steamapps\common\Quake`) has the original data
   in `id1`, the mission packs in `hipnotic` and `rogue`, and the 2021 re-release in `rerelease`. Install Quake VR
-  into this folder. Quake VR uses the original data; the re-release folder isn't needed.
+  into this folder. Quake VR can use the original data. The rerelease folder also supplies owned newer campaigns and their current language tables; it is optional for the original campaign.
 - **GOG and other copies:** any Quake folder with `id1\PAK0.PAK` and `id1\PAK1.PAK` works the same way.
 - **Music:** if you hear no music, copy the soundtrack into `id1\music`. The Steam version has it in
   `rerelease\id1\music`.
@@ -57,7 +57,8 @@ The re-release's data works too, with the campaign and both mission packs. Its f
 and an `id1\pak0.pak` of about 220 MB. On Steam, that's `Quake\rerelease`. Don't unzip Quake VR into this folder,
 because the package's `SDL2.dll` would replace the re-release's own. Use one of these instead:
 
-- Copy the re-release's `id1`, `hipnotic` and `rogue` folders into your Quake VR folder, then run `QuakeVR.bat`.
+- Copy the re-release's `id1` folder into your Quake VR folder, plus `hipnotic` and/or `rogue` if you want those
+  campaigns, then run `QuakeVR.bat`.
 - Or leave the data where it is, and name both folders on the command line:
   `QuakeVR.bat -basedir "<re-release folder>" -basedir "<Quake VR folder>"`. Don't end either path with a `\`.
 
@@ -71,11 +72,9 @@ What changes with the re-release data:
   maps the script reports that the patch "is for another version of the map" and leaves them alone, which is fine:
   their water is see-through already. Relit maps replace a map whichever version they were made from, so make them
   from the data you play with.
-- **Dimension of the Past** (`dopa`) plays with Quake VR's gameplay. If you copied the folders, copy `dopa` too.
-  Start `ironwail.exe -game dopa -game quakevr`, in that order (plus the `-basedir` options, if you use them), then
-  type `map e5start` in the console.
-- **Dimension of the Machine** (`mg1`) has its own QuakeC. `QuakeVR.bat -game mg1` runs it in
-  [compatibility mode](#custom-maps-and-mods).
+- **Additional official campaigns:** the re-release includes Dimension of the Past (`dopa`), Dimension of the
+  Machine (`mg1`) and Dawn of the Machine (`mg3`). Their installed data is detected separately from native gameplay
+  readiness. See [Official campaigns](#official-campaigns) before starting one.
 
 ## Installing the package
 
@@ -146,12 +145,65 @@ Angle* and *Off Hand Angle* in VR Settings (the *Hand/Gun Calibration* page has 
 
 ## Mission packs
 
-If `hipnotic` (Scourge of Armagon) and `rogue` (Dissolution of Eternity) are in your Quake folder, Quake VR uses
-them automatically. There's nothing to copy or rename. In the VR hub, press the button for the campaign you want
-(Quake, SoA or DoE) and step into the portal. The Steam version of Quake includes both packs.
+**No expansion is required for Quake's campaign, the VR hub, tutorial or firing range.** Scourge of Armagon
+(`hipnotic`) and Dissolution of Eternity (`rogue`) are independent optional packs. Each enables its own campaign,
+weapons, monsters and items; either works without the other. Pack weapons/items and their random drops are disabled
+when their data is unavailable. Rogue is also needed for lava nails made by shooting through a torch's flame.
 
-Don't start the mission packs with `-game hipnotic` or `-game rogue`: that would run their own QuakeC, without Quake
-VR's gameplay. Quake VR's QuakeC already contains all three campaigns.
+Put the complete owned pack data in its folder alongside `id1`. Quake VR validates the pack's own required maps,
+models and sounds before mounting it; an empty directory or a VR replacement view model does not establish that the
+pack is installed. Missing, incomplete or corrupt packs are reported at startup. Their hub buttons are marked
+*unavailable*, and selecting their campaign is blocked with a message explaining which data to restore. Run
+`vr_pack_status`, or choose *Debug > Reports > Mission Pack Status*, to see each pack's status. Restore the pack
+from your owned copy when validation reports missing files or a damaged archive.
+
+In the hub, press an available campaign's button (Quake, SoA or DoE) and step into the portal. Keep the same pack
+installation when restoring a save: changing the set of packs changes the saved model indices, so an incompatible
+save is rejected before loading. Saves from the earlier merged VR progs require both packs.
+
+Use the hub or Official Campaigns selector to start an owned campaign with Quake VR's gameplay. The merged VR
+QuakeC contains Quake, Scourge of Armagon and Dissolution of Eternity; selecting one keeps VR's progs active.
+
+## Official campaigns
+
+Open **Single Player > Official Campaigns**, **VR Settings > Official Campaigns**, or the hub's campaign board link.
+The selector shows Quake, the two mission packs, Dimension of the Past (`dopa`), Dimension of the Machine (`mg1`)
+and Dawn of the Machine (`mg3`). Each entry reports missing data, incomplete/corrupt data, or installed data with
+its native gameplay readiness. **Dimension of the Past is ready for native single-player VR**, including authored
+normal/secret routes, deferred monsters, fog/exploding geometry, VR inventory carry/save/reset and readable
+completion text/menu. Dopa coop context/join/respawn behavior is not accepted; ordinary launch requires `coop 0`, `deathmatch 0`, and `maxplayers 1`.
+**Dimension of the Machine and Dawn of the Machine remain in progress**; ordinary selection refuses them until
+their gameplay and progression are ready. Installed maps alone do not establish support.
+
+For an owned Steam installation, Quake VR checks the original Quake folder and its `rerelease` folders. It also
+checks explicit `-basedir` roots and the existing Steam/GOG discovery paths. No expansion download or separate
+installer is needed when complete data is found. For other copies, keep each complete owned pack folder alongside
+`id1`, or use the two `-basedir` options shown above. Detection does not copy assets or write into the borrowed
+installation. The last explicit base has priority; a damaged copy there is reported rather than silently replaced
+by another installation.
+
+The newer campaigns also need current language tables from the owned rerelease `id1` data; their expansion
+PAKs do not contain them. Quake VR borrows only these tables from the configured roots or enabled Steam/GOG
+discovery, without adding the borrowed `id1` maps/models to your campaign paths. `-nosteam`, `-nogog`, and
+`-noegs` disable the corresponding store lookup; explicit `-basedir` roots and their rerelease subfolders still
+work. Keep the writable Quake VR folder as the last `-basedir` in the command shown above.
+
+Custom local translations have priority. Missing, empty, or untranslated entries are filled from owned tables
+in that language, then owned English. An old/incomplete table alone blocks ordinary launch and reports which
+identifiers are missing; point `-basedir` at updated owned rerelease data or enable store lookup. No commercial
+language text is included in the VR package.
+
+Run `vr_campaign_status`, or **Debug > Reports > Official Campaign Status**, to inspect resolved folders,
+language coverage, and readiness. Language-load messages show actual table paths. `loc_probe $identifier
+[arguments...]` previews resolved/formatted text and prints the specific table that supplied it; **Debug >
+Reports > Dopa Finale Text** previews the ending. `vr_campaign_select <folder>` uses the same availability checks as the selector. `vr_campaign_hub`
+returns to the VR hub and restores the base campaign paths. Saves restore their campaign context, but still require
+the same optional mission-pack set described above. Newer expansion save schemas may change during development.
+
+Official campaign arguments such as `QuakeVR.bat -game mg1` now keep VR's merged progs active; they are not a way
+to opt into the pack's original gameplay code. Developer-only `vr_campaign_native <folder>` bypasses the readiness
+gate for testing and warns that gameplay/progression is incomplete. Use the normal selector for supported play.
+Current port coverage and outstanding mechanics are recorded in the [expansion audit](vr-port/EXPANSIONS.md).
 
 ## Custom maps and mods
 
