@@ -26599,9 +26599,125 @@ peaks (the wrist's and the arm's): an artefact of the mock's held velocities.
 At 72 fps the throws change a little: the flicked overhand 4.9 m/s (4.4 before: the release's own speed now counts in
 full at the window's end), overhand0 +16 degrees (+5 to +15 before, depending on where the frames fell).
 
-**Still to run** (the in-engine sweep was blocked by a profiling run; built and statics-checked only): the four plays
-at 72, 90, 120, 144, 240 fps (`vr_fixed_frames_rate`), a jittered run, bullet time (both `vr_throw_slowmo_aim` and
-`_tempo`), Sandevistan, `vr_debug_throw 2` timings, e1m1 smoke.
+In the engine (b7b1ee7f plus this, Release; `vr_fixed_frames_rate` as given, the server on its own 72 Hz clock: before
+the tickrate work on host.c; 1000-key plays with the grip opening as a hand does, `--grip 2`; mock, Gun Angle 70,
+`vr_mock_grip_velocity 1`), speed m/s, elevation, spin rad/s:
+
+| | overhand | lob | flat | overhand0 |
+|---|---|---|---|---|
+| before, 72 fps (the old 1000-key plays) | 4.37, -1.3, 32.3 | 4.82, +18.0, 14.5 | 4.97, +5.1 | 6.36, +5.3, 11.7 |
+| before, 240 fps | 4.42, -1.6, 34.2 | 4.70, +22.8, 15.7 | 5.02, +5.1 | 6.33, +19.5, 11.5 |
+| now, 72 fps | 4.88, -0.6, 32.8 | 4.72, +18.8, 15.5 | 4.98, +5.0 | 6.28, +16.3, 11.5 |
+| now, 90 | 4.89, -1.2, 32.9 | 4.73, +18.9, 15.5 | 4.99, +5.1 | 6.29, +16.5, 11.5 |
+| now, 120 | 4.89, -0.9, 33.1 | 4.73, +18.9, 15.5 | 4.99, +5.1 | 6.29, +16.3, 11.5 |
+| now, 144 | 4.89, -1.3, 33.2 | 4.73, +18.9, 15.6 | 4.99, +5.1 | 6.30, +16.5, 11.5 |
+| now, 240 | 4.89, -1.4, 33.3 | 4.73, +18.9, 15.6 | 4.99, +5.0 | 6.30, +16.6, 11.5 |
+| now, 90 fps, frame times +-30% (`vr_fixed_frames_jitter 0.3`) | 4.86, -0.7, 33.0 | 4.72, +18.9, 15.5 | 4.99, +5.1 | 6.30, +16.3, 11.5 |
+| now, 240 fps, +-30% | 4.88, -1.3, 33.3 | 4.73, +19.0, 15.6 | 5.00, +5.0 | 6.31, +16.4, 11.5 |
+| bullet time at real speed (default caps), 72 / 240 | 8.00, -0.6 / -1.4, 20 | 8.00, +18.8 / +18.9, 20 | 8.00, +5.0 | 8.00, +16.3 / +16.6, 20 |
+| bullet time, made slowly (`stretch` 3.33), 72 / 240 | 4.89, -1.4 / -1.5, 20 | 4.73 / 4.76, +18.9 / +17.9, 15.6 | 5.00, +5.0 | 6.30, +16.5, 11.5 |
+| Sandevistan, 72 / 240 | as 72 / 240 fps above, to the hundredth | | | |
+| 90-key plays (the mock's stairstep velocity), 72 / 240 | 5.01 / 4.91, -4.4 / -5.1, 33 | 4.69 / 4.73, +21.1 / +19.5, 15.4 | 4.97, +5.0 | 6.26 / 6.30, +12.4 / +12.8, 11.6 |
+
+Over 72-240 fps and the jittered runs: speed within 0.6%, direction 0.8 degrees, spin 1.5% (before: 14 degrees at the
+most, overhand0). The engine gives the offline replica's numbers to 0.1 degree. Bullet time keeps its design (the
+slowed hand's 8 m/s and 20 rad/s caps, the controller's way: `vr_throw_slowmo_aim`; a throw made slowly as at full
+speed: `_tempo`; the made-slowly lob 1 degree lower at 240 fps), Sandevistan is full speed's. The 90-key plays now agree
+between 72 and 240 fps within 2.2 degrees (14 before); they differ from the smooth plays, being another motion
+(velocities held for 11 ms). Test: `throw_plays.py --rate 1000` (the grip opening as a hand does is its
+default, `--grip 2`) played with `vr_fixed_frames 1; vr_fixed_frames_rate <fps>; vr_gunangle 70; vr_debug_throw 2;
+vr_mock_grip_velocity 1` (`vr_fixed_frames_jitter`, new: uneven frame times, a seeded sequence). e1m1 smoke clean.
 
 In VR: throw overhand, underarm, flat and with a wrist flick at your headset's lowest and highest refresh rates: the
 same throw should go the same way and as far. Two-handed throws and throws in bullet time as before.
+## Profiling: CPU and GPU, loading and gameplay apart (2026-10-06)
+
+The whole suite with the author's settings (one run each), VTune on the loads alone and on gameplay windows alone,
+the engine's GPU scopes and Nsight Systems: [PROFILING_2026-10.md](PROFILING_2026-10.md) (the tables, the hotspots,
+a decision list of twelve larger items). Fixed: the hull build's allocations (warden's warm load -15%, ad_grendel's
+-16 to -20%, the same trees), the particles' retro light levels (0.2 to 0.1 ms a frame), the suite's gameplay windows
+no longer overlapping the load's AO bakes (`vr_ao_finish`). New: `vr_bench_profiler` / `vr_profiler_collect` (VTune
+collects only benchmark windows or only map loads; Debug > Profiling and Memory > External Profiler Collects),
+`Misc/quakevr/bench/qvrprof.sh`, `vtune_attr.py`.
+
+## Server tick rate (2026-10-06)
+
+His words: "Please fix the server tick rate." The melee audit found that the server's rate followed the headset's:
+`host.c` ran a server frame once the time built up reached `host_netinterval` and gave it all of that time, but
+`host_netinterval` was a float, and 1/72 as a float (0.013888889) is a little over an exact 1/72 s frame (a double):
+one 72 Hz frame never reached it, so the server ran every other frame with two frames' time. Measured (mock,
+`vr_fixed_frames_rate`, `host_tickstats`; the same take played at each rate):
+
+| headset frames | old: ticks/s | old: tick length | old: Box3D steps a tick | new: ticks/s | new: tick length |
+|---|---|---|---|---|---|
+| 60 | 60 | 16.7 ms | 1 | 72 (1 frame in 5 runs 2) | 13.89 |
+| 72 | **36** | 27.8 | 2 | 72 (one each frame) | 13.89 |
+| 72, +-2% jitter | 45.7 (14 or 28 ms) | 13.9-28.2 | 1.58 | 72 | 13.4-14.4 |
+| 80 | 40 | 25.0 | 2 | 72 (1 frame in 9 none) | 13.89 |
+| 90 | 45 | 22.2 | 1 | 72 (4 frames in 5) | 13.89 |
+| 120 | 60 | 16.7 | 1 | 72 (3 in 5) | 13.89 |
+| 144 | 48 | 20.8 | 1 | 72 (every other) | 13.89 |
+| 144, +-2% | 55.9 | 13.9-21.0 | 1 | 72 (every other) | 13.6-14.1 |
+| 240 | 60 | 16.7 | 1 | 72 | 13.89 |
+| dedicated server | 16-20 (`sys_ticrate`) | 50-60 | | 72 | 13.5-14.5 |
+
+The tests never saw it: `vr_fixed_frames_rate 72` forced a server frame with each host frame
+(`vr_motion_play.cpp serverFrameOverride`), so `vr_motion_eval rate 72` actually ran a 36 Hz server, and
+MULTIPLAYER.md's "72 Hz whatever the headset's refresh rate" was wrong for 72-144 Hz headsets.
+
+**Fix** (`host.c`, `Host_FixedTicks`; `host_fixedtick 1`, default):
+- `host_netinterval` is a double. The time built up is spent in fixed ticks of 1/72 s, the rest carried to the next
+  frame; a frame that is behind runs several (at most `host_fixedtick_max` 8, about 110 ms; past that the time is
+  dropped: the game slows after a long hitch instead of stalling to catch up).
+- A frame within `host_fixedtick_tolerance` (1 ms) of a whole number of ticks runs them with all of its time spread
+  over them (each up to 7% longer or shorter): a 72.1 Hz headset, or one with jittery frame times, gets one tick each
+  frame (144 Hz: every other), never a skipped one then a doubled one beating against the 72 Hz clock. The game's
+  clock stays the wall clock's.
+- Every tick sends a move (`CL_SendCmd`) and runs `Host_ServerFrame`; a frame's later ticks send the same sticks' and
+  mice's accumulated move (`cl.pendingcmd`), the hands' poses are the frame's (the server's melee sweeps the first
+  tick's move, the later ones see no motion), the room-scale step goes with the first. Walking at 30/60/72/144 fps
+  goes 300-313 units a second.
+- `host_timescale`, `host_framerate` and slow motion (`vr_timescale`, bullet time, Sandevistan) scale each tick as
+  before: at 90 fps, 72 ticks a second either way, the server's clock x0.5 with `host_timescale 0.5` and x0.25 with
+  `vr_timescale 0.25`.
+- A dedicated server's frame waits for the next tick (at most `sys_ticrate`): 72 Hz, a move from each client used
+  each tick, its clients' updates even (down: about the listen server's 18 KB/s instead of 5.7).
+- `host_fixedtick 0`: the old way, exactly (the float comparison kept), and a dedicated server at `sys_ticrate`.
+- Box3D steps once a tick (its 1/45 s pieces: one piece at 1/72; the old 25-28 ms frames took two).
+- `wait` counts frames that ran the server: at 90 fps four frames in five; below 72 fps a frame with two ticks counts
+  once.
+
+The client's drawing needed nothing: `CL_LerpPoint` lerps the props between the last two messages at `cl.time`, which
+advances with the frames; a ragdoll's drawn pose blends between its steps the same way (`vr_debug_ragdoll 2` at 90
+fps: cl.time 11.1 ms a frame, the blend 0.8, 0.6, 0.4, 0.2, 0.0 between 13.9 ms steps, no stall). `vr_drawn_motion_test`
+after a blast (40 frames, +-2% jitter): no stalled frames at any rate either way; the pelvis's "uneven" 0.03-0.06 new,
+0.02-0.03 old (without jitter 0.022-0.036 vs 0.008-0.015: the old 45 or 48 Hz steps were halved exactly by the
+frames, a straight segment over two frames; 72 Hz steps fall at varying phases of the frames, each frame's move
+mixing two segments: still far from a stall's 2).
+
+Throws (`throw_slowmo_test.sh`, the four 1000-key plays, frames +-2% jittered): the same at 72, 90, 144, 240 fps and
+with either tick (overhand 4.88-4.90 m/s, lob 4.72-4.73, flat 4.98-4.99, overhand0 6.28-6.30; spins within 0.6 rad/s),
+the "now" rows of "Throws at any frame rate" (their in-engine sweep, still to run there, is this).
+
+Cost: the server runs 72 times a second instead of 45 at 90 fps: e1m1's start, 90 fps, `vr_profile_report`: the
+server 0.16-0.19 ms a frame against 0.13-0.15 (exclusive run).
+
+Test aids: `host_tickstats [reset]` (Debug > Profiling and Memory > Server Tick Stats: ticks a second, their lengths in
+half milliseconds, each frame's tick count and the last 48 as digits, the longest run without a tick, the server's
+clock against the frames', Box3D's steps), Fixed 72 Hz Server Tick (`host_fixedtick`) beside it;
+`vr_fixed_frames_jitter <fraction>` (each frame's time jittered around `vr_fixed_frames_rate`, without drift); at
+72 with `host_fixedtick 1` the fixed frames now go through the engine's ticks (one each, of exactly 1/72 s: the same
+as the forced frame). `vr_motion_play` and `vr_motion_eval` take `rate <hz> [jitter <fraction>]`: the take resampled at
+that rate (its frames' times jittered), the server on the engine's ticks as a headset at that rate gets them, and
+`host_tickstats` printed over the take (old: `rate 72` gave 36 ticks a second; new 72). His takes keep their recorded
+server frames when played at their own rate (they were recorded at the old cadence: 36 Hz at 72). The melee eval
+(`eval.sh`) could not run: the current takes are archived pending new recordings.
+
+### Checklist
+- [ ] At 72 Hz and at your highest refresh rate: monsters, gibs and thrown props move as smoothly as before (no
+      stepping), and melee lands as before.
+- [ ] Debug > Profiling and Memory > Server Tick Stats after a minute of play: about 72 ticks a second, lengths
+      13.5-14.0 ms, the frames' digits a steady pattern (72 Hz: all 1; 90: 4 ones in 5; 144: 0 and 1 alternating).
+- [ ] Fixed 72 Hz Server Tick off: Server Tick Stats says 36 at 72 Hz (the old way), back on: 72.
+- [ ] Bullet time and Sandevistan: still smooth, throws in them as before.
+- [ ] A friend on a dedicated server: hands, melee and climbing respond as on a listen server.

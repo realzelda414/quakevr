@@ -204,10 +204,13 @@ QVR_CVAR(vr_mock_angvel_local, "0", CVAR_NONE)
 // Test runs: 1 makes every host frame 1/72 s of game time with a server frame (vr_motion_play.cpp hostFrameTime), so a
 // scripted run (vr_mock_play, "wait") logs the same numbers every time, whatever the machine's pace.
 QVR_CVAR(vr_fixed_frames, "0", CVAR_NONE)
-// Test runs with vr_fixed_frames 1: the host frames a second of game time (72: a server frame with each, as before; 90: a
-// headset's frame rate, the server's frames on its own 72 Hz clock between them: the drawn motion's smoothness tests,
-// vr_drawn_motion_test).
+// Test runs with vr_fixed_frames 1: the host frames a second of game time (72: a server tick with each; 90: a headset's
+// frame rate, the server's ticks on its own 72 Hz clock between them, as in the headset (host_fixedtick): the drawn
+// motion's smoothness tests, vr_drawn_motion_test, host_tickstats).
 QVR_CVAR(vr_fixed_frames_rate, "72", CVAR_NONE)
+// Test runs with vr_fixed_frames 1: each frame's time off by up to this fraction of a frame (0.02: a headset's +-2%), the
+// frames' times jittered around the rate (no drift); the server ticks on its own clock (host_tickstats).
+QVR_CVAR(vr_fixed_frames_jitter, "0", CVAR_NONE)
 // Test runs: 1 runs the mock headset's frames as fast as the machine makes them while the game's clock doesn't follow the
 // wall clock (vr_fixed_frames 1, a motion take played back not in watch mode): no frame cap, no vsync (VR_Unpaced). The
 // same frames and the same numbers as at the frame cap's pace, in less time. Other runs keep their real-time pace.
@@ -1214,6 +1217,7 @@ QVR_CVAR(vr_profile_gpu, "4", CVAR_NONE)               // the profiler's GPU tim
 QVR_CVAR(vr_profile_detail, "1", CVAR_NONE)            // 2: the profiler also times every trace (SV_Move) and every QuakeC builtin call apart (dearer)
 QVR_CVAR(vr_profile_csv, "0", CVAR_NONE)               // 1: the profiler writes a row a second, a column per system, to <gamedir>/profile/systems_<date>_<time>.csv
 QVR_CVAR(vr_profile_hitch, "1.5", CVAR_NONE)           // while the profiler collects, frames over this many budgets (refresh periods) are logged with their breakdown (console, profile/hitches_*.csv); 0 off
+QVR_CVAR(vr_bench_profiler, "0", CVAR_NONE)          // an external CPU profiler (VTune with -start-paused) collects only: 1 inside benchmark windows (vr_bench_begin, from its first recorded frame to its end); 2 inside map loads (the command to the first frame drawn); 0 as it was started. vr_profiler_collect 0|1 by hand
 QVR_CVAR(vr_dlight_models, "1", CVAR_ARCHIVE)          // dynamic lights light models per pixel, by angle and shadowed (0: Quake's flat)
 QVR_CVAR(vr_dlight_angle, "1", CVAR_ARCHIVE)           // dynamic lights fall off with the angle they reach surfaces at (0: Quake's)
 QVR_CVAR(vr_dlight_uncapped, "1", CVAR_ARCHIVE)        // dynamic lights add fully to bright walls (Quake caps them)

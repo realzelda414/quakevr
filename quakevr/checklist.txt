@@ -3,6 +3,7 @@
 # (both kept in git history). Reload List refreshes this page; no rebuild needed.
 
 [New this week]
+Server tick: game logic now runs at a steady 72 Hz at any refresh rate (was 36-60): check smoothness, melee and physics at 72 Hz and your highest rate; Debug > Profiling and Memory > Server Tick Stats ~72/s; toggle Fixed 72 Hz Server Tick off to compare
 Saved games (the firing-range corruption): change Dummy Enemy, cut limbs, get an autosave, die and respawn: every model right (no gremlin pillars, no head-gib buttons); loading an old save says so in the console and once on screen
 Head pops: shotgun and super shotgun headshot kills pop up close, rarer with range (shotgun sooner), never far away; lightning always; heavy thrown things pop (Gore > Decapitation > Head Pop Chance)
 Lightning: one hit puts arcs on a living enemy that last through its death; corpses convulse until the arcs end; try Duration 30 s; arcs readable, lights not too strong (Gore > Lightning Shock)
@@ -89,14 +90,10 @@ Recording: slow motion with game-time sound and highlight markers line up in Res
 Spectator camera: no hand ghost, hides head-locked text, Bullet Time effects toggle
 
 [Decide]
-MG1 Horde solo: dying loads your earlier save if you saved this session (engine autoload) instead of restarting the arena as the official game does: skip autoload in Horde?
-Saves from another build show a warning once on screen: too naggy while you rebuild often (make it a setting)? Menu help box costs ~3 list rows on every page: OK? Limb weight fractions OK?
-Ragdoll masses: vore 160 kg, centroid 180 kg (its arms outweigh its body): OK?
-Limb gore: explosion reach 96 units pops limbs on a whole grunt beside the blast: OK?
-Main menu: keep the row as "Advanced VR" ("Advanced VR Settings" doesn't fit the flat screen in the big font)? Pages show ~2 fewer rows below the moved shortcut column: OK?
-Multiplayer: default for Rocks and Bricks > Most in Multiplayer (now 0 = none)? More cvars as server rules (melee timing is now one)?
-Gibs: should hard throws BURST on walls (lower Gib Splat Speed below ~200) rather than stick? Rottweiler: add a head zone like the fiend's?
 Map tips: seen-tips limit (~80), targetname naming clash, tip_delay 0
+MG3 (defaults used until you answer): axe buttons only axe/Super Axe? Super Axe burst on a 2nd hit? base health 50 + caps 50/100/20/100? bloody shotguns faster refire? new hi-poly monsters with copied/box rigs?
+Profiling: which of the top 5 (same-map hull cache, AO disk cache, shadow casters per light, low-res retro particles, more hull work)?
+Defaults: which of the ~20 candidate settings from your config (INSTALLER.md appendix)?
 
 [Tune]
 Weapon damage, grapple, stamina costs, roll weight and throw damage
