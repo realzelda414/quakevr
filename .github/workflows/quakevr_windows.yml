@@ -10,10 +10,10 @@ env:
 jobs:
   package:
     runs-on: windows-2022
+    timeout-minutes: 60
     steps:
     - uses: actions/checkout@v7
 
-    # package-quakevr.ps1 needs FTEQCC to compile the QuakeC (progs.dat).
     - name: Get FTEQCC
       shell: pwsh
       run: |
@@ -26,14 +26,40 @@ jobs:
         Write-Host "Using $($exe.FullName)"
         echo "FTEQCC=$($exe.FullName)" >> ${env:GITHUB_ENV}
 
-    # Builds ironwail.sln (Release|x64), compiles QC\ into quakevr\progs.dat,
-    # and assembles dist\QuakeVR (exe, DLLs, paks, quakevr folder, QuakeVR.bat).
-    - name: Build engine, compile QuakeC, package
+    # Upstream package-quakevr.ps1 has a PowerShell parse error: "...in $bin: crash..." reads as a
+    # drive-qualified variable. This rewrites "$bin:" to "${bin}:". It's a no-op once upstream fixes it.
+    - name: Patch upstream script parse error
       shell: pwsh
       run: |
-        powershell -ExecutionPolicy Bypass -File Windows\package-quakevr.ps1 -Build -Fteqcc "${env:FTEQCC}"
-        if (-not $?) { throw "Packaging failed" }
-        if (-not (Test-Path dist\QuakeVR\quakevr)) { throw "dist\QuakeVR\quakevr was not produced" }
+        $p = "Windows\package-quakevr.ps1"
+        $t = Get-Content $p -Raw
+        $fixed = $t.Replace('$bin:', '${bin}:')
+        if ($fixed -ne $t) { Write-Host 'Patched $bin: in package-quakevr.ps1' } else { Write-Host 'Nothing to patch' }
+        Set-Content $p -Value $fixed -NoNewline -Encoding utf8BOM
+
+    # The script's last step is Compress-Archive (dist\QuakeVR.zip). Windows PowerShell 5.1 can be
+    # extremely slow at that with its progress bar on, so progress is turned off here. If the zip
+    # still hangs, this step is stopped after 20 minutes; by then dist\QuakeVR is already complete,
+    # and the next steps check that and upload it. The zip itself isn't needed.
+    - name: Build engine, compile QuakeC, package
+      id: package
+      shell: pwsh
+      timeout-minutes: 20
+      continue-on-error: true
+      run: |
+        $cmd = "`$ProgressPreference='SilentlyContinue'; & 'Windows\package-quakevr.ps1' -Build -Fteqcc '$env:FTEQCC'"
+        powershell -ExecutionPolicy Bypass -Command $cmd
+        if ($LASTEXITCODE -ne 0) { throw "Packaging failed" }
+
+    - name: Check package contents
+      if: always()
+      shell: pwsh
+      run: |
+        Get-ChildItem dist -ErrorAction SilentlyContinue | Format-Table Name, Length
+        $need = "dist\QuakeVR\ironwail.exe", "dist\QuakeVR\QuakeVR.bat", "dist\QuakeVR\quakevr\progs.dat"
+        $missing = $need | Where-Object { -not (Test-Path $_) }
+        if ($missing) { throw "Missing from package: $($missing -join ', ')" }
+        Write-Host "Package looks complete (packaging step outcome: ${{ steps.package.outcome }})"
 
     - name: Upload package
       uses: actions/upload-artifact@v7
