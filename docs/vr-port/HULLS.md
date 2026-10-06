@@ -235,6 +235,16 @@ Test aids (Debug > Tests; the approach and the walk also on the page):
 - `vr_hull_probe`: which brush the narrow box is in and by how much, and whether the compiled hull is solid there.
 - `vr_hull_walktest <seconds> [seed]`: the random walk (with `god; notarget`); the level's exits closed meanwhile.
 
+### Kept for a reload of the same map (`vr_hull_keep`, 2026-10-06)
+
+The map's brushes and compiled hulls (the player's and the monsters' trees) are kept in memory when the map is left,
+under a hash of the world's content, and a load whose world hashes the same gets them back instead of building them:
+a death's reload (`restart`, the autosave's `load`), a changelevel back, the same map again (warden's
+`restart` 2.1 s to 0.4 s, ad_grendel's 1.3 s to 0.3 s). `vr_hull_keep` (default 1, Debug > Keep Hitboxes for Reloads) is how many maps are
+kept; 0 is off. A width changed in between is compiled again; external `.bsp` models' brushes and trees are made
+again. `vr_hull_keeptest` rebuilds everything from scratch and checks the hashes match. Details and numbers:
+[PROFILING_2026-10.md](PROFILING_2026-10.md), "Hull build, follow-up".
+
 ## Numbers
 
 ### Load and trace cost, and agreement with hull 1 (32 box), all 32 id1 maps
@@ -551,3 +561,20 @@ player's does (Quake's own `SV_RecursiveHullCheck`). With the setting off: nothi
    fewer drops), but a dog or a fiend at 16 puts half its body into walls, and bodies meet the narrower box.
 3. **Height.** Kept at Quake's (56, 88): a dog's box is 40 tall but it still can't go under 56. Following the box's
    height is one more setting away, but maps were made for 56 and 88.
+
+## Brush models' hulls prepared at load (2026-10-05)
+
+Loaded brush models (doors, platforms, other inline models and precached external `.bsp` models) get their
+collision hulls built at map load for every player and monster box size known then, as the world's already were;
+before, the first contact built them during play, a burst of allocations (1,549 requests in one frame on `e1m1`,
+4,628 on `e2m2`; 37 and 49 after). External brush geometry is recovered on the main thread first; the builds then run
+in parallel, one worker per size (each owns its tree and builds its submodels in order, since they append to shared
+node and plane arrays). The phase took 10-27 ms on the maps measured and keeps 12-111 KB more. Changing a width or
+turning brush-model collision on prepares the missing hulls too; with brush-model collision off nothing is built.
+Sizes that first appear later (a monster spawned after load) still build on demand, and the 128-size cache stays
+demand-filled.
+
+Checks: `vr_hull_preloadtest` compares traces against freshly built trees without filling the cache;
+`vr_hull_audit 1` prints the preparation's counts, bytes and time; `vr_startup_times` includes the phase;
+`Misc/quakevr/hull_preload_test.py` runs both over `vrfiringrange,e1m1,e2m2,start` (`--traverse` for a scripted
+walk). The full report, `HULL_PRELOAD_20261005.md`, was removed 2026-10-06 and is in git history.

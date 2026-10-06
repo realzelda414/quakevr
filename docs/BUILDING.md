@@ -9,7 +9,8 @@ understand the code, start with [vr-port/PLAN.md](vr-port/PLAN.md) (design and s
 - **Windows x64** and **Visual Studio 2022** with the C++ desktop workload and its **C++ Clang tools for Windows**
   (the ClangCL toolset: the whole engine is built by clang-cl and linked by lld-link). The VR code is C++23, and the
   engine is C (C11).
-- **[FTEQCC](https://www.fteqcc.org/)** (`fteqcc64.exe`) to compile the QuakeC.
+- **[FTEQCC](https://www.fteqcc.org/)** (`fteqcc64.exe`) to compile the QuakeC (the Visual Studio build runs it: see
+  [Building the QuakeC](#building-the-quakec)).
 - **Python 3**, only for the tool scripts.
 - Your Quake folder (with `id1`) to run the game.
 
@@ -56,7 +57,7 @@ takes MSVC's flags):
 | `/Z7` + `/DEBUG` | A `.pdb` for crash dumps (the debug information is in the objects, gathered by the linker). It does not change the code |
 
 The frame is not CPU-bound (about 0.35 ms of CPU a frame on the development PC), so these flags make little
-difference to the frame rate. ROUND19.md ("Build flags") has the measurements. SDL2, the codecs, curl and the OpenXR
+difference to the frame rate. ROUND19.md ("Build flags"; removed 2026-10-06; git history) has the measurements. SDL2, the codecs, curl and the OpenXR
 loader are prebuilt DLLs, used as they are.
 
 Debugging in Visual Studio works as with MSVC (breakpoints, stepping, watches, `ironwail.natvis`), but there is no
@@ -84,12 +85,21 @@ OpenXR backend binds to OpenGL through WGL, so there is no VR outside Windows x6
 
 ## Building the QuakeC
 
+**The Visual Studio build compiles it** (`ironwail.vcxproj`'s `QvrCompileQC` target, before the C/C++): it runs
+FTEQCC on `QC\progs.src` into `quakevr\progs.dat` when a `.qc` file or `progs.src` is newer than `progs.dat`, and a QC
+error fails the build. The compiler's path is the MSBuild property `QvrQcCompiler` (its default is the author's
+`C:\OHWorkspace\quakevr\QC\fteqcc64.exe`; elsewhere pass `-p:QvrQcCompiler=C:\path\to\fteqcc64.exe`). Without the
+compiler the build warns and keeps the old `progs.dat`. It does not run the checks below.
+
+On its own, or with the checks:
+
 ```
 set FTEQCC=C:\path\to\fteqcc64.exe
 QC\build.bat
 ```
 
-This writes `quakevr\progs.dat` (`QC/build.sh` does the same elsewhere). A new engine with old progs, or the other
+This writes `quakevr\progs.dat` (`QC/build.sh` does the same elsewhere), then runs `check_qc_precedence.py` (no
+expression that FTEQCC reads differently from C) and TrenchBroom's entity-definition check (`fgdgen.py --check`). A new engine with old progs, or the other
 way round, can break level changes and saves, so rebuild both together.
 
 ## Building the release package
@@ -101,15 +111,20 @@ powershell -ExecutionPolicy Bypass -File Windows\package-quakevr.ps1 [-Build] [-
 - `-Build` builds the solution (Release | x64) first. Without it, the script uses the last build.
 - `-Fteqcc` is the compiler. The script falls back to the `FTEQCC` environment variable, then to `fteqcc64` on
   `PATH`. The QuakeC is always compiled fresh.
-- The result is `dist\QuakeVR\` and `dist\QuakeVR.zip`. They contain the engine's `.exe`, `.dll` and `.pak` files,
-  the `quakevr` folder, `QuakeVR.bat` (`ironwail.exe -game quakevr %*`), and a short `README-QuakeVR.txt`.
-- The script copies `quakevr` as it is on disk, leaving out player files: `ironwail.cfg`, `config.cfg`,
-  `autoexec.cfg`, `history.txt`, `qconsole.log`, saves and demos, and the `screenshots`, `notes`, `profile`,
-  `autosave` and `eyeshots` folders. It also leaves out **`relit`**: the relit maps are id Software's maps and must
-  never be redistributed. Anything else in the folder is copied, so package from a clean game folder.
-- It adds the relighting scripts (`relight_maps.py`, `vis_maps.py`, `quakepak.py`, `relight_textures.cfg`) in
-  `quakevr\tools\`, so players can relight their own maps without the repository
-  ([RELIGHTING.md](RELIGHTING.md)). From there, the script's default output is the installed `quakevr\relit`.
+- The result is `dist\QuakeVR\` and `dist\QuakeVR.zip`. They contain the engine's `.exe`, `.dll` and `.pak` files
+  and its `ironwail.pdb` (crash reports name functions only with it), the `quakevr` folder, `QuakeVR.bat`
+  (`ironwail.exe -game quakevr %*`), a short `README-QuakeVR.txt`, and `manifest.json` (every file's size and
+  SHA-256, `write-package-manifest.ps1`, which the installer checks). `-DryRun` only lists the files.
+- The game folder is an allowlist: the files git tracks under `quakevr\` (less the development data the script
+  lists) and the build outputs. Nothing untracked ships: saves, configs, screenshots, notes, custom maps, and the
+  **`relit`** maps (id Software's maps, never to be redistributed) stay out however they got into the folder.
+- It adds the relighting scripts (`relight_maps.py`, `vis_maps.py`, `quakepak.py`, `quakeimage.py`,
+  `relight_probe.py`) in `quakevr\tools\`, so players can relight their own maps without the repository
+  ([RELIGHTING.md](RELIGHTING.md)); from there, the script's default output is the installed `quakevr\relit`. With
+  ericw-tools found (`QVR_ERICW_TOOLS`, else the author's copy), it also ships `light.exe` and its DLLs in
+  `quakevr\tools\ericw-tools\` for the in-game relighting (a warning otherwise).
+- **The installer** (`Installer/`, C# and WPF on .NET 9) installs such a package: see
+  [Installer/README.md](../Installer/README.md) and [vr-port/INSTALLER.md](vr-port/INSTALLER.md).
 - The release is too large for a GitHub release, so it is published on [vittorioromeo.com](https://vittorioromeo.com).
 
 ## Running from the repository
@@ -138,7 +153,9 @@ beyond 256 characters. Use an `autoexec.cfg` for long test setups.
 
 ## Tool scripts (`Misc/quakevr/`)
 
-All of them are Python 3. Run them from the repository root. Each script's header comment documents it fully.
+Most are Python 3 (some test helpers are `.sh` or `.ps1`). Run them from the repository root. Each script's header
+comment documents it fully. Many more one-off test and measurement scripts live there; the table lists the ones
+in regular use.
 
 | Script | What it does |
 |---|---|
@@ -151,6 +168,10 @@ All of them are Python 3. Run them from the repository root. Each script's heade
 | `improve_weapons*.py`, `recolor_shotgun_sight.py`, `taper_hand.py`, `make_bloody_hands.py` | Rework the weapon and hand models (grips, trigger guards, details, sights, damage skins) from the sources in `src_models/` |
 | `make_detail.py`, `make_grades.py`, `make_sounds.py` | Generate the detail textures, the colour grades and the synthesised sounds |
 | `quakepak.py` | Reads Quake's `.pak` files (used by the others) |
+| `check_statics.py`, `check_qc_precedence.py` | The code checks: no function-local statics in `Quake/vr` ([CODE_STYLE.md](vr-port/CODE_STYLE.md)), no QuakeC expression read differently from C |
+| `bench/qvrbench.py` | The benchmark scenarios, summaries and comparisons ([BENCHMARKS.md](vr-port/BENCHMARKS.md)) |
+| `menu_coverage.py` | Checks the VR menu tree from `menu_vr dump`: every setting reached, nothing lost in a reorganisation |
+| `make_vrcalibration_map.py` | Writes (and with `--compile` builds) the VR Calibration room's map |
 
 ## Contributing
 

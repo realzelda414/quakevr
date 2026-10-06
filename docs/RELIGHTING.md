@@ -20,9 +20,9 @@ the result is the same as the author's.
 - [Relighting in the game](#relighting-in-the-game)
 - [ericw-tools' licence](#ericw-tools-licence)
 
-A tool that does all of this automatically is planned. Until then, these are the steps. A single map can also be
-relit from inside the game, with your own brightness settings: see
-[Relighting in the game](#relighting-in-the-game).
+The game can also relight maps itself, without Python, with your own brightness settings: one map, an episode, a
+game or every map, in the background (see [Relighting in the game](#relighting-in-the-game)). It has no VisPatch
+step, so the script below is still the way to see-through water.
 
 ## What you need
 
@@ -33,7 +33,9 @@ relit from inside the game, with your own brightness settings: see
 2. **Python 3.7 or newer** from [python.org](https://www.python.org/downloads/). In the installer, tick *Add
    python.exe to PATH*. The scripts use only Python's standard library, so there's nothing else to install with
    `pip`.
-3. **ericw-tools 2.0.0-alpha11**, the tools that compute the light. Download
+3. **ericw-tools 2.0.0-alpha11**, the tools that compute the light. The package has its `light.exe` in
+   `quakevr\tools\ericw-tools\` (and the game can download it: see [Relighting in the game](#relighting-in-the-game)):
+   pass that to `--light`. Otherwise download
    `ericw-tools-2.0.0-alpha11-win64.zip` (27.5 MB) from
    [its release page](https://github.com/ericwa/ericw-tools/releases/tag/2.0.0-alpha11) and extract it to a folder of
    its own, for example `C:\tools\ericw-tools-2.0.0-alpha11-win64`. `light.exe` should be directly in that folder.
@@ -71,8 +73,15 @@ relit from inside the game, with your own brightness settings: see
    This changes 61 of the 73 maps. Without QRP, the maps are still relit, but only textures that glow in Quake's own
    images get lights, so the result differs from the author's.
 
-You also need the original Quake data: `id1` with `PAK0.PAK` and `PAK1.PAK`, and `hipnotic` and `rogue` if you have
-the mission packs. The Steam and GOG versions have them. The 2021 re-release's maps (in `rerelease`) aren't used.
+You also need Quake's data: `id1` with its `.pak` files, and `hipnotic` and `rogue` if you have the mission packs.
+The script relights the maps it finds in the folder you give it with `--quake` (its `id1`, `hipnotic` and `rogue`).
+The Steam Quake folder and GOG's hold the original 1996 maps, so the command below relights those; the 2021
+re-release's maps, in Steam's `rerelease` subfolder, are only read if you give `--quake` that folder. Make the relit
+maps from the data you play with ([INSTALL.md](INSTALL.md#only-the-2021-re-release) for playing on the re-release's
+data): a relit map replaces its map whichever version it was made from. Relit re-release maps get the same look as
+the original ones (the script drops the lighting settings the re-release put in its maps), and their water is
+see-through already. Relighting in the game reads each map as the game finds it, so from whichever data you play
+with.
 
 ## Step by step
 
@@ -122,10 +131,10 @@ If you write the paths as `--quake .` from inside the Quake folder, that works t
 - **Relit maps** are used automatically from the next map you load. *VR Settings > Advanced VR Options >
   Graphics > Relit Maps* (`vr_relit_maps`) switches between the relit and the original lighting. A map that has
   no relit version plays with its own light.
-- **See-through water:** set how transparent it is in *VR Settings > Advanced VR Options > Transparency > Water
-  Alpha* (`r_wateralpha`, **0.6** by default in Quake VR; 1 is opaque). Maps that aren't water-vised keep opaque water whatever it says. Slime
-  and teleporters use the same value, unless *Slime Alpha* or *Tele Alpha* is set. Lava is opaque by default
-  (*Lava Alpha* 1). All four are saved in the config.
+- **See-through water:** set how transparent it is in *VR Settings > Advanced VR Options > Graphics > Transparency >
+  Water Alpha* (`r_wateralpha`, **0.3** by default in Quake VR; 1 is opaque). Maps that aren't water-vised keep opaque
+  water whatever it says. Slime and teleporters have their own (*Slime Alpha* 0.6, *Tele Alpha* 0.9), and lava too
+  (*Lava Alpha* 0.9, though VisPatch doesn't vis lava, so it looks opaque). All four are saved in the config.
 
 ## Checking the result
 

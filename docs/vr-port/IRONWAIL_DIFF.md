@@ -8,6 +8,10 @@ hooks into the module and the engine changes the module needs. To list it:
     git diff --stat v0.8.2 HEAD --diff-filter=M -- . ':!Quake/vr' ':!external'
     git grep -n QVR -- Quake ':!Quake/vr'
 
+Ironwail files Quake VR deleted (2026-10-07, REPO_CLEANUP.md; `--diff-filter=D` lists them): the Win32 platform
+(`Makefile.w32`, `build_cross_win32*.sh`, the x86 libraries, the `Win32` configurations of `ironwail.sln` and the
+`.vcxproj`), SDL 1.2 (`Windows/SDL/`), Watcom, Code::Blocks, the third-party `.pdb` files and `.github/workflows/`.
+
 ## Totals (Ironwail's files changed)
 
 | | Files | Lines added | Lines removed | Hunks |
@@ -15,8 +19,12 @@ hooks into the module and the engine changes the module needs. To list it:
 | Before (vr-cleanup `852ff42c`) | 79 | 6817 | 354 | 826 |
 | After | 73 | 3088 | 320 | 727 |
 | With the spatial audio's hooks (`snd_dma.c`, `snd_mix.c`) | 74 | 3099 | 321 | 735 |
+| Now (2026-10-06, `c86c27c4`: the fixed server tick in `host.c`, the QuakeC build target, campaigns, ...) | 91 | 5209 | 722 | 749 |
 
-Six headers are Ironwail's again (`cvar.h`, `gl_texmgr.h`, `platform.h`, `progs.h`, `view.h`, `zone.h`).
+The per-file table below is from the 74-file state; the files changed since are not in it.
+
+Six headers were Ironwail's again (`cvar.h`, `gl_texmgr.h`, `platform.h`, `progs.h`, `view.h`, `zone.h`); `progs.h`
+has QVR fields again since (+3).
 
 ## Where the code went
 
@@ -70,7 +78,7 @@ after; `models` 0.028 / 0.026 ms.
 | `Quake/gl_shaders.h` | +1823 -43 | +192 -43 | 83 | the splice points of vr/vr_glsl.h's GLSL (one line each) and the few upstream lines changed in place |
 | `Quake/r_alias.c` | +253 -14 | +218 -14 | 35 | the alias instance's VR data (VR_AliasInstance), normal maps, depth-only shadow casters, alpha to coverage, bone poses, wound painting (R_PaintAliasWounds), mirrored and transformed instances |
 | `Quake/world.c` | +207 -8 | +206 -8 | 18 | narrower player hulls, precise model hits, hand touches (SV_AreaEdicts), gibs hit by shots, trace profiling; kept inline (the traces are hot) |
-| `Quake/cmd.c` | +259 -49 | +163 -35 | 36 | the command buffer grows (Cbuf_Reserve) and reads from a position; lines and arguments of any length (VR_ParseToken: vr_cmdtoken.cpp); config migration; counts |
+| `Quake/cmd.c` | +259 -49 | +163 -35 | 36 | the command buffer grows (Cbuf_Reserve) and reads from a position; lines and arguments of any length (VR_ParseToken: vr_cmdtoken.cpp); config migration; removed Quake VR settings ignored quietly (VR_RetiredCvar); counts |
 | `Quake/r_world.c` | +181 -4 | +179 -4 | 26 | depth pre-pass, deluxemaps, normal maps, parallax and detail per texture, alpha to coverage, the liquids' wave mesh and refraction |
 | `Quake/menu.c` | +151 -13 | +149 -13 | 26 | the VR menu (m_vr), VR Calibration row, list scrolling for the controllers, text outlines |
 | `Quake/cvar.c` | +93 -26 | +94 -26 | 18 | no fixed cvar count (grows), appended then sorted when needed, values of any length |

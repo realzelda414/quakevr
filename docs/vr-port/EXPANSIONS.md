@@ -599,7 +599,7 @@ late join/reconnect, per-player carry/death respawn and the authored cooperative
 multiclient acceptance pass. Dopa normal launch remains solo-only until that work is accepted.
 
 Final cap review found native Dopa Nightmare used initial health50 but still max_health100 and transition
-carry50–100. Official MG1 client uses max_health50 and carries between half-cap25 and cap50. Those three bounds
+carry50â€“100. Official MG1 client uses max_health50 and carries between half-cap25 and cap50. Those three bounds
 are now scoped to Dopa/skill3/non-deathmatch; other contexts retain their existing100 cap and50 carry minimum.
 Real ordinary health-box pickup from40 reaches50/max50; a real megahealth pickup reaches150/max50. Completed
 save/load retains both ordinary50 and mega150 states. The actual QC normal exit carries megahealth down to50
@@ -838,9 +838,10 @@ Source parity fixes: a dead Horde player goes through the source's release-then-
 `client.qc` PlayerDeathThink): a trigger held at death no longer restarts the arena at once. Solo, or a coop team
 with nobody alive, restarts the arena (one queued `restart`, even when the press lasts several frames); a dead coop
 player with a living teammate waits for the wave-boundary revival. A player who leaves no longer counts as alive
-(official ClientDisconnect), so waves, targets and team-wipe checks ignore the left body. With a save made in this
-session and `sv_autoload` 2 (the engine default), a solo wipe loads that save, as every Quake death does in this
-engine; with no save (or `sv_autoload` 0) the arena restarts fresh as the source does. Coop has no autoload.
+(official ClientDisconnect), so waves, targets and team-wipe checks ignore the left body. A solo wipe restarts the
+arena fresh as the source does, even with a save made this session (the author, 2026-10-06): Horde's restart is
+`restart fresh`, which skips the engine's autoload (`sv_autoload`); every other death still loads the last save. Coop
+has no autoload.
 
 Source behaviour reviewed and deliberately left as it is:
 - Rune of Hunger: the shipped `mg1/progs.dat` (checked by its statement table) only writes `hunger_time`
@@ -881,7 +882,7 @@ Arenas for manual tests (all seven are in the owned MG1 PAK; `vr_campaign_native
 - horde5: the only boss and flying spawn points together: boss waves (shambler/shalrath/fiends).
 - horde2 and horde6: keyed buttons; horde6 has the most item spawns (9) and two exits.
 - Revival needs coop (two games): any arena, best horde1 (4 coop starts); one player dies, the other finishes the
-  wave. Solo death restarts the arena (or loads your save).
+  wave. Solo death restarts the arena, even after a save.
 
 Still open for full MG1 acceptance: a human coop session (real headsets, late joins, revival telefrag spots);
 melee, gore and ragdolls on Horde monsters in VR (native constructors, not separately measured here); the arena
@@ -898,5 +899,6 @@ for the other campaigns, MG3's 50/50/100/20/100 + 10 per upgrade (mega 500) for 
 (`QC/vr_mg3_upgrades.qc`, adapted from `mg3_upgrades.qc`) are physical holster pickups: first take per map raises
 and fills, a revisit's says so only (faded). Tests: Debug > Tests > Dawn of the Machine Tests (`vr_mg3_test` 1
 report, 2 seed masks, 3 add a bit, 4 capacity check in any campaign, 5 take this map's upgrades). Measurements:
-ROUND21.md, "Dawn of the Machine (MG3): foundation". The six MG3 decisions (plan section 4) are unanswered: these
-tasks use the defaults (official base health 50 and caps).
+ROUND21.md, "Dawn of the Machine (MG3): foundation". The six MG3 decisions (plan section 4) were unanswered when these
+tasks were built, so they use the defaults (official base health 50 and caps); Vittorio has since answered them
+(MG3_PLAN.md, "Decisions (Vittorio, 2026-10-06)").

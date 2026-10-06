@@ -1,7 +1,9 @@
 # Testing in the headset
 
-The first headset build. Everything below was checked on the desktop with the mock backend. OpenXR itself has
-only been checked up to "no headset connected", so expect rough edges: tell me what you see and I will fix it.
+The playtest guide, and the reference for the testing tools (the mock headset, scripted motions, the tests and
+checks). It began with the first headset build; the headset feedback rounds since are in the `ROUND*.md` files.
+"The kit" below is the author's agent toolkit outside the repository (`C:/OHWorkspace/qvr-kit`: `build.sh`,
+`run.sh`, `eval.sh`, `bench.sh`), which wraps these same commands for headless runs.
 
 ## Build and install
 
@@ -11,7 +13,9 @@ By hand:
 
 1. Build `Windows/VisualStudio/ironwail.sln`, **Release | x64**. The output is
    `Windows/VisualStudio/Build-ironwail/bin/x64/Release/ironwail.exe`, with `openxr_loader.dll` copied next to it.
-2. Build the progs: `QC/build.bat` (set `FTEQCC` to `fteqcc64.exe`). It writes `quakevr/progs.dat`.
+2. The progs: step 1's build already compiles them into `quakevr/progs.dat` (with FTEQCC at `QvrQcCompiler`:
+   [BUILDING.md](../BUILDING.md#building-the-quakec)); `QC/build.bat` (set `FTEQCC` to `fteqcc64.exe`) builds only
+   them, with the checks.
 3. Put the repository's `quakevr` folder in your Quake directory, next to `id1` (a directory junction works:
    `mklink /J <Quake>\quakevr C:\OHWorkspace\quakevr-iw\quakevr`). `hipnotic` and `rogue` are picked up
    automatically if they are installed.
@@ -72,7 +76,7 @@ where the weapon starts, and how it flies. Most values are starting points: plea
 - **Release point:** the release velocity is the controller's own velocity (from the runtime) where it was
   fastest, in the window before the moment you let go (`vr_throw_window` 0.12 s), smoothed over
   `vr_throw_peak_span` (17 ms) either side; the samples taken as a signal in time, so the same at any frame rate
-  (ROUND21.md, "Throws at any frame rate"; `vr_throw_lookahead` is no longer used).
+  (ROUND21.md, "Throws at any frame rate"; `vr_throw_lookahead` is removed).
 - **Frozen at release:** it is taken once, when you let go, on the headset's clock, so the network rate can no
   longer slide the window past the peak.
 - **Wrist flicks:** a clear flick (spin above `vr_throw_ang_threshold`, 6 rad/s) adds 70% of the spin's
@@ -140,6 +144,10 @@ It transcribes the new notes and writes `quakevr/notes/NOTES.md`, every note wit
 context and screenshot, ready to paste or to point me at.
 
 ## What to try
+
+The round logs before round 21 (`ROUND6.md` to `ROUND20.md`) were removed on 2026-10-06; to read one,
+`git log --diff-filter=D -- docs/vr-port/ROUND20.md` gives the commit that removed it and `git show <commit>^:docs/vr-port/ROUND20.md`
+prints it.
 
 - **New in this round** (details in `docs/vr-port/ROUND21.md`; each section ends with an "In the headset" list):
   - **The crowbar** (ROUND21.md, same title): one lies in the firing range's prop area, north of the chainsaw. Hold it
@@ -814,7 +822,7 @@ SteamVR (or Virtual Desktop) is restarted too, it is them. The Memory Log (`vr_m
 minute in `quakevr/profile/memstats_<date>.csv`) also times each frame whatever `vr_profile` is: our CPU work
 (`busy_ms`) and the eyes' GPU time (`gpu_eyes_ms`) next to the runtime's waits (`xr_waitframe_ms`, `xr_submit_ms`,
 `gpu_submit_ms`) and missed refreshes (`slow_frames`), with counts of what there is to draw (corpses, thrown weapons,
-decals, lights, particles). Note the time when it feels slower and send that file (ROUND16.md, "Slowdown"). Its GPU
+decals, lights, particles). Note the time when it feels slower and send that file (ROUND16.md, "Slowdown"; removed 2026-10-06; git history). Its GPU
 columns (clocks, slowdowns, each program's use of the GPU: `gpu_*`, `gpu3d_*`, `gpu_programs`) come from a sampling
 thread that runs only while profiling (`vr_profile`, the Profiler Panel or its CSV Capture) or with
 `vr_memstats_log_gpu 1` (Debug > Profiling and Memory > Memory Log: GPU); otherwise they are empty. With `developer 1` the console says when

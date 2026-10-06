@@ -426,8 +426,25 @@ const DefaultChange defaultChanges[] = {
     // 93: Relighting's Light Textures 1.2 (the author relit hip1m1 so, 2026-10-06: "Maybe those should be the new
     // defaults"); relight_maps.py's --light-texture-strength too.
     {93, &vr_relight_strength, "1"},        // 1.2
+    // 94: rocks and bricks in multiplayer as many as in single player (the author, 2026-10-06; MULTIPLAYER.md, "Rocks
+    // and bricks in multiplayer"): Most in Multiplayer's old 0 (none) to -1 (Single Player's: Most in a Map).
+    {94, &vr_debris_mp_max, "0"},           // -1
+    // 95: the author's own gameplay and look values (INSTALLER.md, Appendix A, "Gameplay and look: promote?"; his
+    // config, 2026-10-07): fire particles, head pops, limb grabs, the messages' hologram. The All Categories retro panel's
+    // values (migrateConfig: retro::migrateAllPanel), the grappling hook's flashlight (vr_wofs_version 35) and the gibs'
+    // and heads' weights (vr_props_version 58) too.
+    {95, &vr_fire_particles_alpha, "0.55"},         // 1
+    {95, &vr_fire_particles_count, "6"},            // 8
+    {95, &vr_fire_particles_origin, "0.25"},        // 0.2
+    {95, &vr_fire_particles_size, "2"},             // 2.5
+    {95, &vr_decap_pop_always_range, "3"},          // 2
+    {95, &vr_decap_pop_never_range, "15"},          // 12
+    {95, &vr_decap_pop_thrown_light_chance, "0"},   // 0.25
+    {95, &vr_ragdoll_grab_reach, "6"},              // 2
+    {95, &vr_ragdoll_hand_stick, "12"},             // 2
+    {95, &vr_messages_hologram_height, "5"},        // 10
 };
-constexpr int configVersion = 93;
+constexpr int configVersion = 95;
 
 // Two settings' values the same (as numbers when both are).
 [[nodiscard]] bool sameValue(const char* a, const char* b)
@@ -694,6 +711,11 @@ void migrateConfig()
     {
         retro::migrateShippedLook();
     }
+    // 95: the All Categories retro panel's values start from the shipped look (the author's vr_retro_all_* values).
+    if(from < 95)
+    {
+        retro::migrateAllPanel();
+    }
     // 81: a config pointing vr_extmaps_dir at a downloaded Quetoo folder (quetoo-data/.../textures/quake) takes the
     // shipped copy (relative, in every install).
     if(from < 81 && quetooFolder(vr_extmaps_dir.string))
@@ -831,6 +853,24 @@ void registerCvars()
 
 // Host_WriteConfigurationToFile, before the game folder's config is written over: the settings another copy of the
 // game changed in it since this copy read or wrote it, and this copy left alone, are taken (configTrack).
+// Settings removed (docs/vr-port/CVAR_AUDIT.md): a config, a shipped .cfg or a take that still sets one is not an
+// "Unknown command" (cmd.c asks here); the line is dropped quietly and the next config write leaves it out.
+constexpr const char* retiredCvars[] = {
+    "vr_throw_lookahead", // 2026-10-06: unused since the throw's window ends at the release (ROUND21.md, "Throws at any frame rate")
+};
+
+extern "C" int VR_RetiredCvar(const char* name)
+{
+    for(const char* retired : retiredCvars)
+    {
+        if(!q_strcasecmp(name, retired))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 extern "C" void VR_ConfigMergeOthers(const char* path)
 {
     using namespace qvr;

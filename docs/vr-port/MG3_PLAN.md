@@ -1,6 +1,7 @@
 # Dawn of the Machine (MG3): native Quake VR port plan
 
-Status: plan (2026-10-06). Target: **full native Quake VR gameplay** (VR hands, weapons, melee, holsters, magazines,
+Status: plan (2026-10-06); phase A (M3-01..04) built the same day (EXPANSIONS.md). Vittorio's decisions
+(the last section) override section 4's defaults and the tasks that assumed them (M3-11, M3-12). Target: **full native Quake VR gameplay** (VR hands, weapons, melee, holsters, magazines,
 transition/save state), not compatibility mode. Campaign id **5** (`vr_campaign`/`vr_campaign_schema`), `nativeReady`
 false at `Quake/vr/vr_gamedir.cpp:375` until the acceptance in section 5 passes.
 
@@ -322,3 +323,14 @@ death tests and VR registration; upgrades, runes, Bloody Nightmare and bloody we
 death and hub, and reset on new campaign; both endings and credits work; stock/Dopa/MG1 regression and smoke runs
 pass; performance on the heaviest maps is within budget; language data is gated; and Vittorio's human VR QA of the
 items in M3-30 passes.
+
+## Decisions (Vittorio, 2026-10-06)
+
+1. **Axe buttons** (`func_axe_button`): any melee blow opens them: axe, Super Axe, fists, swords, gun butts, held or thrown props. Not guns.
+2. **Super Axe**: a separate weapon from Hipnotic's Mjolnir, so both coexist (own WID/IID, model, holster/weapon settings slot). MG3 maps' `weapon_mjolnir` is remapped to the Super Axe entity on map load (MG3 campaign only). The lightning burst stays "second hit on the same target within a short window", with a more lenient window for VR (tunable cvar).
+3. **Progression** (50 base health, low ammo caps, +10 upgrades): only in MG3 maps (campaign 5); everywhere else unchanged (already so after M3-03).
+4. **Bloody shotguns**: implemented as intended (faster refire / more pellets). Backlog TODO: distinct bloody textures/skins.
+5. **New MG3 monsters** (infected variants, demodog, rocket ogre, super shambler, ranged knight, orb, ...): generally available whenever MG3's data is detected and readable — spawnable in any map (Debug menu monster spawner, training dummy types) — each with the full Quake VR treatment: ragdoll rig, hit zones, decapitation/head pops, limb gore, knockdown/parry/grapple registration as for the stock monsters.
+6. **Release scope**: single-player first (co-op and dm1 later).
+
+**General principle**: Quake VR's QuakeC is an agglomeration of all official expansions (and popular mods): every official expansion must play as intended, and expansion-specific items, monsters and weapons must also be usable in any other level when their data is available.

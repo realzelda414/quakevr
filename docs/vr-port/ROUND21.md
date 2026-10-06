@@ -26640,6 +26640,21 @@ no longer overlapping the load's AO bakes (`vr_ao_finish`). New: `vr_bench_profi
 collects only benchmark windows or only map loads; Debug > Profiling and Memory > External Profiler Collects),
 `Misc/quakevr/bench/qvrprof.sh`, `vtune_attr.py`.
 
+## Hull build: containers and hulls kept for a reload (2026-10-06)
+
+His questions on the hull build's vectors (clipWinding's two heap vectors, `Winding` and `Poly` as small vectors, a
+`za::Vector` audit) and "keep the compiled hulls across a reload of the same map". Measured first (sizes of every
+winding, piece, split and candidate list on warden, ad_grendel, e4m7, e1m1; allocations per function), then:
+`Winding` = `SmallVector<dvec3, 8>`, a node's pieces `SmallVector<Frag, 4>`, clipWinding's buffers
+`SmallVector<..., 64>`, `Poly` kept a `za::Vector` (too big in place), and the tree's plane index kept across its
+models' builds (it was rebuilt for every brush model: 5.2 of ad_grendel's 8.5 million load allocations). A big map's
+load: 38 M allocations to 4.3 M; warden warm load -39%, ad_grendel -35%; same trees (hashes). Then `vr_hull_keep`
+(default 1): brushes and trees kept at a map change under the world's content hash, taken back by the next load of
+the same content: warden's `restart` 2134 to 378 ms, ad_grendel's 1283 to 326. `vr_hull_keeptest` checks kept against
+fresh; Debug > Keep Hitboxes for Reloads, Hitbox Keep Test. New bench scenario `load_reloads`. Details, tables and
+the wider `za::Vector` audit (recommendations only): [PROFILING_2026-10.md](PROFILING_2026-10.md), "Hull build,
+follow-up". For VR: die on warden (or `restart`) and check the reload is quick and walls/doors still block you.
+
 ## Server tick rate (2026-10-06)
 
 His words: "Please fix the server tick rate." The melee audit found that the server's rate followed the headset's:
@@ -26773,3 +26788,282 @@ test uses the developer path (`vr_campaign_native mg3`, `-nomapindex`).
   no melee code changed.
   For VR: on map3 (`vr_campaign_native mg3`, `map map3`) take an upgrade to a holster: message, capacity, refill;
   return to the map to see it faded.
+## The author's decisions: Horde deaths, hard gib throws, the rottweiler's head, rocks in multiplayer (2026-10-06)
+
+### Rottweiler head zone (positional damage)
+
+His answer: the rottweiler gets a head zone like the fiend's. `PositionalHead` (weapons.qc) has his now, and
+decapitation's own branch for him (`VR_Decap_HeadZone`) is gone: one source for headshots, melee head hits, head pops
+and beheading. The numbers are decapitation's (23 forward, 1 up, radius 7): `progs/dog.mdl`'s frames have no names, so
+his rest pose (`hitmodel_rest`'s stand frame, `restPoseOf`: the first frame named "stand", else frame 0) is `$attack1`,
+lunging, his head level with his origin. Measured on that frame: the snout's front vertices at 29.6 forward, 0.2 up;
+the head's (forward of 22) centroid 26.9 forward, 3.4 below (the forelegs reach forward under it in the lunge). In
+`$stand1` his head lies 22 to 32 forward and 8 below to 3 above his origin: a hit there maps to the same triangle in
+`$attack1`, so the zone fits him standing as well.
+
+Precise hits' ring (`impulse 238`, which now also rings his head with a blade: positional melee's region of the point
+it met), e1m1, a rottweiler 96 units ahead (`vr_test_spawn 7`): head ring 0 headshots before (no zone), 18-19/24 on his
+model after (7/24 on boxes); blade ring 18/24 head (22-23/24 contacts); chest ring 3 head, 9 limb, 12 legs on his model.
+`vr_decap_test 17` (shotgun at his head, health 500): "6 pellets, 6 head (x1.50)"; `vr_decap_test 1`: beheaded,
+h_dog thrown at 174 u/s. (`vr_decap_test 7` reads "limb" on him: its blow lands at the zone's middle *inside* the
+animated model, and the nearest triangle to that point in `$stand1` is not his head's; a blade meets his surface first,
+as the blade ring shows.)
+
+In VR:
+- [ ] Shoot a rottweiler in the head, slash it (Show Damage Numbers): "head (x1.50)"; a killing slash beheads him.
+
+### MG1 Horde: a solo death restarts the arena, never the last save
+
+His answer: dying in a Horde game must not load an earlier save. The engine's `restart` (Host_Restart_f) autoloads the
+session's last save for a dead single player (`sv_autoload` 2, the default: Host_AutoLoad); Horde's team wipe
+(`MGH_DeathThink`, vr_mg_horde.qc) restarted with it, so a save made mid-arena was loaded instead of the fresh arena
+the official game gives. Now `restart fresh` skips the autoload (any other argument, or none, is the old command), and
+Horde's wipe sends that. Only an active Horde game: every other death (`respawn`'s `restart`, a changelevel to the
+same map) still autoloads; coop never did. Another engine ignores the argument and restarts as before.
+
+Tests (horde1, solo, `developer 1`, a save `dz_horde` made first, `vr_mg_horde_test 17` killing the player): the
+release-then-press gate (`+attack`, then test 16 to continue after the queued restart): "restart horde1", no
+"Autoloading", wave 0, health 100, dead 0. Typed after the same death: `restart` prints "Autoloading..." (the engine's
+autoload, kept), `restart fresh` restarts the map without it.
+
+In VR:
+- [ ] Horde (horde1): save, die, let go and press fire: the arena restarts from wave 0 (not your save). In e1m1: save,
+  die, press: your save loads as before.
+
+### Hard throws burst gibs on walls (Hard Throw Bursts)
+
+His answer to "should hard throws burst on walls rather than stick (lower Gib Splat Speed)?": burst. But a gib's own
+speed can't tell a hard throw from a soft one: its mass limits how fast it leaves the hand (`throwvelocity`'s soft
+limit), so from about 4 m/s of the hand on every gib of 8 kg or more leaves at the same speed (table: release speeds,
+u/s). No Gib Splat Speed bursts a hard throw and keeps a 3-6 m/s one sticking: at 150 (under the 8-20 kg gibs' speeds)
+gib1 bursts from 5 m/s, gib3, gib2 and the ogre's head never reliably, and lobs at 2 m/s burst on the floor before
+the wall (4-8 of 10). So the throw is judged by the **hand's** speed as it let go (`vr_gib_handspeed`, from the throw
+estimate before the mass limit): **Hard Throw Bursts** (`vr_gib_splat_throw`, m/s, default 7; Gibs and Corpses, after
+Gib Splat Speed; 0 off): a destroyable gib or head thrown that hard bursts where a softer one would stick (the same
+wall hit, `VR_Gib_Think2`: its speed into a wall at Speed to Stick, turned by a quarter). Gib Splat Speed (250) stays:
+any gib that fast still bursts on a wall or a monster (a small gib from 6 m/s). 7 m/s is between his measured gib
+throws (3.6-4.5 m/s in the takes; the brief's soft-to-normal 3-6) and this file's "hard" throws (9 m/s). A new
+setting: no config migration.
+
+`vr_smallgibs_test 22` (Debug > Gore Tests > Thrown Gibs Stick, by Mass; now hand speeds 2 to 10 m/s), e1m1's start
+facing south (`setpos 480 -352 88 0 270 0`, test 15), 10 throws each, stuck of 10 (burst):
+
+| gib (release u/s at 2/3/4/6+ m/s) | 2-6 m/s, off (`vr_gib_splat_throw 0`) | 7-10 m/s, off | 2-6 m/s, 7 (new) | 7-10 m/s, 7 (new) |
+|---|---|---|---|---|
+| gib1 8 kg (64/107/161/195) | 50/50 | 40/40 | 50/50 | 0 (40 burst) |
+| gib3 12 kg (64/106/133/136) | 50/50 | 40/40 | 49/50 | 0 (40) |
+| gib2 20 kg (64/84/86/86) | 47 (1) | 35 (3) | 50/50 | 0 (40) |
+| grunt head 10 kg (64/107/150/160) | 49 | 40/40 | 49 | 0 (40) |
+| ogre head 30 kg (57/59/59/59) | 49 | 40/40 | 47 | 0 (38; 2 landed short) |
+| small gib 0.3 kg (64/107/163/283) | 41 (9 at 6 m/s) | 0 (40) | 40 (10 at 6 m/s) | 0 (40) |
+
+(Gib Splat Speed 150 and Hard Throw Bursts 0, for the record: stuck of 10 at 2..10 m/s, gib1 6 10 7 0 0 0 0 0 0, gib3
+8 10 8 6 8 9 6 5 7, gib2 5 10 9 10 9 10 10 8 10, grunt head 8 10 5 2 3 3 4 3 4, ogre head 4 6 3 5 6 4 1 8 4.)
+
+In VR:
+- [ ] Throw gibs and heads at a wall: a soft or normal throw sticks; a hard one (a fast arm) bursts them in a mist,
+  heavy ones too.
+
+### Rocks and bricks in multiplayer: as in single player
+
+His answer: Most in Multiplayer (`vr_debris_mp_max`) defaults to "same as single player". The single player cap is
+Most in a Map (`vr_debris_max`, 160) and the free entities; multiplayer took the smaller of that and
+`vr_debris_mp_max` (0: none). Now -1 (the new default, shown as "Single Player's" at the slider's leftmost step,
+Settings > Rocks and Bricks) leaves multiplayer the single player's cap, following Most in a Map; 0 is still none, a
+number still caps. Config 94 moves the old default 0 to -1. Measured (e1m1, `vr_debug_debris 1`): single player 34
+pieces; a two-player listen server (`-listen 2`, coop) 29 (limit 160), `vr_debris_mp_max 0` none, 16 gives 16; a
+config with `vr_debris_mp_max "0"` at version 34 loads as -1. Bandwidth (MULTIPLAYER.md, the mpsplit measurements:
+the same 29 pieces): a remote client by the rocks 256 -> 739 B of its 1400 B datagram a frame, about 17 B a piece in
+sight, until resting pieces get baselines.
+
+In VR (multiplayer):
+- [ ] Host e1m1 for a friend: rocks lie about as in single player; pick one up and throw it, the other player sees it.
+
+## AO bakes: a disk cache, and a faster bake (2026-10-06)
+
+His words: "Can we store them on disk with some sort of hash that correctly detects any modification to the model to
+recompute them? Can we optimize the algorithm itself?" (PROFILING_2026-10.md, item 2: 123 models, 9.3 s of 4 pool
+threads after the firing range's first load, redone every session.)
+
+**Disk cache** (`vr_ao_cache`, default 1; 0 bakes every time; 2 bakes anyway and compares with the file;
+`vr_ao_cache_info`; Debug menu: "AO Bakes on Disk", "Keep AO Bakes on Disk"). Each bake
+is a file `<gamedir>/cache/ao/v<BAKE_VERSION>/<key>.ao`, beside the normal maps' cache. The key is the SHA-256
+(vr_sha256) of everything the bake reads: `BAKE_VERSION`, the ray count, the reach/nearest/lift shares, the rays'
+directions, Quake's 162 vertex normals, and the model's poses (positions and normal indices), triangles (as the bake
+sees them), scale and origin. A file holds a 64-byte header (magic `QVRA`, version, vertex and pose counts, the whole
+32-byte key, the payload's size and FNV-1a 64) and the bytes; a file whose header, key, size or checksum is wrong is
+"rejected", baked again and written over. Reads and writes run on the bake task (never the main thread): hashing,
+reading and checking 123 models takes 31-48 ms in all (0.26-0.39 ms each). Writes go to a `.tmp` beside the file and
+are renamed. The bake task's first write in each game directory removes the other versions' folders and, past 64 MB,
+the oldest files (a full firing-range set is 1.4 MB, 121 files: two models share one bake). No cvar changes a bake;
+changing any of its constants changes the key. `BAKE_VERSION` must be bumped when the algorithm's output or the
+file's layout changes.
+
+Checked on the firing range (developer 1 prints each model's bytes' FNV): the first session baked 121 and wrote 121
+(2 read: same data as another model); the second read 123 from disk, baked 0, `vr_ao_finish` waited for nothing; all
+123 FNVs equal to the bakes before the change. One model's last vertex changed, plus three files damaged (a payload
+byte, the magic, a truncation): exactly those 4 baked again (3 "rejected"), 119 read. A changed constant (the lift
+share, a test build): all baked again. `vr_ao_cache 2`: 123 compared, 0 differed.
+
+**Faster bake, the same bytes.** Per pose, the triangles go into a uniform grid of cubes half the reach wide (each by
+its centre; those wider than half the reach in a list tested for every vertex), and a vertex's candidates come from
+the cells within the reach plus the cells' widest radius, then pass the very test the old bake used (branch-free:
+a quarter pass, unpredictably). The rays then run 8 at a time (AVX, when SDL_HasAVX says so) or 4 (SSE2) through
+Möller-Trumbore with the same float operations in the same order as the scalar code (the build has no FMA
+contraction), the ray-independent terms (s, q, e2.q) once per candidate; skipped tests are masked lanes, NaNs fall the
+same way, and the nearest hit does not depend on the candidates' order. The old bake stays as `bakePoseReference`;
+`vr_ao_bench [name part] [sse] [reference]` (Debug menu "AO Bake Benchmark") bakes the loaded models again on the main
+thread, one thread, and compares the bytes. `BAKE_VERSION` stays 1 (the same bytes; the old files check out).
+
+| | before | after |
+|---|---|---|
+| firing range, in game (123 models, 4 threads, wall) | 9988 ms (hknight 943, player 907) | 1160 ms (player 114, hknight 92) |
+| warden, in game (164 models) | 4968 ms | 1046 ms |
+| firing range, `vr_ao_bench` one thread (112 models) | 24873 ms (reference) | 3149 ms AVX (7.9x), 4586 ms SSE |
+| e1m1, `vr_ao_bench` one thread (97 models) | 11902 ms | 1571 ms AVX (7.6x), 2271 ms SSE |
+
+The same bytes: every model's FNV equal to the old bake's on the firing range (123) and warden (164); `vr_ao_bench .
+sse reference` 0 differed on the firing range (112) and e1m1 (97); `vr_ao_cache 2` over the files the old bake wrote:
+123 compared, 0 differed. A cell half the reach wide was the fastest (a third: 3.7 s, three quarters: 3.4 s).
+Second session (warden): 164 read in 265 ms on the bake task (the reads share the disk with the map's load), 0 baked.
+## Cvar audit: one dead setting removed, the rest ranked (2026-10-06)
+
+`Misc/quakevr/cvar_inventory.py` lists every Quake VR cvar (2,064) with where it is read and written (C++ logic, QC,
+menus, migration, motion recorder, cfgs, tools, docs), its default, flags and last commit; `--dead` lists the ones no
+code reads. Since the 2026-10-03 cull every cvar but one had a reader: `vr_throw_lookahead` (documented unused) is
+removed, with the QC handle `cvarh_vr_throw_hit_min_speed` that nothing read. Stale config lines for removed cvars are
+now dropped quietly (vr_cvars.cpp `retiredCvars`, asked by cmd.c before "Unknown command"). The candidates for
+removal or merging (about 160 per-class overrides at their globals, ~25 A/B switches whose new side won, 86 hidden
+archived tuning knobs, duplicated campaign status cvars, finished test knobs, the config migration) are ranked in
+CVAR_AUDIT.md, none done without the author's yes.
+
+In VR: nothing to test (no behaviour changed); an old config still setting `vr_throw_lookahead` loads with no message.
+
+## His gameplay and look values as defaults (2026-10-07)
+
+INSTALLER.md Appendix A's "Gameplay and look: promote?" table, his values re-read from his config: fire particles
+(`vr_fire_particles_alpha` / `_count` / `_origin` / `_size` 1 / 8 / 0.2 / 2.5, were 0.55 / 6 / 0.25 / 2; count and size
+in vr_defaults.cfg, the others compiled in), head pops (`vr_decap_pop_always_range` / `_never_range` 2 / 12, were 3 / 15;
+`vr_decap_pop_thrown_light_chance` 0.25, was 0), limb grabs (`vr_ragdoll_grab_reach` / `vr_ragdoll_hand_stick` 2 / 2,
+were 6 / 12), `vr_messages_hologram_height` 10 (was 5). Config 95 moves a config still at the old default.
+
+- Retro textures: every kind has had his look since config 89 (vr_retro.cpp shippedLook), but the All Categories
+  panel (`vr_retro_all_*`) still started at the old values, so applying it as it started undid the look. Its values
+  now start from the shipped look (0 / 0.5 / 0.5 / -1 / 1 for average / block / dither / fade / palette); config 95
+  moves a panel still at the old values (`retro::migrateAllPanel`; written as values only, never applied).
+- The grappling hook's flashlight clip (`vr_wofs_torch_out_18` / `_up_18` -0.035 / 0.075): `vr_wofs_version` 35.
+- Gib and head weights (`vr_props_version` 58): gremlin head 18 to 9, gib2 20 to 15, gib3 12 to 10, grunt 10 to 8,
+  dog 12 to 9, enforcer 16 to 9, knight 12 to 8, hell knight 17 to 11, ogre 30 to 15, vore 12 to 10, shambler 70 to 65,
+  fiend 28 to 18 (gib1 8, player 5, scrag 10, zombie 8, scourge 50 unchanged). A slot still its model's at the old
+  weight takes the new one.
+- Limb masses: a head cut off a ragdoll (vr_decap.qc, vr_limbs.qc `VR_Limb_SetMass`) weighs 7% of its class's
+  `vr_ragdoll_<class>_mass` times `vr_limbs_mass_scale` (1): grunt 5.6, enforcer 7, knight 6.3, hell knight 9.1, ogre
+  14, dog 2.8, fiend 9.8 (less a jaw, where its rig has one), shambler 19.6, gremlin 1.4 kg. His lighter `h_*` weights bring the thrown
+  heads (the props) nearer those (the ogre's 15 and the hell knight's 11 almost the same); the dog's 9 and the
+  shambler's 65 stay well above a cut head's. Nothing changed in the limb shares or the scale (his `vr_limbs_mass_scale`
+  is the default 1).
+
+Tested (headless): a config at the old defaults (versions 94 / 57 / 34) takes every new value; one with its own values
+keeps them (and takes the rest); a first start has them all; e1m1 loads clean.
+
+In VR: torches' flames (denser, opaque), the messages' hologram higher over the gadget, a limb taken only from close,
+heads popping a little less far away, thrown heads lighter; Retro Textures > All Categories shows the shipped look.
+
+## VR Settings for first-time players (2026-10-07)
+
+The author's spec: VR Settings (`menu_vr 0`) holds only what a new player sets, in sections, every row with a line of
+help; everything else, and the rows that were there, live on Advanced VR Options' pages. The sections, in order:
+Height Calibration, Hand Calibration, Locomotion, Comfort, Teleportation, Turning, Flashlight, Lighting, Weapons, Body,
+Haptics, HUD, Sound, Display, Scaling, Graphics, Reset (SETTINGS.md, "The VR Settings menu", lists the rows). Above
+them, *Search Settings* and *Advanced VR Options* (a link from Menu Detail: Advanced; at Standard the corner's Advanced
+VR action, which raises Menu Detail: the pages' tree still runs through the link, so Search and the board paths find
+every page). Not on it, as decided: damage tuning, a main-hand choice, the spectator camera, graphics presets; seated
+mode is in the backlog.
+
+Where the old rows went (the dumps before and after, `menu_vr dump` at Menu Detail: Developer, compared cvar by cvar:
+every cvar reachable before still is): the Comfort preset, Turning (all four choices), Move Towards (with the moving
+stick's hand), Teleport, Teleport Range, Stick Deadzone and Room Scale on Locomotion (whose empty Teleport header and
+"Turning, Moving, Teleport: VR Settings" link they replace); Handedness on Body and Display; Gun Angle and Off Hand
+Angle on Hand/Gun Calibration (as Main/Off Hand Pitch); Dominant Eye, Two-Handed and Two-Handed Hand-Off on Aiming;
+Haptics on Immersion; Throw Speed and Throw Gravity on Carrying and Throwing (and on Throwing and Physics, a Developer
+page); Force Grab on Force Grab; Headset Gamma also on Graphics. The links back to VR Settings for these ("Haptics: VR
+Settings"...) are gone. Body and Display, Headset, Sound, Tips, Changed Settings, Run VR Calibration Again and the build
+line are under Advanced VR Options > Setup (their pages' Back goes there); Official Campaigns is on Play (and under New
+Game). The main menu: VR Calibration, VR Settings, Single Player... (the cursor still starts on Single Player).
+
+New settings, each its default the old behaviour:
+
+- **Wrappers** (`vr_menu_turning`, `vr_menu_move_towards`, `vr_menu_hands_x/y/z/pitch/yaw/roll`; not saved): shown as
+  the settings they stand for are (synced as VR Settings is built and drawn), and set, they set them; their defaults
+  are those settings' defaults, so Reset This Page and Reset All reset them. Turning Mode: smooth, or snap at the angle
+  last used (45 at first); Snap Angle (30/45/90, `vr_snap_turn`) shows only with snap, Turn Speed only with smooth (it
+  does nothing to snap turns). Move Towards: `vr_movement_mode` 1 head, and new 2 left hand, 3 right hand
+  (vr_input.cpp VR_AdjustMove); 0, the moving stick's hand, shows as that hand. The hands: one mirrored set from the
+  shipped calibration (0): forward, inward, up in cm (`vr_handcal_x/y/z`, the off hand mirroring: an edit sets
+  `vr_handcal_off_mirror 1`), pitch (`vr_gunangle` and `vr_offhandpitch`, each its default plus it), yaw inward
+  (`vr_gunyaw` plus it, `vr_offhandyaw` minus it), roll (`vr_handcal_roll`). *Reset Hand Offsets*: all of them, both
+  hands, to the defaults.
+- **Comfort vignette** (`vr_comfort_vignette` 0 off, 1 moving and turning, 2 moving only, 3 turning only;
+  `vr_comfort_vignette_strength` 0.6): there was none (the old Comfort preset was turning, teleport and speed). The
+  eyes' post-process darkens the edges (SlowLook.w, beside bullet time's vignette): the clear middle `mix(2, 0.1, s)` in
+  r^2, black 0.6 further. s is the strength times how much the sticks move or turn you (the moving stick's push,
+  smooth turning's), eased in over 0.08 s and out over 0.25 s; a snap turn gives it at once for 0.3 s. Room-scale
+  steps and teleports never do. Measured on e1m1's start (left eye, mean luminance in the ring r^2 0.8-1.2, strength
+  0.8): 8.6 standing, 1.8 walking; a snap with Turning only 1.9 against 12.3 a second later; with Moving only the
+  same snap 6.4 and 6.4.
+- **Vibration Strength** (`vr_haptics_strength` 1, 0 to 2): the OpenXR backend scales every vibration's amplitude;
+  0 sends none. `vr_disablehaptics` stays (Immersion).
+- **Reset Position** (`vr_recenter`): the body put under the head at the next frame where its box fits (the lean taken
+  as a room-scale move), and the torso estimate started over from the head.
+- **Reset All to Defaults** (press twice within 3 s): every archived `vr_*` cvar and the other cvars on the page
+  (volume, music, default speed, anti-aliasing) to `default_string` (vr_defaults.cfg's), skipping server-locked ones.
+  Kept: `*_version`, `vr_tips_seen`, `vr_setup_pending`, `vr_menu_positions`, `vr_menu_level`, `vr_enabled`,
+  `vr_xr_runtime`. `developer 1` lists each one reset.
+
+`vr_menu_level`'s shipped default is now 0 (Standard; vr_defaults.cfg had 2). No config migration: a saved value
+stays (the author's config holds "2" and keeps it; a config that saved 2 because it was the default keeps it too).
+
+Tests: synthetic clicks (`menu_vr 0 "<row>"`, `vr_mock_key rightarrow|enter`): Turning Mode Snap gives 45, Smooth 0,
+Snap again after 30 gives 30; Move Towards Head > Left Hand (2) > Right Hand (3) > Head (1); mode 0 with Swap Stick
+Functions shows Right Hand; Hand Yaw +1 gives `vr_gunyaw` 1 and `vr_offhandyaw` -5; Hand Forward +0.1 gives
+`vr_handcal_x` -3.9 and mirror 1; Reset Hand Offsets restores them; Reset All: the first press only arms it ("Press
+Again to Reset All"), the second resets (snap 90, volume 0.3, vignette, body mode 0, vibration 0.4, height back;
+Menu Detail 2 and `vr_cfg_version` 94 kept). `vr_menu_path_check maps/vrcalibration.map`: 14 found, 0 missing (the
+board's "VR Settings>Comfort" is now "VR Settings>Turning Mode", the map rebuilt).
+## Monsters' heads weigh what a cut head weighs (2026-10-07)
+
+The author: "Please bring the head's weights closer to the ragdoll's." A head cut off a ragdoll (vr_decap.qc,
+vr_limbs.qc `VR_Limb_SetMass`) weighs its rig's head share (head and jaw: 7% in every rig) of its class's
+`vr_ragdoll_<class>_mass`, times `vr_limbs_mass_scale`; a head thrown whole (`ThrowHead`, the `h_*` props) weighed its
+Held Object Offsets Mass, set apart. Now one source: a monster's head prop has Mass **-1**, "Its Monster's" (the Mass
+bar's leftmost step, shown only for such a head), which the engine reads as that head cut off its class's ragdoll
+(`box3d::headPropMass`: `ragdollClasses` names each class's head model). It follows the ragdoll masses and Limb Weight
+live (a change of either weighs the heads lying about again: `updateShapeGeneration` sums them), so the two can't
+drift apart; Limb Weight 0 (cut pieces by their volume) leaves them estimated too. A number set in the slot is used as
+set. The mummy throws the zombie's head model: weighed as the zombie's. The player's head (no ragdoll class) keeps 5.
+
+| slot | head | class (kg) | before (v58) | now |
+|---|---|---|---|---|
+| 37 | h_guard | grunt 80 | 8 | 5.6 |
+| 38 | h_dog | rottweiler 40 | 9 | 2.8 |
+| 39 | h_mega | enforcer 100 | 9 | 7 |
+| 40 | h_knight | knight 90 | 8 | 6.3 |
+| 41 | h_hellkn | hell knight 130 | 11 | 9.1 |
+| 42 | h_ogre | ogre 200 (and marksman) | 15 | 14 |
+| 43 | h_wizard | scrag 40 | 10 | 2.8 |
+| 44 | h_zombie | zombie 70 (mummy too) | 8 | 4.9 |
+| 45 | h_shal | vore 160 | 10 | 11.2 |
+| 46 | h_shams | shambler 280 | 65 | 19.6 |
+| 47 | h_demon | fiend 140 | 18 | 9.8 |
+| 7 | h_grem | gremlin 20 | 9 | 1.4 |
+| 8 | h_scourg | centroid 180 | 50 | 12.6 |
+| 36 | h_player | (none) | 5 | 5 |
+
+`vr_props_version` 59: a slot still its model's at 58's default takes -1; a config's own weight is kept.
+`vr_weight_table` prints each thing's one-hand throw limit (`throw1`, m/s).
+
+What it changes in play: heads are thrown faster (the one-hand limit 28 m/s x (1.5 / kg)^0.9: a shambler's head about
+2.8 m/s instead of 0.9, a grunt's 8 instead of 6, a dog's 16 instead of 7.4), weigh less in the hand and strike softer
+(the weight's damage curve). A thrown head under `vr_decap_pop_thrown_mass` (4 kg: now the dog's, scrag's, gremlin's)
+pops a head on a killing headshot only at `vr_decap_pop_thrown_light_chance` (0.25), not always. Bursting on a wall
+goes by the hand's speed (7 m/s), not the mass: unchanged. Grabbing and holding: a lighter prop, nothing else.

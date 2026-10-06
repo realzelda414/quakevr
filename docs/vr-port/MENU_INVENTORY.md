@@ -420,35 +420,79 @@ gameplay rows such as `vr_timescale` (Slow Motion) and the `vr_hull_*`/`vr_gamep
 
 ## 7. Full menu tree (static parse; `→ link ... [cross-link]` = a link to a page that lives elsewhere in the tree)
 
-- **VR Settings** [menu_vr 0] — 32 rows / 18 settings / 0 actions **LONG** (vr_menu.cpp:4607)
-  - — Tuning —
-  - → link `Weapon Offsets (Held Weapon)` to Weapon Offsets [cross-link]
-  - → link `Weapon Weights (Held Weapon)` to Weapon Weights [cross-link]
-  - → link `Held Object Offsets (Held Prop)` to Held Object Offsets [cross-link]
-  - → link `Held Object Weights (Held Prop)` to Held Object Weights [cross-link]
-  - → link `Hand/Gun Calibration` to Hand/Gun Calibration [cross-link]
-  - → link `Body Calibration` to Body Calibration [cross-link]
-  - — Comfort —
-  - Turning → `vr_snap_turn`
-  - Turn Speed → `vr_turn_speed`
-  - Move Towards → `vr_movement_mode`
-  - Swap Stick Functions → `vr_stick_swap`
+- **VR Settings** [menu_vr 0] (rebuilt 2026-10-07 for first-time players: ROUND21.md, "VR Settings for first-time players"; the rows below from `menu_vr dump` at Menu Detail: Standard; Turn Speed shows with smooth turning, Snap Angle instead with snap)
+  - [action] Search Settings
+  - [action] Advanced VR Options
+  - — Height Calibration —
+  - Height → `vr_height_calibration`
+  - [action] Set Height Now
+  - World Scale → `vr_world_scale`
+  - Floor Offset → `vr_floor_offset`
+  - — Hand Calibration —
+  - Show Controller → `vr_show_controller`
+  - Hand Forward → `vr_menu_hands_x`
+  - Hand Inward → `vr_menu_hands_y`
+  - Hand Up → `vr_menu_hands_z`
+  - Hand Pitch → `vr_menu_hands_pitch`
+  - Hand Yaw → `vr_menu_hands_yaw`
+  - Hand Roll → `vr_menu_hands_roll`
+  - [action] Reset Hand Offsets
+  - — Locomotion —
+  - Move Towards → `vr_menu_move_towards`
   - Default Speed → `cl_alwaysrun`
   - Stick Deadzone → `vr_deadzone`
+  - Swap Stick Functions → `vr_stick_swap`
+  - — Comfort —
+  - Vignette → `vr_comfort_vignette`
+  - Vignette Strength → `vr_comfort_vignette_strength`
+  - — Teleportation —
   - Teleport → `vr_teleport_enabled`
   - Teleport Range → `vr_teleport_range`
-  - Room Scale → `vr_roomscale_move_mult`
+  - — Turning —
+  - Turning Mode → `vr_menu_turning`
+  - Turn Speed → `vr_turn_speed`
+  - — Flashlight —
+  - Flashlight → `vr_flashlight`
+  - Flashlight Side → `vr_flashlight_side`
+  - — Lighting —
+  - Ambient Light → `vr_ambient_light`
+  - Light Contrast → `vr_light_contrast`
   - — Weapons —
-  - Gun Angle → `vr_gunangle`
-  - Off Hand Angle → `vr_offhandpitch`
   - Weapon Grip → `vr_weapon_grip_mode`
   - Two-Handed → `vr_2h_mode`
-  - Two-Handed Hand-Off → `vr_2h_handoff`
-  - Throw Speed → `vr_weapon_throw_velocity_mult`
-  - Throw Gravity → `vr_throw_gravity`
-  - Force Grab → `vr_forcegrab_mode`
-  - Haptics → `vr_disablehaptics`
-  - — More —
+  - — Body —
+  - Body Type → `vr_body_mode`
+  - Wrist Gadget Arm → `vr_gadget_arm`
+  - [action] Reset Position
+  - — Haptics —
+  - Vibration Strength → `vr_haptics_strength`
+  - — HUD —
+  - HUD → `vr_hud_mode`
+  - Crosshair → `vr_crosshair`
+  - — Sound —
+  - Volume → `volume`
+  - Music Volume → `bgmvolume`
+  - Spatial Sound → `vr_snd_spatial`
+  - — Display —
+  - Headset Gamma → `vr_gamma`
+  - Headset Contrast → `vr_contrast`
+  - — Scaling —
+  - Render Scale → `vr_render_scale`
+  - Upscaling → `vr_upscale`
+  - Sharpening → `vr_upscale_sharpness`
+  - Foveated Rendering → `vr_foveated`
+  - — Graphics —
+  - Retro Textures → `vr_retro`
+  - Retro Lighting → `vr_retrolight`
+  - Antialiasing → `vid_fsaa`
+  - Bloom → `vr_bloom`
+  - Tone Mapping → `vr_tonemap`
+  - Bump Mapping → `vr_normalmaps`
+  - Parallax Mapping → `vr_parallax`
+  - — Reset —
+  - [action] Reset All to Defaults
+  - (Snap Angle → `vr_snap_turn`, instead of Turn Speed with snap turning)
+  - The pages below (Body and Display, Headset, Sound, Tips, Changed Settings) are linked from Advanced VR Options > Setup since 2026-10-07; the old VR Settings rows are on their topic's pages (SETTINGS.md, "The VR Settings menu").
   - **Body and Display** [menu_vr 49] — 26 rows / 21 settings / 1 actions (vr_menu.cpp:4647)
     - — Body —
     - Wrist Gadget Arm → `vr_gadget_arm`
@@ -4764,3 +4808,9 @@ see `Misc/quakevr/pvs/FINDINGS.md` for the corrected measurements.
 |---|---|---|---|---|---|---|---|---|---|
 | `vr_walltorch_shot` | `1` | yes | C | gameplay | Wall Torches | 1 | 0 |  | 1985 |
 | `vr_test_walltorch_shot` | `-1` | no | D | dev | — (Debug - Tools commands) | 0 | 7 |  | 1986 |
+| `vr_menu_turning` | `0` | no | B | menu | VR Settings (Turning Mode: wraps `vr_snap_turn`) | 1 | 0 | yes | 1987 |
+| `vr_menu_move_towards` | `1` | no | B | menu | VR Settings (Move Towards: wraps `vr_movement_mode`) | 1 | 0 | yes | 1988 |
+| `vr_menu_hands_x` / `_y` / `_z` / `_pitch` / `_yaw` / `_roll` | `0` | no | B | menu | VR Settings (Hand Calibration: wrap `vr_handcal_*`, `vr_gunangle`/`vr_gunyaw`, `vr_offhandpitch`/`vr_offhandyaw`) | 6 | 0 | yes | 1989 |
+| `vr_comfort_vignette` | `0` | yes | A | comfort | VR Settings (Comfort) | 1 | 0 | yes | 1990 |
+| `vr_comfort_vignette_strength` | `0.6` | yes | A | comfort | VR Settings (Comfort) | 1 | 0 | yes | 1991 |
+| `vr_haptics_strength` | `1` | yes | A | haptics | VR Settings (Haptics), Immersion | 2 | 0 | yes | 1992 |

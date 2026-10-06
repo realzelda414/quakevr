@@ -1440,6 +1440,8 @@ QVR_WEAPON_DEFAULT(17, WpnButtonPitch, "0.0")
 QVR_WEAPON_DEFAULT(17, WpnButtonRoll, "0.0")
 QVR_WEAPON_DEFAULT(17, WpnButtonX, "0.0")
 QVR_WEAPON_DEFAULT(17, WpnButtonY, "0.5") // the author's (config version 56)
+QVR_WEAPON_DEFAULT(17, TorchOut, "-0.035") // the author's flashlight on the grappling hook (vr_wofs_version 35)
+QVR_WEAPON_DEFAULT(17, TorchUp, "0.075")
 QVR_WEAPON_DEFAULT(17, WpnButtonYaw, "0.0")
 QVR_WEAPON_DEFAULT(17, WpnButtonZ, "0.0")
 QVR_WEAPON_DEFAULT(17, WpnButtonMode, "1")
@@ -2309,7 +2311,7 @@ QVR_WEAPON_DEFAULT(19, ZeroBlend, "0.0")
 QVR_WEAPON_DEFAULT(19, TwoHZeroBlend, "0.0")
 
 // Round 20: the fingers on the guns' grips moved forward, so the fist wraps the (pistol) grip from
-// outside instead of the grip showing through the curled fingers (docs/vr-port/ROUND20.md, "Finger
+// outside instead of the grip showing through the curled fingers (ROUND20.md (removed 2026-10-06; git history), "Finger
 // poses on grips"): the shotgun, the super shotgun, the nailgun, the grenade and rocket launchers,
 // the lightning gun, the laser cannon, the proximity gun, the lava nailgun and the multi launchers.
 QVR_WEAPON_DEFAULT(1, FingersX, "0")
