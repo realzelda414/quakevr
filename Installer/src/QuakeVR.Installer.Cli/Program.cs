@@ -1,4 +1,5 @@
 using QuakeVR.Installer.Core;
+using QuakeVR.Installer.Core.Assets;
 using QuakeVR.Installer.Core.Detection;
 using QuakeVR.Installer.Core.Packaging;
 using QuakeVR.Installer.Core.Platform;
@@ -9,11 +10,12 @@ const string Usage = """
     qvr-setup detect [--qvr <dir>] [--epic-manifests <dir>]
     qvr-setup manifest <package folder> --version <text>
     qvr-setup install --package <zip|folder> --target <dir> [--quake <dir>] [--shortcuts-dir <dir>]
-                      [--textures <zip>] [--relight] [--unverified]
+                      [--textures <zip>] [--relight] [--vispatch <id1_vis.tgz>...] [--unverified]
     qvr-setup uninstall --target <dir> [--remove-textures]
     qvr-setup verify --target <dir>
     qvr-setup download --url <url> [--url <mirror>...] --out <file> [--size <bytes>] [--sha256 <hex>]
     qvr-setup feed --url <latest.json url>
+    qvr-setup assets --game <id1 folder> [--map <maps/x.bsp>] [--prefix <path prefix>]
     """;
 
 if (args.Length == 0)
@@ -92,6 +94,7 @@ try
                 AllowUnverified = Flag("unverified"),
                 RelightOnFirstRun = Flag("relight"),
                 HdTexturesZip = Opt("textures"),
+                VisPatchArchives = options.TryGetValue("vispatch", out var vis) ? vis : [],
                 OwnedPacks = owned,
                 Shortcuts = shortcutsDir is null
                     ? new ShortcutOptions { Desktop = false, StartMenu = false }
@@ -139,6 +142,25 @@ try
             using var http = Downloader.CreateClient();
             var feed = await ReleaseFeed.FetchAsync(http, (options.TryGetValue("url", out var urls) ? urls : []).Select(u => new Uri(u)), CancellationToken.None);
             Console.WriteLine($"version {feed.Version}; package {feed.Package?.File} {PathUtil.FormatSize(feed.Package?.Size ?? 0)}; components: {string.Join(", ", feed.Components.Keys)}");
+            return 0;
+        }
+        case "assets":
+        {
+            // What the installer's skin can read from a Quake (nothing is written): pictures, a map's textures, files.
+            using var fs = QuakeFileSystem.OpenDir(Opt("game") ?? "") ?? throw new InstallException("no pak0.pak there");
+            Console.WriteLine($"{fs.PakCount} paks; palette: {fs.Contains("gfx/palette.lmp")}");
+            if (fs.Read("gfx.wad") is { } wad)
+            {
+                Console.WriteLine("gfx.wad: " + string.Join(" ", QuakeFormats.ReadWad(wad).Values.Select(i => $"{i.Name}({i.Width}x{i.Height})")));
+            }
+            if (Opt("map") is { } map && fs.Read(map) is { } bsp)
+            {
+                Console.WriteLine($"{map}: " + string.Join(" ", QuakeFormats.ReadBspTextures(bsp).Select(i => $"{i.Name}({i.Width}x{i.Height})")));
+            }
+            if (Opt("prefix") is { } prefix)
+            {
+                Console.WriteLine(string.Join(" ", fs.Names.Where(n => n.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).Order()));
+            }
             return 0;
         }
         case "shortcut-args":
