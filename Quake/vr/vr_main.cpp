@@ -3,6 +3,7 @@
 #include "vr_modelmetadata.hpp"
 #include "vr_audio.hpp"
 #include "vr_bullettime.hpp"
+#include "vr_bench.hpp"
 #include "vr_hitmodel.hpp"
 #include "vr_box3d.hpp"
 #include "vr_hull.hpp"
@@ -27,6 +28,8 @@
 #include "vr_limits.hpp"
 #include "vr_mapindex.hpp"
 #include "vr_mapinstall.hpp"
+#include "vr_relight.hpp"
+#include "vr_relight_tool.hpp"
 #include "vr_text3d.hpp"
 #include "vr_tips.hpp"
 #include "vr_timescale.hpp"
@@ -599,7 +602,7 @@ EdictCounts countEdicts()
         {
             e.heads++;
         }
-        else if(info.has(modelmeta::Trait::Gib))
+        else if(info.has(modelmeta::Trait::Gib) || info.has(modelmeta::Trait::Limb))
         {
             e.gibs++;
         }
@@ -1326,12 +1329,15 @@ extern "C" void VR_Init()
     Cmd_AddCommand("vr_tips_reset", tips::reset_f);
     Cmd_AddCommand("vr_tips_test", tips::test_f);
     Cmd_AddCommand("vr_mock_laser", menuui::mockLaser_f);
+    Cmd_AddCommand("vr_mock_mouse", menuui::mockMouse_f);
+    Cmd_AddCommand("vr_mock_key", menuui::mockKey_f);
     Cmd_AddCommand("vr_bigfont", bigfont::report_f);
     Cmd_AddCommand("vr_checklist", checklist::command_f);
     Cmd_AddCommand("vr_handcal_match", menu::handCalMatch_f);
     Cmd_AddCommand("vr_startgame", VR_StartGame_f);
     registerMockCommands();
     input::init();
+    inputlag::registerCommands();
     voicenotes::init();
     highlights::init();
     cleanskins::init();
@@ -1373,12 +1379,15 @@ extern "C" void VR_Init()
     Cmd_AddCommand("vr_wounds_test", wounds::test_f);
     Cmd_AddCommand("vr_wounds_info", wounds::info_f);
     Cmd_AddCommand("vr_gore_hands_test", wounds::handsTest_f);
+    Cmd_AddCommand("vr_gore_wash_test", wounds::washTest_f);
     Cmd_AddCommand("vr_gore_hands_info", wounds::handsInfo_f);
     Cmd_AddCommand("vr_gore_spatter_test", wounds::spatterTest_f);
     Cmd_AddCommand("vr_cleanskins", cleanskins::list_f);
     Cmd_AddCommand("vr_gore_mist_test", particles::mistTest_f);
+    Cmd_AddCommand("vr_particle_light_report", particles::lightReport_f);
     Cmd_AddCommand("vr_wounds_dump", wounds::dump_f);
     Cmd_AddCommand("vr_test_remove", progs::testRemove_f);
+    Cmd_AddCommand("vr_model_check", progs::modelCheck_f);
     Cmd_AddCommand("vr_test_dialog", testDialog_f);
     Cmd_AddCommand("vr_hotspots_legacy", view::hotspotsLegacy_f);
     Cmd_AddCommand("vr_hotspots_check", view::hotspotsCheck_f);
@@ -1390,6 +1399,7 @@ extern "C" void VR_Init()
     Cmd_AddCommand("vr_decal_count", decals::count_f);
     Cmd_AddCommand("vr_decal_stress", decals::stress_f);
     Cmd_AddCommand("vr_limits", limits::command_f);
+    bench::registerCommands(); // vr_bench_begin, vr_bench_end, vr_bench_seed
     Cmd_AddCommand("vr_decal_atlas", decals::atlas_f);
     Cmd_AddCommand("vr_gore_test", gore::test_f);
     Cmd_AddCommand("vr_memstats", VR_MemStats_f);
@@ -1404,8 +1414,18 @@ extern "C" void VR_Init()
     mapindex::registerCommands(); // maps_list, maps_info, maps_stats, maps_fetch
     mapinstall::registerCommands(); // maps_get, maps_install, maps_installed, maps_uninstall
     mapinstall::start(); // the installed-map list read (vr_mapinstall.cpp): nothing is downloaded here: nothing here waits
+    relight::registerCommands(); // vr_relight, vr_relight_cancel, vr_relight_revert... (vr_relight.cpp)
 
     state->restartRequested = true;
+}
+
+// Host_Shutdown, before NET_Shutdown: libcurl's global state (curl_global_cleanup) and winsock go there, and a
+// transfer still running on one of these threads would read them freed (the quit crash inside curl_multi_perform).
+extern "C" void VR_StopDownloads()
+{
+    mapindex::finish();
+    mapinstall::finish();
+    relight::tool::finish(); // an ericw-tools download (Graphics > Relighting), cancelled (vr_relight_tool.cpp)
 }
 
 extern "C" void VR_Shutdown()
@@ -1414,6 +1434,7 @@ extern "C" void VR_Shutdown()
     box3d::finishLoads();
     mapindex::finish(); // the map index fetch, cancelled and joined (vr_mapindex.cpp)
     mapinstall::finish(); // a map download or unpacking, cancelled and joined (vr_mapinstall.cpp)
+    relight::shutdown(); // a light process still running stopped (vr_relight.cpp)
     imgprefetch::shutdown(); // (the decoding tasks finished)
     ao::shutdown(); // (the models' occlusion bakes, VR or not)
     gpustats::stop();
@@ -1487,6 +1508,7 @@ extern "C" void VR_BeginFrame()
     throwing::filterGrips(state->tracking); // the analog grip's release, before it becomes a key
     input::update(state->tracking.input); // releases held keys when VR is off
     bullettime::frame(); // the gadget's bullet time button (the hands as last placed)
+    flashlight::flicks(); // the held torch turned over by a flick of the wrist (likewise)
 
     // Update the hands now, before the move is built (it carries the aim in the view angles).
     input::roomscaleJump(hands::current());
@@ -1628,8 +1650,10 @@ extern "C" void VR_HostFrameEnd()
     }
     qvr::mapindex::poll(); // the map index the fetch thread finished, taken here (vr_mapindex.cpp)
     qvr::mapinstall::poll(); // a map download or unpacking that finished, taken here (vr_mapinstall.cpp)
+    qvr::relight::poll(); // the in-game relighting's light process: its progress, its result (vr_relight.cpp)
     qvr::motion::hostFrameEnd();
     qvr::allocsites::frameEnd();
+    qvr::inputlag::frameEnd(); // vr_inputlag_test
 }
 
 extern "C" double VR_HostFrameTime(double time)

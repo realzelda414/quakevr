@@ -780,6 +780,15 @@ za::String takeHeader(const TakeInfo& info, const za::Vector<Row>& rows)
     {
         line("dummy attacks", "on");
     }
+    // The training dummy's enemy and its settings when it is the target (QC vr_dummy.qc): a replay stands it as the same
+    // enemy, of the same health (vr_dummy_type and vr_dummy_health are among the settings it applies; a take without
+    // them: a grunt of a grunt's health).
+    if(first && first->sv && first->sv->monster && first->sv->monClass == "vr_dummy")
+    {
+        line("dummy", va("vr_dummy_type %s vr_dummy_health %s vr_dummy_gore %s vr_dummy_gib %s vr_dummy_regen %s",
+                          vr_dummy_type.string, vr_dummy_health.string, vr_dummy_gore.string, vr_dummy_gib.string,
+                          vr_dummy_regen.string));
+    }
     line("melee settings", meleeSettings());
     line("settings", allSettings());
     line("weapon settings", weaponSettings());
@@ -1537,7 +1546,7 @@ void serverFrame()
     {
         s.monster = true;
         s.monEnt = NUM_FOR_EDICT(target);
-        s.monClass = PR_GetString(target->v.classname);
+        s.monClass = progs::targetClass(target); // ("vr_dummy": the training dummy, whatever its enemy)
         s.monOrigin = {target->v.origin[0], target->v.origin[1], target->v.origin[2]};
         s.monMins = {target->v.mins[0], target->v.mins[1], target->v.mins[2]};
         s.monMaxs = {target->v.maxs[0], target->v.maxs[1], target->v.maxs[2]};

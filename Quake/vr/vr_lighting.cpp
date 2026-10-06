@@ -4,6 +4,7 @@
 #include "vr_lighting.hpp"
 #include "vr_portals.hpp"
 #include "vr_ao.hpp"
+#include "vr_avatar.hpp"
 #include "vr_main.hpp"
 #include "vr_cvars.hpp"
 #include "vr_engine.hpp"
@@ -558,6 +559,7 @@ void renderLight(DepthTarget& target, const glm::vec3& light, float radius, cons
     {
         posed[i] = VR_AliasBonePoses(aliasCasters[i], nullptr) != 0;
     }
+    avatar::shadowLight(light); // your body's head in this light's shadow (vr_shadow_head)
 
     GL_BindFramebufferFunc(GL_FRAMEBUFFER, target.fbo);
     for(int face = 0; face < numViews; face++)
@@ -1620,6 +1622,16 @@ extern "C" void VR_PushMapLights(void)
     r_framedata.parallax[0] = parallax ? za::clamp(vr_parallax_depth.value, 0.f, 16.f) : 0.f;
     r_framedata.parallax[1] = za::clamp(vr_parallax_distance.value, 64.f, 4096.f);
     r_framedata.parallax[2] = za::clamp(za::round(vr_parallax_steps.value), 4.f, 64.f);
+    // The steps refining the hit after the walk, and the grazing fade: gone at vr_parallax_grazing degrees off the
+    // normal, whole 12 degrees before (cosines; 0 0 at 90 or more: no fade).
+    r_framedata.parallax2[0] = za::clamp(za::round(vr_parallax_refine.value), 0.f, 8.f);
+    const float grazing = za::clamp(vr_parallax_grazing.value, 30.f, 90.f);
+    r_framedata.parallax2[1] = grazing < 90.f ? za::cos(glm::radians(grazing - 12.f)) : 0.f;
+    r_framedata.parallax2[2] = grazing < 90.f ? za::cos(glm::radians(grazing)) : 0.f;
+    // Pixel depth offset: the hits' depth written, so what meets the relief meets it where it is (r_world.c then
+    // bounds it in the world's depth pre-pass: glprogs.world_depth_pdo).
+    // 2: and drawn as that depth (vr_parallax_debug).
+    r_framedata.parallax2[3] = parallax && vr_parallax_depth_write.value != 0.f ? (vr_parallax_debug.value != 0.f ? 2.f : 1.f) : 0.f;
     // Specular anti-aliasing: how much the sheen's lobe widens by the bumps under a pixel (0 off).
     r_framedata.parallax[3] = za::clamp(vr_specular_aa.value, 0.f, 4.f);
     r_framedata.shadowbias = za::max(0.f, vr_shadow_bias.value);
@@ -1872,6 +1884,7 @@ void lighting::applyPreset(int preset)
     look(vr_texture_smooth, 0.f);
     look(vr_alpha_coverage, 0.f); // fences' mips as Quake's (thinning out with distance)
     look(vr_water_splash, 0.f); // liquid splashes (vr_particles.cpp)
+    look(vr_particle_light, 0.f); // lit particles (vr_particles.cpp): Quake's were all as bright as their colours
     Cvar_SetQuick(&vr_soft_particles, preset >= 2 ? "1" : "0"); // soft particles and sprites (vr_particles.cpp): Medium and up
     Cvar_SetValueQuick(&vr_normalmaps, p.normalmaps); // made as the next map loads
     Cvar_SetValueQuick(&vr_parallax, p.parallax);

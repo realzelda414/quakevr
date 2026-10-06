@@ -16,6 +16,7 @@
         slider("Menu Scale", "vr_menu_scale", 0.05f, 0.6f, 0.01f, "%.2f").extend(0.02f, 1.5f).help("Scale multiplier for the menu: the size of one of its pixels, in world units."),
         slider("Menu Distance", "vr_menu_distance", 24.f, 256.f, 1.f, "%.0f").extend(8.f, 600.f).help("Distance of the menu from the anchor point."),
         toggle("Status Box", "vr_menu_status").help("A small box in the menus' top right corner: VR, mock VR or flat screen, the runtime (SteamVR, VDXR), the resolution rendered, the target rate, fps, the CPU's and GPU's milliseconds a frame (and their share of the frame's budget), RAM and VRAM."),
+        toggle("Corner Buttons on a Flat Screen", "vr_menu_flat_shortcuts").help("With VR off: the buttons at the menus' top left (Back to Game, Search, Console, Advanced VR, Levels, Map Library) on the desktop menus too, for the mouse."),
         toggle("VR Menu Style", "vr_menu_vr_style").help("The menus fill the panel with their rows spaced out, with modern sliders and switches, and a laser from your hand points at them: trigger to click and drag."),
         open("Laser Hue: Colours", pageIndex(pageColours)).help("Every hue is on HUD and Menus > Colours."),
         toggle("Main Menu Lettering", "vr_menu_bigfont").help("The main menu's rows as text in Quake's own lettering (its letters cut from the menu pictures), VR Calibration among them. Off: Quake's picture of the rows, with VR Calibration above it in the console's letters."),
@@ -24,6 +25,7 @@
         slider("Menu Background Opacity", "scr_menubgalpha", 0.f, 1.f, 0.05f, "%.2f").help("How dark the panel behind the menus is (0.7 as shipped; the desktop menus' too): lower it to see the game while you tune the graphics. Below about 0.5 the text gets a dark outline, to stay readable."),
         toggle("Live Preview", "ui_live_preview").help("Settings pages show their changes in the game as you make them, and in single player the game keeps running under them (paused while a monster is after you)."),
         toggle("Reopen Where Left", "vr_menu_remember").help("After Back to Game (the button at the menu's top left, or the menu button), the menu opens again on the page you left."),
+        slider("Help Reading Speed", "vr_menu_help_wpm", 100.f, 400.f, 10.f, "%.0f wpm").extend(60.f, 600.f).help("The help under a page's rows: one longer than its box shows a part at a time, the bar at its right saying which. Each part stays as long as reading it takes at this many words a minute (200: unhurried)."),
         cycle("Drop-Down Lists", "vr_menu_dropdown", {{0.f, "Never"}, {3.f, "3+ Choices"}, {4.f, "4+ Choices"}, {5.f, "5+ Choices"}, {6.f, "6+ Choices"}, {8.f, "8+ Choices"}}).help("A setting with this many choices or more opens a list of them when clicked (or Enter / A): point at one and click. Left and right still step through them. Never: a click steps to the next."),
     };
 }
@@ -136,6 +138,11 @@
         slider("Reach Over the Top", "vr_climb_over_top", 0.f, 40.f, 1.f, "%.0f units").extend().help("Over the top of a ledge, how far in from the drop a hand touching the top still holds it (up to how deep the top is). Less: only a hand near the edge grabs."),
         toggle("Hands Slide Along Ledges", "vr_climb_slide").extend().help("When your body can't follow your hands along a ledge (past your arm's reach, against a wall), the hand slides along it and stays on your controller. Off: it stays where it took hold, and drifts away from your controller."),
         slider("Grab Sound", "vr_physsound_grab", 0.f, 1.f, 0.1f, "%.1f").help("A small slap as your hand takes a hold, of what the hold is made of: wood, muted metal or stone (0 off; also Carrying: Physics Sounds)."),
+        toggle("Mantle onto Slopes", "vr_climb_mantle_lenient")
+            .help("Pulling yourself up onto a ledge whose top isn't level (rising or falling away from the edge, or "
+                  "sloping along it) stands you on the slope, up to Steepest Slope. Off: only level tops, as before."),
+        slider("Steepest Slope", "vr_climb_mantle_slope", 10.f, 60.f, 5.f, "%.0f deg")
+            .help("The steepest top a mantle stands you on with Mantle onto Slopes (Quake walks up to about 45)."),
         slider("Mantle Grunt", "vr_climb_mantle_grunt", 0.f, 1.f, 0.1f, "%.1f").help("A small grunt as you pull yourself up onto a ledge (0 off)."),
         cycle("Mantle Grunt Sound", "vr_climb_mantle_grunt_sound", {{0.f, "Jump grunt"}, {1.f, "Hard landing"}, {2.f, "Jump, deeper"}, {3.f, "Landing, deeper"}, {4.f, "Pain grunt"}}).help("Which grunt the mantle makes. Hard landing (the default): the strained \"oof\" of landing from a height, so it doesn't sound like a jump. The deeper ones are Quake's played slower. Hear it with Hear Mantle Grunt."),
         command("Hear Mantle Grunt", "vr_climb_mantle_grunt_test").help("Plays the mantle's grunt as set, at full volume."),
@@ -552,6 +559,7 @@ void resetHandMoves()
 [[nodiscard]] za::Vector<Item> pageGraphicsModels();
 [[nodiscard]] za::Vector<Item> pageGraphicsRetro();
 [[nodiscard]] za::Vector<Item> pageGraphicsRetroLight();
+[[nodiscard]] za::Vector<Item> pageGraphicsRelighting();
 [[nodiscard]] za::Vector<Item> pageTransparencyOptions();
 [[nodiscard]] za::Vector<Item> pageRecording(); // vr_menu_recording.inc
 
@@ -567,7 +575,8 @@ void resetHandMoves()
         cycle("Smooth Textures", "vr_texture_smooth", {{0.f, "As gl_texturemode"}, {1.f, "Replacements"}, {2.f, "All"}})
             .help("Smooth filtering for high-resolution replacement textures, or for all textures."),
         toggle("Fence Coverage", "vr_alpha_coverage").help("Fences and grates keep their bars at a distance instead of thinning out and crawling; with Anti-aliasing (MSAA) their edges are smoothed too."),
-        toggle("Relit Maps", "vr_relit_maps").help("Maps re-lit with shadows, ambient occlusion and colour, if made (Misc/quakevr/relight_maps.py). Next map."),
+        toggle("Relit Maps", "vr_relit_maps").help("Maps re-lit with shadows, ambient occlusion and colour, if made (Misc/quakevr/relight_maps.py, or Relighting below). Next map."),
+        open("Relighting", pageIndex(pageGraphicsRelighting)).help("Relight the map you are in, with brighter or dimmer lamps, glowing panels, lava, bounced light and ambient occlusion, and see it at once."),
         open("Headset Gamma: VR Settings", pageIndex(pageMain)).help("The headset's gamma (its brightness) is on VR Settings."),
         slider("Headset Contrast", "vr_contrast", 0.5f, 2.f, 0.02f, "%.2f").extend().help("The headset's own contrast (1 neutral)."),
         header("More Graphics"),
@@ -680,6 +689,9 @@ void resetHandMoves()
         toggle("Parallax", "vr_parallax").help("Walls and floors look carved: their dark parts sink in and shift as you move your head (needs Bump Maps)."),
         slider("Parallax Depth", "vr_parallax_depth", 0.5f, 6.f, 0.25f, "%.2f").extend().help("How deep the darkest parts of the textures sink, in Quake units."),
         slider("Parallax Distance", "vr_parallax_distance", 128.f, 2048.f, 64.f, "%.0f").extend().help("How far away walls still look carved (further costs more)."),
+        slider("Parallax Refinement", "vr_parallax_refine", 0.f, 8.f, 1.f, "%.0f").extend().help("Steps finding exactly where your view meets the carving: smooth edges seen from the side instead of stairs and layers that slide as you move (0 none; 1 the old look; 4 the default)."),
+        slider("Parallax Side Fade", "vr_parallax_grazing", 60.f, 90.f, 1.f, "%.0f").extend().help("How far round to the side, in degrees from straight on, walls still look carved before it fades out (90, the default: never fades; 86 before; 83 the old look; lower if seen-from-the-side walls swim)."),
+        toggle("Parallax Depth Write", "vr_parallax_depth_write").help("The carving has real depth: monsters, items, hands, particles and water meet the sunken parts where they look to be, instead of at the flat wall. On by default; costs a few tenths of a millisecond a frame."),
         slider("Parallax Items Depth", "vr_parallax_items", 0.f, 4.f, 0.25f, "%.2f").extend().help("How deep the ammo and health boxes look carved, in their own units (scaled with the box; 0 off)."),
         slider("Parallax Models Depth", "vr_parallax_models", 0.f, 2.f, 0.125f, "%.3f").extend().help("How deep monsters, pickups and weapons without baked maps look carved, their heights guessed from the skin's paint, in their own units (0 off, the default: on Quake's blocky skins it bends the texels)."),
         slider("Parallax Depth: Authored Models", "vr_parallax_authored", 0.f, 2.f, 0.25f, "%.2f").extend().help("How deep models with authored bump maps look carved (your hands and body, the gadget, the flashlight, the weapons): their real baked relief, 1 as deep as baked, 0 off."),
@@ -1102,6 +1114,7 @@ void retroAllUncheckCategories()
         slider("Weapon Sight Glow", "vr_weapon_glow", 0.f, 3.f, 0.1f, "%.1fx").extend().help("Your weapons' glowing parts, as the shotgun's sights, shine brighter and glow (0: as Quake)."),
         open("Weapon Sight Hue: Colours", pageIndex(pageColours)).help("Every hue is on HUD and Menus > Colours."),
         header("Effects"),
+        toggle("Lit Particles", "vr_particle_light").help("Blood, smoke, dust, debris and water take the light where they are: dark in dark corners, lit by your flashlight, muzzle flashes and explosions. Fire, sparks and glows stay bright. Off: all as bright as their colours, as in Quake."),
         toggle("Soft Particles", "vr_soft_particles").help("Smoke, fire, blood and explosions fade out where they meet walls and floors instead of cutting hard lines through them."),
         slider("Soft Particle Distance", "vr_soft_particles_scale", 0.25f, 3.f, 0.25f, "%.2fx").extend().help("How far in front of walls and floors they start fading (bigger: softer, but thin puffs against a wall fainter)."),
         toggle("Half-Res Heavy Particles", "vr_particle_halfres").help("When smoke, fire and blood fill much of the view, the particles are drawn at half resolution and blended in: a quarter of their cost on the GPU, a little softer."),
@@ -1207,6 +1220,86 @@ void retroAllUncheckCategories()
         slider("Slime Alpha", "r_slimealpha", 0.f, 1.f, 0.1f, "%.1f").help("How see-through slime is (1: opaque; 0: as Water Alpha). Only in maps vised for it."),
         toggle("Map's Own Alpha", "vr_map_liquid_alpha").help("Maps that set their liquids' alpha themselves (worldspawn keys) use theirs instead of the sliders above."),
     };
+}
+
+// What the Relighting page showed of the tool when built (relight::toolPageState: found, a download running): a change
+// rebuilds it (items()).
+int relightToolState = -1;
+
+// Graphics > Relighting (vr_relight.cpp; docs/RELIGHTING.md, "Relighting in the game"): ericw-tools' light on the map you
+// are in, in the background, with these settings; then the map reloaded where you are. Or many maps (Many Maps): an
+// episode, a game, the Map Library's, every one, a few side by side, the bar showing how far. With no light.exe found,
+// Tool offers the download of ericw-tools (vr_relight_tool.cpp).
+[[nodiscard]] za::Vector<Item> pageGraphicsRelighting()
+{
+    relightToolState = relight::toolPageState();
+    [[maybe_unused]] const bool found = (relightToolState & 1) != 0;
+    const bool downloading = (relightToolState & 2) != 0;
+    za::Vector<Item> list{
+        info(relight::statusLine),
+        progressBar(relight::progress, relight::progressText),
+        info(relight::detailLine),
+        info(relight::mapLine),
+        command("Relight This Map", "vr_relight").help("Relights the map you are in with the settings below (a few seconds to a minute, in the background; you can keep playing), then reloads it where you are. The result is kept: the map plays with it from now on."),
+        command("Cancel", "vr_relight_cancel").help("Stops the relighting running now: the maps it finished keep their new light, the ones it was lighting keep the light they had (nothing half-made is left)."),
+        command("Remove This Map's Relight", "vr_relight_revert").help("The map you are in plays with its other light from its next start: relight_maps.py's relit map, if made, else its own."),
+        toggle("Use In-game Relights", "vr_relight_use").help("Maps relit here are used over those relight_maps.py made (next map). Off: the relit maps of the script, or the maps' own light."),
+        toggle("Reload Where You Are", "vr_relight_reload").help("After relighting the map you are in, it is reloaded at once, where you are (a quick save and load; where the game can't be saved, the map restarts). Off: you see the new light from its next start."),
+        header("Many Maps"),
+        cycle("Maps", "vr_relight_batch_set", {{0.f, "This Map"}, {1.f, "An Episode"}, {2.f, "A Game"}, {3.f, "Map Library's"}, {4.f, "Every Map"}})
+            .help("What Relight These Maps relights, with the settings below: the map you are in, an episode (E1M1 to E1M8...), a whole game (Quake, a mission pack, a campaign), every map installed from the Map Library, or every map there is."),
+        cycle("Episode", "vr_relight_batch_episode", {{0.f, "The One You're In"}, {1.f, "E1"}, {2.f, "E2"}, {3.f, "E3"}, {4.f, "E4"}, {5.f, "E5 (Past)"}})
+            .help("Maps: An Episode. The one the map you are in belongs to (E1M3: E1; a mission pack's HIP2M1: its second), or one of Quake's."),
+        cycle("Game", "vr_relight_batch_game", {{0.f, "The One You're In"}, {1.f, "Quake"}, {2.f, "Armagon"}, {3.f, "Eternity"}, {4.f, "Past"}, {5.f, "Machine"}, {6.f, "Dawn"}})
+            .help("Maps: A Game. The one the map you are in is from, or Quake, Scourge of Armagon, Dissolution of Eternity, Dimension of the Past, Dimension of the Machine, Dawn of the Machine (when installed)."),
+        command("Relight These Maps", "vr_relight_batch").help("Relights the maps chosen above one after another in the background, while you play (an episode takes a few minutes, every map an hour or more with Bounced Light). The bar above shows how far, and the time left; Cancel stops it. Maps relit with these same settings already are skipped."),
+        toggle("Relight Unchanged Maps Too", "vr_relight_batch_force").help("Off: a map relit with the same settings before (and the same map file and texture rules) is skipped. On: every map is relit again."),
+        slider("Maps at Once", "vr_relight_parallel", 0.f, 8.f, 1.f, "%.0f").help("How many maps are lit side by side (light's threads shared between them). 0: two on a computer with 8 cores or more, else one. More finishes a batch of small maps a little sooner; maps with Bounced Light gain nothing, and four are slower."),
+        cycle("Reload the Map You're In", "vr_relight_batch_reload", {{0.f, "When It's Done"}, {1.f, "At the End"}})
+            .help("When the batch relights the map you are in (it goes first) and Reload Where You Are is on: reload it as soon as it is done, or only when the whole batch is."),
+        toggle("Progress Outside the Menu", "vr_relight_indicator").help("While maps are being relit, a line on the wrist gadget's screen (on a flat screen, in the corner): maps done, percentage and the time left."),
+        header("Lamps and Glowing Textures"),
+        slider("Light Textures", "vr_relight_strength", 0.f, 4.f, 0.1f, "%.1fx").extend().help("How bright everything a texture lights is: lamps, light panels, glowing buttons and panels, lava (1: the relight script's)."),
+        slider("Lamps and Light Panels", "vr_relight_lamps", 0.f, 4.f, 0.1f, "%.1fx").extend().help("The light fixtures' light, times Light Textures: lamps, light panels and strips, the pyramid lanterns."),
+        slider("Glowing Panels and Buttons", "vr_relight_glows", 0.f, 4.f, 0.1f, "%.1fx").extend().help("Buttons, computer panels, runes and slipgates' glow on what is round them, times Light Textures."),
+        slider("Lava and Slime", "vr_relight_liquids", 0.f, 4.f, 0.1f, "%.1fx").extend().help("The red glow lava casts on the walls round it, and slime's faint green one, times Light Textures."),
+        header("The Map's Light"),
+        slider("Map Lights", "vr_relight_maplights", 0.f, 4.f, 0.1f, "%.1fx").extend().help("The map's own lights (the mapper's), as far, this much brighter."),
+        slider("Sunlight", "vr_relight_sunlight", 0.f, 4.f, 0.1f, "%.1fx").extend().help("The sun and the sky's light, in maps that have them (outdoor maps; not id's)."),
+        slider("Bounced Light", "vr_relight_bounce", 0.f, 2.f, 0.1f, "%.1f").help("Light bouncing off the walls fills the shade: brighter, flatter rooms (0 none, the relight script's moodier look). Takes longer."),
+        slider("Ambient Occlusion", "vr_relight_ao", 0.f, 3.f, 0.1f, "%.1f").help("Corners and crevices darker (1.5: the relight script's; 0 none)."),
+        slider("Minimum Light", "vr_relight_minlight", 0.f, 64.f, 4.f, "%.0f").help("No place darker than this (0 none): an easy way out of pitch-black corners, at some cost to contrast."),
+        cycle("Shadow Quality", "vr_relight_quality", {{0.f, "Fast"}, {1.f, "Smooth"}}).help("Smooth: soft shadow edges (the relight script's). Fast: about four times quicker, harder edges."),
+        command("Defaults", "vr_relight_defaults").help("Every setting on this page back to the relight script's look."),
+        header("Tool"),
+        info(relight::toolLine),
+    };
+    if(downloading)
+    {
+        list.pushBack(progressBar(relight::tool::progress, relight::tool::progressText));
+        list.pushBack(info(relight::tool::statusLine));
+        list.pushBack(command("Cancel Download", "vr_relight_get_tool cancel").help("Stops the download: nothing of it is kept."));
+    }
+    else
+    {
+        if(relight::tool::statusLine()[0])
+        {
+            list.pushBack(info(relight::tool::statusLine)); // (the last download's result: a job's end rebuilds the page)
+        }
+#ifdef _WIN32 // (the release's light.exe: elsewhere, build ericw-tools and set vr_relight_tool)
+        if(!found)
+        {
+            list.pushBack(command("Download ericw-tools (27.5 MB)", "vr_relight_get_tool")
+                    .help("Relighting needs ericw-tools' light, which this copy of Quake VR does not have. Downloads ericw-tools "
+                          "2.0.0-alpha11 from its GitHub release (27.5 MB, checked against its known SHA-256) into "
+                          "quakevr/tools/ericw-tools: light.exe, its libraries and their licences (GPL-3, Apache-2.0)."));
+        }
+#endif
+    }
+    list.pushBack(command("Status in the Console", "vr_relight_status").developer());
+    list.pushBack(command("Tool Lookup in the Console", "vr_relight_get_tool status").developer().help("vr_relight_get_tool status: the light.exe found, where the download goes, the pinned file (version, size, sha256) and the last download's result."));
+    list.pushBack(command("Write the Texture Lights", "vr_relight_lights").developer().help("Writes the lights this map's textures get with these settings to relight_lights.txt and lists them in the console (to compare with relight_maps.py --list-glows)."));
+    return list;
 }
 
 // Graphics > Retro Lighting (vr_retrolight.cpp; ROUND21.md, "Retro lighting"): the light in Quake's coarse look, to go

@@ -11,10 +11,12 @@
 // Each page is shown again where it was left (its selected row, found by its label when the page is
 // built anew, on the same line of the view), across restarts too (vr_menu_positions).
 
+#include "vr_serverrules.hpp"
 #include "vr_modelmetadata.hpp"
 #include "vr_backend.hpp"
 #include "vr_cvars.hpp"
 #include "vr_engine.hpp"
+#include "vr_files.hpp"
 #include "vr_gadget.hpp"
 #include "vr_mapindex.hpp"
 #include "vr_mapinstall.hpp"
@@ -37,6 +39,8 @@
 #include "vr_flashlight.hpp"
 #include "vr_held.hpp"
 #include "vr_props.hpp"
+#include "vr_relight.hpp"
+#include "vr_relight_tool.hpp"
 #include "vr_retro.hpp"
 #include "vr_fatigue.hpp"
 #include "vr_weight.hpp"
@@ -115,6 +119,9 @@ struct Item
 
     // Info: its text, asked for each time it is drawn.
     const char* (*info)(){nullptr};
+
+    // Info drawn as a progress bar (progressBar()): how far, 0..1 (below 0: an empty row), and its text, right of it.
+    float (*progress)(){nullptr};
 
     // Shown under the list while selected.
     const char* helpText{nullptr};
@@ -238,6 +245,42 @@ void restartVr()
     return i;
 }
 
+// The enemies the training dummy can stand as (vr_dummy_type; QC vr_dummy_types.qc numbers them): a mission pack's only
+// when it is installed (else the QC makes it a grunt).
+[[nodiscard]] za::Vector<Choice> dummyEnemies()
+{
+    za::Vector<Choice> out{{0.f, "Grunt"}, {1.f, "Enforcer"}, {2.f, "Knight"}, {3.f, "Death Knight"}, {4.f, "Ogre"},
+        {5.f, "Fiend"}, {6.f, "Shambler"}, {7.f, "Zombie"}, {8.f, "Vore"}, {9.f, "Scrag"}, {10.f, "Rottweiler"},
+        {11.f, "Spawn"}, {12.f, "Rotfish"}};
+    const cvar_t* hipnotic = Cvar_FindVar("vr_hipnotic_available");
+    const cvar_t* rogue = Cvar_FindVar("vr_rogue_available");
+    if(hipnotic && hipnotic->value != 0.f)
+    {
+        out.pushBack({13.f, "Gremlin"});
+        out.pushBack({14.f, "Centroid"});
+    }
+    if(rogue && rogue->value != 0.f)
+    {
+        out.pushBack({15.f, "Mummy"});
+        out.pushBack({16.f, "Wrath"});
+        out.pushBack({17.f, "Overlord"});
+        out.pushBack({18.f, "Electric Eel"});
+    }
+    return out;
+}
+
+// The training dummy's full health (vr_dummy_health), its leftmost step -1: its enemy's own ("Its Own": a grunt's 30).
+[[nodiscard]] Item dummyHealthSlider()
+{
+    Item i = slider("Dummy Health", vr_dummy_health, 0.f, 1000.f, 5.f, "%.0f")
+                 .extend(1.f, 100000.f)
+                 .help("The training dummy's full health: what its hits take away (shown over it) and, with Dummy Dies, "
+                       "what kills it. Its Own: its enemy's (a grunt's 30, an ogre's 200).");
+    i.negativeLabel = "Its Own";
+    i.negativeStart = 5.f;
+    return i;
+}
+
 // An effect's hue (degrees), its leftmost step -1: the player's (vr_player_hue, vr_hue.hpp).
 [[nodiscard]] Item hueSlider(const char* label, cvar_t& cvar)
 {
@@ -310,6 +353,16 @@ void runCommand(const char* text)
 [[nodiscard]] Item info(const char* (*text)())
 {
     Item i{Item::Info, ""};
+    i.info = text;
+    return i;
+}
+
+// A progress bar across the row, filled to fraction() (an empty row while it is below 0), text() right of it (the
+// percentage, the time left): Graphics > Relighting's.
+[[nodiscard]] Item progressBar(float (*fraction)(), const char* (*text)())
+{
+    Item i{Item::Info, ""};
+    i.progress = fraction;
     i.info = text;
     return i;
 }
@@ -388,6 +441,7 @@ using PageBuilder = za::Vector<Item> (*)();
 [[nodiscard]] za::Vector<Item> pageStamina();
 [[nodiscard]] za::Vector<Item> pageGibs();
 [[nodiscard]] za::Vector<Item> pageGore();
+[[nodiscard]] za::Vector<Item> pageLimbGore();
 [[nodiscard]] za::Vector<Item> pageScreens();
 [[nodiscard]] za::Vector<Item> pageTips();
 [[nodiscard]] za::Vector<Item> pageHipHolsters();
@@ -399,7 +453,8 @@ using PageBuilder = za::Vector<Item> (*)();
 //   released at a map change like any scratch.
 struct MenuReadouts
 {
-    za::String motionNote, motionLastSaved, extendableHelp;
+    za::String motionNote, motionLastSaved, extendableHelp, serverRuleHelp;
+    za::String checklistUndoHelp;      // checklistUndoHelp
     za::String weight[2];              // weightReadout, by hand
     za::String weaponWeightsDamage[2]; // weaponWeightsDamageReadout, by line
     za::String heldObjectMass;
@@ -410,10 +465,11 @@ struct MenuReadouts
     char checklistSummary[48];         // checklistSummary
     char stamina[96];                  // staminaReadout
     char renderScaleHelp[192];         // renderScaleHelp
+    char buildVersion[64];             // buildVersionLine
     auto members()
     {
-        return qvr::mem::list(motionNote, motionLastSaved, extendableHelp, weight, weaponWeightsDamage, heldObjectMass, heldObjectDamage,
-            weaponWeightsDrop, weaponWeightsHits, weaponOffsetsStock, checklistSummary, stamina, renderScaleHelp);
+        return qvr::mem::list(motionNote, motionLastSaved, extendableHelp, serverRuleHelp, weight, weaponWeightsDamage, heldObjectMass, heldObjectDamage,
+            weaponWeightsDrop, weaponWeightsHits, weaponOffsetsStock, checklistSummary, checklistUndoHelp, stamina, renderScaleHelp, buildVersion);
     }
 };
 mem::Scratch<MenuReadouts> readouts{"menu readouts"};
@@ -443,10 +499,11 @@ struct PageTexts
     za::String weaponWeightsTitle, weaponWeightsInheritTitle;
     za::String heldObjectOffsetsTitle, heldObjectWeightsTitle;
     za::Vector<za::String> checklistSections; // the Checklist's headers
+    za::String checklistUndone;               // the item Undo Last Tick changed last (its help says)
     auto members()
     {
         return qvr::mem::list(weaponOffsetsTitle, weaponOffsetsInheritTitle, weaponOffsetsInheritNames, weaponWeightsTitle,
-            weaponWeightsInheritTitle, heldObjectOffsetsTitle, heldObjectWeightsTitle, checklistSections);
+            weaponWeightsInheritTitle, heldObjectOffsetsTitle, heldObjectWeightsTitle, checklistSections, checklistUndone);
     }
 };
 mem::Cache<PageTexts> pageTexts{"menu texts", mem::Never};
@@ -744,6 +801,17 @@ void kickBot() { Cbuf_AddText("impulse 102\n"); }
         slider("Stamina", vr_knockdown_stamina, 0.f, 1.f, 0.05f, "%.2f")
             .help("Tired shoves knock down less: the chance times 1 - this times the share of your stamina spent (with "
                   "Stamina on). 0: stamina doesn't matter."),
+        toggle("Over a Ledge, Always", vr_knockdown_ledge)
+            .help("A shove that would carry it over the edge of a high drop (Ledge Height or more) always knocks it down, "
+                  "so it tumbles off as a ragdoll. Not through a wall or railing; stairs are no ledge. Off: the chance as "
+                  "anywhere."),
+        slider("Ledge Height", vr_knockdown_ledge_drop, 24.f, 256.f, 8.f, "%.0f units").extend(1.f, 1024.f)
+            .help("How high a drop must be to count as a ledge (64: a bit more than you are tall; a stair is 16-18)."),
+        slider("Ledge Reach", vr_knockdown_ledge_reach, 0.25f, 3.f, 0.05f, "%.2fx").extend(0.f, 10.f)
+            .help("How far ahead a ledge is looked for, times how far the shove would carry it (the hop and the slide). "
+                  "1: as far as it goes; less: only ledges close by force the knockdown; more: further ones too."),
+        slider("Ledge Margin", vr_knockdown_ledge_margin, 0.f, 128.f, 4.f, "%.0f units").extend(0.f, 512.f)
+            .help("How far past that a ledge still counts, in units (16: about a monster's half width)."),
         header("Each Monster's Chance"),
         slider("Grunt", vr_knockdown_chance_army, 0.f, 1.f, 0.01f, "%.2f"),
         slider("Enforcer", vr_knockdown_chance_enforcer, 0.f, 1.f, 0.01f, "%.2f"),
@@ -1471,6 +1539,15 @@ void armsResetTweaks()
             .help("Where the elbow points: down, plus this much backwards."),
         slider("Elbow From Hand", vr_body_elbow_hand, 0.f, 1.f, 0.05f, "%.2f")
             .help("How much the elbow points away from the back of the hand."),
+        slider("Elbow Tuck", vr_body_elbow_tuck, 0.f, 1.f, 0.05f, "%.2f")
+            .help("With the hand at the face or the chest (aiming down the sights, an axe raised by the face), the "
+                  "elbow stays down and back by the ribs instead of swinging out or across (0: as before)."),
+        slider("Tucked Elbow Back", vr_body_elbow_tuck_back, 0.f, 2.f, 0.05f, "%.2f")
+            .help("Where a tucked elbow points: down, plus this much backwards (more lets it go behind the chest)."),
+        slider("Tuck Within", vr_body_elbow_tuck_near, 0.3f, 1.f, 0.05f, "%.2f arm")
+            .help("Fully tucked with the wrist this close to the shoulder (times the arm's length)."),
+        slider("Tuck Fades By", vr_body_elbow_tuck_far, 0.4f, 1.2f, 0.05f, "%.2f arm")
+            .help("Not tucked at all with the wrist this far from the shoulder (times the arm's length)."),
         header("Pauldrons"),
         toggle("Pauldrons", vr_body_pauldrons).help("Leather pads over the shoulders and the tops of the arms, as the Quake ranger wears."),
         cycle("Pauldron Style", vr_body_pauldron_style, {{0.f, "Ranger leather"}, {1.f, "Armour colour"}, {2.f, "Steel"}})
@@ -1675,9 +1752,19 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
         cycle("Beam Quality", vr_flashlight_beam_quality, {{0.f, "Low"}, {1.f, "Medium"}, {2.f, "High"}})
             .help("How closely the visible beam fades where walls cut it. Higher looks for them more often, costing more time each frame."),
         toggle("Casts Shadows", vr_flashlight_shadows).help("Its light casts shadows (takes one of the shadowed dynamic lights)."),
-        cycle("Cord", vr_flashlight_cord, {{0.f, "Off"}, {1.f, "Coiled"}, {2.f, "Plain"}, {3.f, "Chain"}, {4.f, "Low-Poly Chain"}}).help("The retracting cord from the clip on your belt to the torch while it is off the belt: coiled like an old telephone's, springy, a plain cable, a rusty iron chain, or that chain low-poly (fewer, chunkier links of square bar, flat-shaded: Quake's look) (off: none drawn)."),
+        cycle("Cord", vr_flashlight_cord, {{0.f, "None"}, {1.f, "Low-Poly Chain"}}).help("The retracting cord from the clip on your belt to the torch while it is off the belt: a rusty low-poly iron chain (chunky links of square bar, flat-shaded: Quake's look), springy, swinging as your hand moves, or none drawn."),
         hueSlider("Beam Hue", vr_flashlight_hue).help("The beam's colour, with Beam Saturation (at 0 it is white): its light, the beam in the air and the lens. 40 warm, 200 cold blue; Player's: the Player Effects Hue."),
         slider("Beam Saturation", vr_flashlight_saturation, 0.f, 1.f, 0.05f, "%.2f").help("0 white (the default), 1 the Beam Hue in full."),
+        header("Turning It Over"),
+        toggle("Flick to Turn Over", vr_flashlight_flick)
+            .help("A sharp flick of your wrist up or down turns the torch in your hand over, as B or Y does (the beam out "
+                  "past your thumb or out past your little finger). Not by a gun or your head (B or Y clips it on there)."),
+        slider("Flick Strength", vr_flashlight_flick_speed, 300.f, 1500.f, 50.f, "%.0f deg/s").extend(100.f, 3000.f)
+            .help("How fast your wrist must turn up or down to count. Higher: only sharper flicks (fewer by accident)."),
+        slider("Flick: Hand Still Below", vr_flashlight_flick_max_move, 0.5f, 4.f, 0.1f, "%.1f m/s").extend(0.1f, 10.f)
+            .help("Your hand moving faster than this (a swing, a punch) never flicks: the wrist alone."),
+        slider("Flick Cooldown", vr_flashlight_flick_cooldown, 0.1f, 1.5f, 0.05f, "%.2f s")
+            .help("After a flick, how long before the next one counts (your wrist coming back is not a second flick)."),
         header("Taking and Clipping On"),
         slider("Grab Range", vr_flashlight_grab_range, 0.5f, 3.f, 0.1f, "%.1fx").extend(0.25f, 4.f)
             .help("How far from the torch your hand reaches it (it lights up, a grip takes it): times 9 cm from its middle line. Higher is more lenient."),
@@ -1957,6 +2044,9 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
             .help("And how fast it is thrown upwards besides (vr_decap_head_lift)."),
         slider("Fountain", vr_decap_fountain, 0.f, 8.f, 0.25f, "%.2f s").extend(0.f, 30.f)
             .help("How long the neck spurts blood, in beats, dying away (0: none) (vr_decap_fountain)."),
+        slider("Flying Head's Fountain", vr_limbs_end_fountain, 0.f, 4.f, 0.25f, "%.2f s").extend(0.f, 20.f)
+            .help("How long the neck of a head cut off spurts a smaller fountain as it flies (and the cut end of a limb: "
+                  "Limb Gore's Cut End Fountain, the same setting) (0: none) (vr_limbs_end_fountain)."),
         toggle("Keeps Its Own Motion", vr_decap_own_motion)
             .help("A beheaded (or popped) monster's headless body goes on as it was moving (running at you: it stumbles on "
                   "towards you) in full; a pop slows only the shot's knock (Body's Speed After a Pop). Off: as before: its "
@@ -1988,6 +2078,132 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
             .help("A popped head's body: how much of the shot's knock its headless ragdoll keeps (its own motion, as it ran, "
                   "in full: Keeps Its Own Motion). The shot's force went into the head, so it slumps where it stood; 1: flung "
                   "as before (vr_decap_pop_body_speed)."),
+        slider("Head Chance", vr_decap_chance_scale, 0.f, 2.f, 0.05f, "%.2fx").extend(0.f, 10.f)
+            .help("Every beheading or head pop's chance times this (a blade's sure cut too: below 1 it may fail); Quad Damage "
+                  "always pops. Limbs: Gore > Limb Gore (vr_decap_chance_scale)."),
+        header("Head Pop Chance"),
+        toggle("By Chance", vr_decap_pop_chance)
+            .help("A shotgun or super shotgun headshot kill pops the head always up close, never far off, and by chance between "
+                  "(the rows below); off: every headshot kill pops it, as before (vr_decap_pop_chance)."),
+        slider("Always Within", vr_decap_pop_always_range, 0.f, 10.f, 0.5f, "%.1f lengths").extend(0.f, 50.f)
+            .help("A shotgun's or super shotgun's headshot kill this near (in player lengths, 56 units: about 1.75 m) "
+                  "always pops the head (vr_decap_pop_always_range)."),
+        slider("Never Beyond", vr_decap_pop_never_range, 1.f, 40.f, 1.f, "%.0f lengths").extend(0.f, 200.f)
+            .help("This far or farther it never does; between the two, the chance falls off (vr_decap_pop_never_range)."),
+        slider("Super Shotgun Chance", vr_decap_pop_ssg_scale, 0.f, 3.f, 0.05f, "%.2fx").extend(0.f, 10.f)
+            .help("The super shotgun's chance between the ranges, times this (vr_decap_pop_ssg_scale)."),
+        slider("Super Shotgun Falloff", vr_decap_pop_ssg_falloff, 0.f, 5.f, 0.1f, "%.1f").extend(0.f, 20.f)
+            .help("How fast its chance dies away with range: 1 straight down to the far range, higher sooner, 0 not at all "
+                  "(vr_decap_pop_ssg_falloff)."),
+        slider("Shotgun Chance", vr_decap_pop_sg_scale, 0.f, 3.f, 0.05f, "%.2fx").extend(0.f, 10.f)
+            .help("The shotgun's chance between the ranges, times this (vr_decap_pop_sg_scale)."),
+        slider("Shotgun Falloff", vr_decap_pop_sg_falloff, 0.f, 5.f, 0.1f, "%.1f").extend(0.f, 20.f)
+            .help("How fast the shotgun's chance dies away with range (stronger than the super shotgun's) "
+                  "(vr_decap_pop_sg_falloff)."),
+        slider("Pellets at the Head", vr_decap_pop_pellet_weight, 0.f, 1.f, 0.05f, "%.2f")
+            .help("How much the share of the blast's pellets that struck the head weighs on the chance: 1 in proportion, "
+                  "0 not at all (vr_decap_pop_pellet_weight)."),
+        toggle("Lightning Always Pops", vr_decap_pop_lightning_always)
+            .help("A lightning bolt's headshot kill always pops the head, at any range; off: the ranges, with the super "
+                  "shotgun's falloff (vr_decap_pop_lightning_always)."),
+        slider("Enforcer Laser", vr_decap_pop_laser, 0.f, 1.f, 0.05f, "%.2f")
+            .help("An enforcer's laser bolt that kills a monster with a head or limb hit (an enemy's bolt into another "
+                  "monster, or your own enforcer's rifle) pops it at this chance, at any range (0: never) (vr_decap_pop_laser)."),
+        toggle("Thrown Things", vr_decap_pop_thrown)
+            .help("A blunt weapon or prop thrown (or flung) into a head that kills pops it, when heavy enough (not a sword, "
+                  "an axe or the chainsaw: an axe's edge cuts the head off) (vr_decap_pop_thrown)."),
+        slider("Thrown: Always From", vr_decap_pop_thrown_mass, 0.f, 20.f, 0.5f, "%.1f kg").extend(0.f, 200.f)
+            .help("This heavy or heavier, a thrown thing's headshot kill always pops the head (vr_decap_pop_thrown_mass)."),
+        slider("Thrown: Lighter's Chance", vr_decap_pop_thrown_light_chance, 0.f, 1.f, 0.05f, "%.2f")
+            .help("A lighter one's chance (0: never) (vr_decap_pop_thrown_light_chance)."),
+        slider("Fist", vr_decap_pop_fist_scale, 0.f, 0.25f, 0.005f, "%.3fx").extend(0.f, 5.f)
+            .help("A punch that kills with a head hit pops the head at this chance at the hardest hit, times the hit's "
+                  "hardness to the Hardness Curve (the rows below): very rarely by default (vr_decap_pop_fist_scale)."),
+        slider("Gun Butt", vr_decap_pop_gun_scale, 0.f, 0.25f, 0.005f, "%.3fx").extend(0.f, 5.f)
+            .help("The same for a gun swung, its butt or a pistol-whip (vr_decap_pop_gun_scale)."),
+        slider("Crowbar", vr_decap_pop_crowbar_scale, 0.f, 0.25f, 0.005f, "%.3fx").extend(0.f, 5.f)
+            .help("The same for the crowbar (vr_decap_pop_crowbar_scale)."),
+        slider("Pommel", vr_decap_pop_pommel_scale, 0.f, 0.25f, 0.005f, "%.3fx").extend(0.f, 5.f)
+            .help("The same for a sword's, axe's, chainsaw's or Mjolnir's pommel or handle end (vr_decap_pop_pommel_scale)."),
+        slider("Club", vr_decap_pop_club_scale, 0.f, 1.f, 0.05f, "%.2fx").extend(0.f, 5.f)
+            .help("The same for a carried prop swung as a club, a wall torch (vr_decap_pop_club_scale)."),
+        slider("Mjolnir", vr_decap_pop_mjolnir_scale, 0.f, 3.f, 0.05f, "%.2fx").extend(0.f, 10.f)
+            .help("The same for Mjolnir's head: above 1 it is sure well before the hardest hit (1.75: a solid blow nearly "
+                  "always pops it) (vr_decap_pop_mjolnir_scale)."),
+        slider("Soft Hit Speed", vr_decap_pop_melee_soft_speed, 0.f, 10.f, 0.5f, "%.1f m/s").extend(0.f, 30.f)
+            .help("The striking part this slow or slower: no hardness from its speed (vr_decap_pop_melee_soft_speed)."),
+        slider("Hard Hit Speed", vr_decap_pop_melee_hard_speed, 1.f, 20.f, 0.5f, "%.1f m/s").extend(0.f, 40.f)
+            .help("This fast or faster: all of it (vr_decap_pop_melee_hard_speed)."),
+        slider("Soft Hit Damage", vr_decap_pop_melee_soft_damage, 0.f, 50.f, 1.f, "%.0f").extend(0.f, 500.f)
+            .help("The blow's damage (the headshot multiplier in) this or less: no hardness from it "
+                  "(vr_decap_pop_melee_soft_damage)."),
+        slider("Hard Hit Damage", vr_decap_pop_melee_hard_damage, 1.f, 200.f, 1.f, "%.0f").extend(0.f, 1000.f)
+            .help("This or more: all of it (vr_decap_pop_melee_hard_damage)."),
+        slider("Damage's Weight", vr_decap_pop_melee_damage_weight, 0.f, 1.f, 0.05f, "%.2f")
+            .help("How much the damage weighs in the hit's hardness; the rest is its speed (vr_decap_pop_melee_damage_weight)."),
+        slider("Hardness Curve", vr_decap_pop_melee_curve, 0.f, 5.f, 0.1f, "%.1f").extend(0.f, 20.f)
+            .help("The hardness to this power: higher, soft blows nearer never; 1 straight (vr_decap_pop_melee_curve)."),
+        toggle("Quad Damage: Always Pop", vr_decap_pop_quad)
+            .help("With Quad Damage, every headshot kill pops the head: any gun (nails, rockets and grenades at the head too), "
+                  "any blow (a blade's stab), any throw or prop, at any range, by no chance (a slash still cuts it off) "
+                  "(vr_decap_pop_quad)."),
+    };
+}
+
+// Gore > Limb Gore (ROUND21.md, "Limb gore"; QC vr_limbs.qc, vr_box3d.cpp's "Limb gore", vr_limbmodel.cpp): every
+// limb as the head: cut off or popped, by the head's chance rules.
+[[nodiscard]] za::Vector<Item> pageLimbGore()
+{
+    return {
+        toggle("Limb Gore", vr_limbs)
+            .help("A monster's arms, legs, tails and the rest come off as its head does (the monsters with ragdolls): a blade's "
+                  "slash cuts the limb off at the joint nearest the hit (the elbow the forearm, the shoulder the whole arm), "
+                  "a shot, a blunt blow or a bolt pops it, by the head's chances (Decapitation's rows). A living one only by "
+                  "the blow that kills it: it falls at once as a ragdoll; the limb flies off (pick it up, throw it), the "
+                  "stump spurts blood. Needs Ragdolls on (vr_limbs)."),
+        slider("Limb Chance", vr_limbs_chance_scale, 0.f, 2.f, 0.05f, "%.2fx").extend(0.f, 10.f)
+            .help("Every limb cut or pop's chance times this (a blade's sure cut too: below 1 it may fail); Quad Damage "
+                  "always pops (vr_limbs_chance_scale)."),
+        slider("Head Chance", vr_decap_chance_scale, 0.f, 2.f, 0.05f, "%.2fx").extend(0.f, 10.f)
+            .help("And every beheading or head pop's chance times this (1: as before) (vr_decap_chance_scale)."),
+        toggle("Corpses", vr_limbs_corpses)
+            .help("Corpses and ragdolls lose limbs too, each on its own, down to the torso: a slash cuts, a blunt blow or a "
+                  "shot pops one (vr_limbs_corpses)."),
+        toggle("Zombies and Mummies", vr_limbs_zombies)
+            .help("A zombie or a mummy losing a limb dies for good (a zombie: whatever the damage, as beheaded). Off: their "
+                  "limbs stay on (their heads: Decapitation > Zombies) (vr_limbs_zombies)."),
+        slider("Body's Speed After", vr_limbs_body_speed, 0.f, 1.f, 0.05f, "%.2fx").extend(0.f, 2.f)
+            .help("A living monster's limb cut or popped: how much of the blow's knock its ragdoll keeps (it slumps where it "
+                  "stood; 1: flung as a kill) (vr_limbs_body_speed)."),
+        slider("Most Limbs Lying About", vr_limbs_max, 1.f, 64.f, 1.f, "%.0f").extend(1.f, 256.f)
+            .help("Past it, the oldest go first (not one in your hand) (vr_limbs_max)."),
+        toggle("Make Limbs as the Map Loads", vr_limbs_prebuild)
+            .help("On: the limbs of every kind of monster the map has are made as it loads (about 5 ms each: a tenth of a "
+                  "second or so more), not at their first cut (a dropped frame). The next map load (vr_limbs_prebuild)."),
+        slider("Limb Weight", vr_limbs_mass_scale, 0.f, 3.f, 0.05f, "%.2fx").extend(0.f, 10.f)
+            .help("A limb (or head) cut off weighs its share of its monster's ragdoll Mass by the kind of limb: a whole arm "
+                  "6.3%, a forearm and hand 2.8%, a hand 0.8%, a whole leg 15.5%, a shin and foot 6%, the head 7% (four "
+                  "legs share two legs' weight, six arms two arms'; a tail its share of the body's volume), times this; "
+                  "held and thrown as that. 0: its model's volume of flesh, as before (vr_limbs_mass_scale)."),
+        slider("Cut End Fountain", vr_limbs_end_fountain, 0.f, 4.f, 0.25f, "%.2f s").extend(0.f, 20.f)
+            .help("How long the cut end of a limb (or a head's neck) spurts a smaller fountain of its own as it flies, "
+                  "dying away (the stump's: Decapitation > Fountain) (0: none) (vr_limbs_end_fountain)."),
+        slider("Enforcer Laser Pops", vr_decap_pop_laser, 0.f, 1.f, 0.05f, "%.2f")
+            .help("An enforcer's laser bolt that kills with a head or limb hit (an enemy's into another monster, or your "
+                  "enforcer's rifle) pops it at this chance (times Head or Limb Chance) (vr_decap_pop_laser)."),
+        header("Explosions and Gibbing"),
+        toggle("Explosions Pop Limbs", vr_limbs_blast)
+            .help("An explosion pops the limbs near it by chance: a monster it kills falls as a ragdoll without them instead "
+                  "of bursting into gibs (if none popped: gibbed as before); corpses lose them too. Off: as before "
+                  "(vr_limbs_blast)."),
+        slider("Explosion Reach", vr_limbs_blast_radius, 16.f, 256.f, 8.f, "%.0f units").extend(1.f, 1000.f)
+            .help("Limbs this near the blast may pop (vr_limbs_blast_radius)."),
+        slider("Explosion Chance", vr_limbs_blast_chance, 0.f, 1.f, 0.05f, "%.2f")
+            .help("A limb's chance at the blast itself, falling to none at the reach (times Limb Chance) "
+                  "(vr_limbs_blast_chance)."),
+        cycle("Gibbed Bodies Throw Limbs", vr_gib_limbs, {{0.f, "No"}, {1.f, "With the Gibs"}, {2.f, "Instead of Gibs"}})
+            .help("A body bursting into gibs throws its own arms, legs and tail as well (With the Gibs), or instead of "
+                  "Quake's meat chunks (Instead of Gibs) (vr_gib_limbs)."),
     };
 }
 
@@ -2023,6 +2239,8 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
         open("Small Gibs", pageIndex(pageSmallGibs)).help("Chunks of meat torn out by hits: when, how many, how they fly, how long they last."),
         open("Decapitation", pageIndex(pageDecapitation))
             .help("A killing slash at a monster's head cuts it off: the head flies, the body falls headless, the neck spurts blood."),
+        open("Limb Gore", pageIndex(pageLimbGore))
+            .help("Arms, legs and tails cut off or popped as heads are: the killing blow on the living, any blow on corpses."),
         header("Wounds on Models"),
         toggle("Dynamic Wounds", vr_wounds)
             .help("Blood painted on monsters, corpses and you where the hits land, in the skins' own pixels. Your body and hands show your wounds this way instead of the wound skins, and healing washes them off."),
@@ -2040,6 +2258,34 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
             .help("How deep your bleeding wounds look sunk into the skin (Finer detail only; 0 flat)."),
         slider("Blood Opacity", vr_wounds_blood_alpha, 0.2f, 1.f, 0.05f, "%.2f")
             .help("How opaque the painted blood is over the skins: a little of the skin shows through below 1."),
+        header("Lightning Shock"),
+        toggle("Lightning Shock", vr_shock_death)
+            .help("A monster the lightning strikes, alive or dead, keeps Quad Damage's arcs crawling over it a while, on through its "
+                  "death; its ragdoll convulses as long as they do and the killing bolt chars it (off: only each hit's own arcs and burn)."),
+        toggle("Arcs on the Living", vr_shock_living)
+            .help("The lasting arcs on living monsters too, from the first bolt and on through their death. Off: only on the bodies "
+                  "the lightning kills or strikes dead; a living monster gets just each hit's own short flicker of arcs."),
+        slider("Lightning Shock Duration", vr_shock_death_time, 0.5f, 30.f, 0.5f, "%.1f s").extend(0.1f, 60.f)
+            .help("How long the arcs (and a body's convulsions) last after the last bolt."),
+        slider("On the Living", vr_shock_living_time, 0.f, 1.f, 0.05f, "%.2fx").extend(0.f, 2.f)
+            .help("A living monster's arcs last this much of the Duration after the last bolt (0.5: half). Its death carries "
+                  "them on to the whole Duration from that bolt, as a body's (vr_shock_living_time)."),
+        slider("Convulsions", vr_shock_seizure, 0.f, 3.f, 0.1f, "%.1fx")
+            .help("How hard a shocked ragdoll's limbs convulse, easing off with the arcs (0 still). Only the dead convulse."),
+        slider("Arcs on Bodies", vr_shock_arcs, 0.f, 3.f, 0.1f, "%.1fx").help("How many arcs crawl over a shocked monster or body (0 none)."),
+        slider("Burn Marks", vr_shock_burns, 0.f, 16.f, 1.f, "%.0f").help("The burn marks a lightning kill leaves over the body (each hit also chars where it strikes: Burns)."),
+        slider("Smoke After Lightning", vr_smoulder_time, 0.f, 15.f, 0.5f, "%.1f s").extend(0.f, 60.f)
+            .help("How long a monster or a body the lightning strikes smokes from its burns after the last bolt, thinning out (0 none)."),
+        slider("Smouldering Smoke", vr_smoulder, 0.f, 3.f, 0.1f, "%.1fx").extend(0.f, 10.f)
+            .help("How much smoke rises off bodies the lightning struck or fire burnt (0 none; how long after fire: Combat > Burning > Smoke After Flames)."),
+        slider("Smoke Opacity", vr_smoulder_alpha, 0.1f, 1.f, 0.05f, "%.2f").help("How opaque each wisp of that smoke is as it leaves the skin."),
+        slider("Arcs on You", vr_shock_self_time, 0.f, 3.f, 0.1f, "%.1f s").extend(0.f, 5.f)
+            .help("Struck by lightning (a shambler's bolt, another's lightning gun, a trap, the water's shock), Quad's arcs crawl over "
+                  "your hands, arms and body this long after a shambler's bolt, longer for harder ones (0 none). None right in front "
+                  "of your eyes."),
+        slider("Arcs on You: Number", vr_shock_self_arcs, 0.f, 3.f, 0.1f, "%.1fx").help("How many arcs crawl over you then."),
+        slider("Arcs on You: Light", vr_shock_self_light, 0.f, 1.f, 0.1f, "%.1f")
+            .help("A soft flicker of blue light round you while they crackle (0 none). There is no flash over the view."),
         header("Your Wounds"),
         slider("Arm Drip Rate", vr_body_blood, 0.f, 4.f, 0.25f, "%.2fx").extend()
             .help("How often blood drips from your wounded arms and hands (the body's wounds: Show Armour and Wounds; 0 none)."),
@@ -2101,12 +2347,19 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
         toggle("Hit While Dying", vr_corpse_dying)
             .help("A monster dying takes damage as a corpse while it falls (once it drops what it drops): a chainsaw, a blow or a shot can gib it. Never killed twice. Needs Gib Corpses (Carrying and Throwing > Gibs and Corpses)."),
         header("Training Dummy"),
+        cycle("Dummy Enemy", vr_dummy_type, dummyEnemies())
+            .help("The enemy the training dummy stands as: its model, size, hit zones, the head it loses, its blood, gore and death are that monster's own. It stays still, takes no harm and reports every hit. The mission packs' with the pack installed."),
         toggle("Dummy Bleeds", vr_dummy_gore)
-            .help("The firing range's training dummy bleeds as a grunt: blood sprays and mist, wounds on its model, small gibs, blood on you and what you hold. Off: it stays clean."),
-        toggle("Dummy Gibs", vr_dummy_gib)
-            .help("What would gib a grunt (its 30 health over a run of hits, below -35) gibs the training dummy: its head and gibs fly, and it stands again. Off as shipped."),
+            .help("The firing range's training dummy bleeds as its enemy: blood sprays and mist, wounds on its model, small gibs, blood on you and what you hold. Off: it stays clean."),
+        toggle("Dummy Dies", vr_dummy_gib)
+            .help("The hit that takes the last of its health (Dummy Health) kills the training dummy as its enemy: beheaded, its head popped, dying, lying as a ragdoll or gibbed exactly as that monster would be. Then it stands again. No loot. Off: it stays at 0 health (\"would kill\"). On as shipped."),
         slider("Dummy Stands Again", vr_dummy_gib_respawn, 0.5f, 10.f, 0.5f, "%.1f s").extend(0.1f, 60.f)
-            .help("How long a gibbed training dummy takes to stand again."),
+            .help("How long a killed training dummy takes to stand again (its body stays, as its enemy's)."),
+        dummyHealthSlider(),
+        slider("Dummy Health Refills", vr_dummy_regen, 0.f, 15.f, 0.5f, "%.1f s").extend(0.f, 120.f)
+            .help("How long after its last hit the training dummy's health fills up again (0: never; it stays as hit until it dies and stands again)."),
+        toggle("Dummy Health Bar", vr_dummy_healthbar)
+            .help("The training dummy's health over its head, as a bar and a number, turned to face you. Off: its sign only."),
         header("Marks"),
         toggle("Decals", vr_decals).help("Blood, scorch marks and bullet chips on walls and floors (the gore needs them)."),
         slider("Max Decals", vr_decal_max, 64.f, 4096.f, 64.f, "%.0f").extend().help("The oldest go first. The gore makes many: 1024 or more."),
@@ -2264,6 +2517,10 @@ void hologramTestMessage()
             .help("Tilts every throw up (or down, below 0). 0: as throws were tuned; the hand calibration doesn't change them."),
         toggle("Analog Release", vr_throw_release)
             .help("A throw lets go as the grip starts to open, not only once it is released."),
+        toggle("Slow Motion: Throws in Real Time", vr_throw_slowmo_real_time)
+            .help("In slow motion (bullet time, not Sandevistan), a throw's release is judged over the same stretch of "
+                  "your real motion as at full speed, and its wrist flick by your real wrist speed. Off: over the slowed "
+                  "clock's, which took in three times the arm's arc at 0.3x (throws went off, the wrist's share too big)."),
         toggle("Spin From Controller Turn", vr_throw_spin_from_pose)
             .help("A throw's spin from how the controller turned, not the runtime's angular velocity (Virtual Desktop "
                   "reports it in the controller's frame: a flick facing away from the play space's front spun throws "
@@ -2635,6 +2892,10 @@ void hologramTestMessage()
             .help("Objects: the map's weapons, keys, runes and suits hang spinning until you grab, knock or force-grab them, "
                   "then they are physics objects. A weapon you grip is yours at once; keys, runes and suits you carry to a "
                   "holster and let go of there. Powerups are as before. Next map."),
+        cycle("Weapon Pickups Look", vr_pickup_prop_models, {{0.f, "Classic models"}, {1.f, "As held and dropped"}})
+            .help("As held and dropped: the map's weapons are drawn with the same models as the weapons in your hands and "
+                  "the ones you drop, at their size, spinning about their middle. Classic models: id's pickup models (g_*.mdl). A weapon "
+                  "without a model of its own keeps the classic one. Next map."),
     };
 }
 
@@ -2712,6 +2973,9 @@ void hologramTestMessage()
         slider("Corpse Burn Time", vr_burn_corpse_time, 0.f, 30.f, 0.5f, "%.1f s").extend(0.f, 120.f),
         slider("Corpse Burn Damage", vr_burn_corpse_damage, 0.f, 2.f, 0.1f, "%.1fx").extend(0.f, 10.f)
             .help("A burning corpse's damage, times Burn Damage: enough of it gibs it (Corpse Health). 0: it just burns."),
+        slider("Smoke After Flames", vr_smoulder_burn_time, 0.f, 15.f, 0.5f, "%.1f s").extend(0.f, 60.f)
+            .help("A burning monster or corpse smokes while it burns, and this long after its flames go out, thinning out "
+                  "(how much: Gore > Lightning Shock > Smouldering Smoke)."),
         header("What Sets Things on Fire"),
         toggle("Torch Touch", vr_burn_touch)
             .help("A lit torch, held or thrown, sets a monster or a corpse on fire just by touching it: no blow needed. "
@@ -2815,6 +3079,9 @@ void hologramTestMessage()
         slider("Most Together", vr_debris_cluster, 1.f, 6.f, 1.f, "%.0f").help("Most pieces lying together at one place. Next map."),
         slider("Most in a Map", vr_debris_max, 0.f, 400.f, 10.f, "%.0f").extend(0.f, 2000.f)
             .help("Fewer if the map has few entities to spare (vr_debris_edicts_left). Next map."),
+        slider("Most in Multiplayer", vr_debris_mp_max, 0.f, 160.f, 8.f, "%.0f").extend(0.f, 400.f)
+            .help("The most in a multiplayer map (yours as the host). They are the server's, to pick up and throw: each one "
+                  "in sight costs every player's network packets. 0: none. Next map."),
         slider("Most in an Area", vr_debris_area_max, 1.f, 30.f, 1.f, "%.0f").extend(1.f, 200.f)
             .help("Most pieces in a square of vr_debris_area_size units (384: about 12 m). Next map."),
         slider("Spacing", vr_debris_spacing, 0.f, 256.f, 8.f, "%.0f units").extend(0.f, 2048.f)
@@ -2903,6 +3170,8 @@ void hologramTestMessage()
 [[nodiscard]] za::Vector<Item> pageRagdollZombie();
 [[nodiscard]] za::Vector<Item> pageRagdollMummy();
 [[nodiscard]] za::Vector<Item> pageRagdollGremlin();
+[[nodiscard]] za::Vector<Item> pageRagdollVore();
+[[nodiscard]] za::Vector<Item> pageRagdollCentroid();
 [[nodiscard]] za::Vector<Item> pageRagdollShambler();
 [[nodiscard]] za::Vector<Item> pageRagdollFiend();
 
@@ -3071,7 +3340,9 @@ void hologramTestMessage()
         open("Scrag", pageIndex(pageRagdollScrag)),
         open("Fiend", pageIndex(pageRagdollFiend)),
         open("Shambler", pageIndex(pageRagdollShambler)),
+        open("Vore", pageIndex(pageRagdollVore)),
         open("Gremlin", pageIndex(pageRagdollGremlin)),
+        open("Centroid", pageIndex(pageRagdollCentroid)).help("A centroid's ragdoll (Scourge of Armagon's scorpion)."),
         open("Zombie", pageIndex(pageRagdollZombie)).help("A zombie's ragdoll: only when its head is cut off (Gore > Decapitation)."),
         open("Mummy", pageIndex(pageRagdollMummy)).help("A mummy's ragdoll (Dissolution of Eternity): only when its head is cut off (Gore > Decapitation)."),
         header("Taking Them"),
@@ -3398,6 +3669,66 @@ void hologramTestMessage()
     };
 }
 
+// Gibs and Corpses > Ragdoll Settings > Vore: the vore's own physics (vr_ragdoll_vore_*), each one Global (the one
+// for all monsters) or its own.
+[[nodiscard]] za::Vector<Item> pageRagdollVore()
+{
+    return {
+        classSlider("Go Limp At", vr_ragdoll_vore_start, 0.f, 1.f, 0.1f, "%.1f")
+            .help("vr_ragdoll_vore_start; Global: Go Limp At."),
+        classSlider("Mass", vr_ragdoll_vore_mass, 20.f, 200.f, 5.f, "%.0f kg").extend(0.f, 1000.f)
+            .help("vr_ragdoll_vore_mass; Global: Mass."),
+        classSlider("Friction", vr_ragdoll_vore_friction, 0.1f, 2.f, 0.1f, "%.1f").extend(0.f, 10.f)
+            .help("vr_ragdoll_vore_friction; Global: Friction."),
+        classSlider("Joint Friction", vr_ragdoll_vore_joint_friction, 0.f, 10.f, 0.5f, "%.1f N m").extend(0.f, 100.f)
+            .help("vr_ragdoll_vore_joint_friction; Global: Joint Friction."),
+        classSlider("Joint Stiffness", vr_ragdoll_vore_joint_stiffness, 0.f, 5.f, 0.25f, "%.2f Hz").extend(0.f, 30.f)
+            .help("vr_ragdoll_vore_joint_stiffness; Global: Joint Stiffness."),
+        classSlider("Joint Limits", vr_ragdoll_vore_limits, 0.25f, 1.5f, 0.05f, "%.2fx").extend(0.f, 3.f)
+            .help("vr_ragdoll_vore_limits; Global: Joint Limits."),
+        classSlider("Limb Damping", vr_ragdoll_vore_damping, 0.f, 3.f, 0.1f, "%.1f").extend(0.f, 20.f)
+            .help("vr_ragdoll_vore_damping; Global: Limb Damping."),
+        classSlider("Blast Throw", vr_ragdoll_vore_blast, 0.f, 5.f, 0.25f, "%.2fx").extend(0.f, 20.f)
+            .help("vr_ragdoll_vore_blast; Global: Blast Throw."),
+        classSlider("Death Motion Kept", vr_ragdoll_vore_inherit, 0.f, 2.f, 0.1f, "%.1fx")
+            .help("vr_ragdoll_vore_inherit; Global: Death Motion Kept."),
+        command("All Global", "vr_ragdoll_vore_start -1; vr_ragdoll_vore_mass -1; vr_ragdoll_vore_friction -1; "
+                              "vr_ragdoll_vore_joint_friction -1; vr_ragdoll_vore_joint_stiffness -1; vr_ragdoll_vore_limits -1; "
+                              "vr_ragdoll_vore_damping -1; vr_ragdoll_vore_blast -1; vr_ragdoll_vore_inherit -1")
+            .help("The vore's ragdoll as all monsters' (Ragdoll Settings)."),
+    };
+}
+
+// Gibs and Corpses > Ragdoll Settings > Centroid: the centroid's own physics (vr_ragdoll_centroid_*), each one Global (the one
+// for all monsters) or its own.
+[[nodiscard]] za::Vector<Item> pageRagdollCentroid()
+{
+    return {
+        classSlider("Go Limp At", vr_ragdoll_centroid_start, 0.f, 1.f, 0.1f, "%.1f")
+            .help("vr_ragdoll_centroid_start; Global: Go Limp At."),
+        classSlider("Mass", vr_ragdoll_centroid_mass, 20.f, 200.f, 5.f, "%.0f kg").extend(0.f, 1000.f)
+            .help("vr_ragdoll_centroid_mass; Global: Mass."),
+        classSlider("Friction", vr_ragdoll_centroid_friction, 0.1f, 2.f, 0.1f, "%.1f").extend(0.f, 10.f)
+            .help("vr_ragdoll_centroid_friction; Global: Friction."),
+        classSlider("Joint Friction", vr_ragdoll_centroid_joint_friction, 0.f, 10.f, 0.5f, "%.1f N m").extend(0.f, 100.f)
+            .help("vr_ragdoll_centroid_joint_friction; Global: Joint Friction."),
+        classSlider("Joint Stiffness", vr_ragdoll_centroid_joint_stiffness, 0.f, 5.f, 0.25f, "%.2f Hz").extend(0.f, 30.f)
+            .help("vr_ragdoll_centroid_joint_stiffness; Global: Joint Stiffness."),
+        classSlider("Joint Limits", vr_ragdoll_centroid_limits, 0.25f, 1.5f, 0.05f, "%.2fx").extend(0.f, 3.f)
+            .help("vr_ragdoll_centroid_limits; Global: Joint Limits."),
+        classSlider("Limb Damping", vr_ragdoll_centroid_damping, 0.f, 3.f, 0.1f, "%.1f").extend(0.f, 20.f)
+            .help("vr_ragdoll_centroid_damping; Global: Limb Damping."),
+        classSlider("Blast Throw", vr_ragdoll_centroid_blast, 0.f, 5.f, 0.25f, "%.2fx").extend(0.f, 20.f)
+            .help("vr_ragdoll_centroid_blast; Global: Blast Throw."),
+        classSlider("Death Motion Kept", vr_ragdoll_centroid_inherit, 0.f, 2.f, 0.1f, "%.1fx")
+            .help("vr_ragdoll_centroid_inherit; Global: Death Motion Kept."),
+        command("All Global", "vr_ragdoll_centroid_start -1; vr_ragdoll_centroid_mass -1; vr_ragdoll_centroid_friction -1; "
+                              "vr_ragdoll_centroid_joint_friction -1; vr_ragdoll_centroid_joint_stiffness -1; vr_ragdoll_centroid_limits -1; "
+                              "vr_ragdoll_centroid_damping -1; vr_ragdoll_centroid_blast -1; vr_ragdoll_centroid_inherit -1")
+            .help("The centroid's ragdoll as all monsters' (Ragdoll Settings)."),
+    };
+}
+
 // Gibs and Corpses > Ragdoll Settings > Shambler: the shambler's own physics (vr_ragdoll_shambler_*), each one Global (the one
 // for all monsters) or its own.
 [[nodiscard]] za::Vector<Item> pageRagdollShambler()
@@ -3515,6 +3846,47 @@ void checklistReload()
     checklist::refresh(true);
 }
 
+// Undo Last Tick: the session's ticks and unticks taken back one at a time, the last first (checklist::undo); its help
+// names the item the next one changes, and the one it changed last (found again with Hide Ticked off).
+[[nodiscard]] bool checklistUndoDim(int)
+{
+    return checklist::undoCount() == 0;
+}
+
+[[nodiscard]] const char* checklistUndoHelp(int)
+{
+    za::String& text = readouts.checklistUndoHelp;
+    char count[48];
+    q_snprintf(count, sizeof(count), "%d to undo. ", checklist::undoCount());
+    text = checklist::undoCount() == 0 ? "Nothing to undo: each tick and untick made since the game started can be "
+                                         "taken back here, the last first."
+                                       : count;
+    text += checklist::undoCount() == 0 ? "" : checklist::undoTicks() ? "Next ticks again: " : "Next unticks: ";
+    if(checklist::undoCount() > 0)
+    {
+        text += checklist::undoText();
+    }
+    if(!pageTexts.checklistUndone.empty())
+    {
+        text += checklist::undoCount() > 0 ? " (Last undone: " : " Last undone: ";
+        text += pageTexts.checklistUndone;
+        text += checklist::undoCount() > 0 ? ")" : "";
+    }
+    return text.cStr();
+}
+
+void checklistUndo()
+{
+    const za::String what = checklist::undoText();
+    if(checklist::undo() == -1)
+    {
+        S_LocalSound("misc/menu1.wav");
+        return;
+    }
+    pageTexts.checklistUndone = what;
+    S_LocalSound("misc/menu3.wav");
+}
+
 [[nodiscard]] za::Vector<Item> pageChecklist()
 {
     checklist::refresh();
@@ -3536,11 +3908,15 @@ void checklistReload()
 
     za::Vector<Item> items = {
         info(checklistSummary),
-        toggle("Hide Ticked", vr_checklist_hide_ticked).help("Leaves the ticked items out of the list."),
+        toggle("Hide Ticked", vr_checklist_hide_ticked).help("Leaves the ticked items out of the list. Off: every item, the ticked ones dimmed."),
         action("Reload List", checklistReload)
             .help("Reads quakevr/checklist.txt again (done by itself too when the file changes). Ticks are kept by each "
                   "item's text, in quakevr/checklist_ticks.txt."),
     };
+    Item undo = action("Undo Last Tick", checklistUndo);
+    undo.helpArg = checklistUndoHelp;
+    undo.dimArg = checklistUndoDim;
+    items.insert(items.begin() + 2, undo); // (under Hide Ticked)
     int run = -1;
     bool headerDue = false;
     int shown = 0;
@@ -3606,6 +3982,10 @@ void checklistReload()
 za::Vector<Item> pageDebugViews()
 {
     return {
+        toggle("Animated Surfaces", vr_anim_surface)
+            .help("On: an animated texture's frames (the wall buttons' lit and dim frames) share one surface: the same "
+                  "bumps, parallax depth, sheen and detail, only their colours and glow change. Off: each frame its own "
+                  "(the relief and sheen pulsed with the frames). At once."),
         toggle("External Maps A/B", vr_extmaps_ab)
             .help("Hides the external pack's normal, specular and glow maps (Graphics: External Maps) at once, to compare "
                   "with the made bumps and Quake's glow; off again shows them. Without a reload."),
@@ -3637,7 +4017,10 @@ za::Vector<Item> pageDebugViews()
         cycle("Show Hit Zones", vr_debug_hitzones, {{0.f, "Off"}, {1.f, "Positional Damage"}, {2.f, "Decapitation"}, {3.f, "Both"}})
             .help("Positional Damage colors the animated model surface: head red, body green, extremities yellow, legs blue. "
                   "Uses the same standing-pose mapping and Head Priority as precise shots and positional melee. "
-                  "Precise hits off: box/ray reference zones. Decapitation shows the older standing melee zone in magenta."),
+                  "Precise hits off: box/ray reference zones. Decapitation colors, on the animated model too, where a "
+                  "slash beheads (magenta: the melee's zone, Head Size and Neck) and the head that shots, lasers and "
+                  "thrown axes pop (red); Both outlines the magenta over Positional Damage's colors. Every head and limb "
+                  "test maps the point struck to the standing pose, so these zones move with the model."),
         toggle("Hit Zones Through Walls", vr_debug_hitzones_xray)
             .help("Draws the animated positional regions through walls and the back of the model. Off: only visible surfaces."),
         cycle("Show Hits", vr_debug_hits, {{0.f, "Off"}, {1.f, "Hits"}, {2.f, "Hits and Misses"}})
@@ -3695,6 +4078,9 @@ za::Vector<Item> pageDebugViews()
         toggle("Show Foveation", vr_foveated_debug)
             .help("The shading rates of Foveated Rendering in the eyes and the mirror (yellow 2x2, red 4x4) and the upscaler's "
                   "sharp circle (cyan)."),
+        toggle("Show Parallax Depth", "vr_parallax_debug")
+            .help("vr_parallax_debug: where the walls' parallax writes the depth of the carving it shows (Graphics > Surfaces > "
+                  "Parallax Depth Write): red, brighter the deeper below the surface; dark blue: the surface's own depth."),
         toggle("Show Entity Boxes", "r_showbboxes")
             .help("Every entity's bounding box, as the game collides with it (monsters, items, missiles, triggers), through "
                   "walls. Single player only."),
@@ -3713,6 +4099,8 @@ za::Vector<Item> pageDebugLogging()
             .help("Bullet time starting, stopping and refused (the meter, the cooldown), each tap and press; and every "
                   "frame, how far your fingertip is from the gadget's button, or (And the Wrist Tap) how far your other "
                   "hand is from the gadget and how fast the hands come together."),
+        cycle("Flashlight Flicks", vr_flashlight_flick_debug, {{0.f, "Off"}, {1.f, "Each Flick and Why"}, {2.f, "And the Wrist Every Frame"}})
+            .help("vr_flashlight_flick_debug: the wrist flick that turns the held torch over, taken or refused (and why); 2: the held hand's wrist speed every frame."),
         cycle("Chainsaw", vr_debug_chainsaw, {{0.f, "Off"}, {1.f, "Pulls and Cuts"}, {2.f, "And the Bar in Monsters"}})
             .help("The chainsaws' cords (taken, pulled, too slow, let go), their engines (started, stalled) and cuts; "
                   "And the Bar: also each cut's test against what is near, how deep the drawn bar sinks into a monster, "
@@ -3846,6 +4234,13 @@ za::Vector<Item> pageDebugProfiling()
             .help("profile 30: the 30 QuakeC functions that ran the most instructions (their own) since the last time, and "
                   "the total; then all are zeroed. Press it, do the thing, press it again. A call over 16 million is a "
                   "runaway loop error."),
+        command("Benchmark Capture (10 s)", "vr_bench_begin manual 10s")
+            .help("vr_bench_begin manual 10s: the next 10 seconds' frame times (median, 95th and 99th percentiles, worst), "
+                  "each GPU pass, the heap events and what there is, into quakevr/profile/bench/manual.json and a line in "
+                  "the console (docs/vr-port/BENCHMARKS.md). Stand still and press it."),
+        command("Load Times", "vr_startup_times")
+            .help("vr_startup_times: where the start-up and the last map load spent their time (from the map command to its "
+                  "first frame drawn: the stages, then the kinds of work across them), and every load's total."),
         header("Threads"),
         toggle("Split Work Between Threads", vr_jobs_parallel)
             .help("The game's thread pool shares out the grasp solve, the liquids' volume, the decal atlas and the models' "
@@ -3895,6 +4290,9 @@ za::Vector<Item> pageDebugProfiling()
         command("Zancle Math Self-Test", "vr_zancle_math_test")
             .help("vr_zancle_math_test: Zancle's math (and the angle wrap) against the standard library's on edge values "
                   "(signed zeros, halves, wrap angles, infinities, NaN), to the last bit; one line."),
+        command("SHA-256 Self-Test", "vr_sha256_test")
+            .help("vr_sha256_test: the SHA-256 that checks each Map Library download against its index, on the standard "
+                  "test vectors (FIPS 180-2's, a million a's, the padding's edges); one line."),
         command("Ragdoll Hand Probe", "vr_ragdoll_hand_probe")
             .help("vr_ragdoll_hand_probe: each hand holding a ragdoll's limb: the limb's lag, the hand drawn off its "
                   "controller onto it, its palm and fingertips from the limb's mesh (cm), the fingers that met it."),
@@ -3937,6 +4335,9 @@ za::Vector<Item> pageDebugReports()
             .help("Prints whether Hipnotic and Rogue are available, missing or incomplete/corrupt. Both are optional for the Quake campaign."),
         command("Headset", "vr_status").help("vr_status: the backend, the eyes' sizes, the hidden area, the head's and hands' poses."),
         command("Player", "vr_dumpplayer").help("vr_dumpplayer [client]: a player's VR fields in the game (hands, weapons, hotspots)."),
+        command("Models Check", "vr_model_check 1")
+            .help("vr_model_check 1: every entity's model index against its model's name, and your models against the "
+                  "server's; each mismatch listed (a saved game loaded wrong: buttons drawn as gibs). 0 wrong is right."),
         command("View", "vr_dumpview").help("vr_dumpview: the hands, grips, palms, fingers and every entity drawn in the view (long)."),
         command("Bullet Time Now", "vr_bullettime").help("vr_bullettime: starts or stops bullet time, as the gadget's button."),
         command("Slow Motion Clocks", "vr_slowmo_probe")
@@ -3967,6 +4368,7 @@ za::Vector<Item> pageDebugReports()
         command("Bloody Hands and Washing", "vr_gore_hands_info")
             .help("vr_gore_hands_info: the blood on your hands and body (texels), the wounds kept to re-open, the wash and its re-opening, and the blood on your weapons and props."),
         command("Decals and Gore", "vr_decal_count").help("vr_decal_count: the decals and gore pieces in the world."),
+        command("Particle Lighting", "vr_particle_light_report").help("vr_particle_light_report: the last frame's lit particles (Lit Particles), their mean light and colour against unlit, and the lightmap traces it took."),
         command("Model Lighting", "vr_model_ambient_show").help("vr_model_ambient_show: the six nearest entities' ambient light."),
         command("Ambient Occlusion", "vr_ao_show").help("vr_ao_show: the ambient occlusion's occluders and bake."),
         header("Hands and Weapons"),
@@ -3981,11 +4383,36 @@ za::Vector<Item> pageDebugReports()
         header("Other"),
         command("Limits", "vr_limits")
             .help("vr_limits: every hardcoded limit's usage against its maximum (cvars, memory, models, edicts, lights...)."),
+        command("Network: Entities Sent", "vr_net_stats")
+            .help("vr_net_stats [reset]: the entities in use, and for each client the entities in sight and sent in its last "
+                  "datagram, their bytes and its room (1400 to a remote client), the peak, the mean, the frames that were full."),
+        command("Server Rules", "vr_serverrules")
+            .help("vr_serverrules: the settings the server judges by for every player (melee timing): their values, and on "
+                  "a remote server's client the server's against yours."),
+        command("Keyboard Hook", "vr_keyhook_status")
+            .help("vr_keyhook_status: whether this game holds the desktop keyboard hook (only with the window's focus) and "
+                  "the longest it went unserviced since the last report: every key press on the desktop waits for it."),
+        command("Input Latency: Walk", "vr_inputlag_test key 10")
+            .help("vr_inputlag_test key: a W key press sent through SDL once back in the game, then the "
+                  "frames and ms to the bound command, the move sent, the server, the view, full speed, the release and "
+                  "the stop (in the console). 'turn' and 'mouse' from the console."),
         command("Microphones", "vr_note_devices").help("vr_note_devices: the microphones Voice Notes can record from."),
         command("Detail Textures", "vr_detail_list").help("vr_detail_list: each texture's detail kind (long)."),
         command("External Maps", "vr_extmaps_stats all")
             .help("vr_extmaps_stats all: each texture of the map and what it got from the external pack (Graphics: External "
                   "Maps): its picture's match, normal, specular and glow maps (long; without 'all' only the totals)."),
+        command("Animated Surfaces", "vr_extmaps_frames")
+            .help("vr_extmaps_frames: each animated texture of the map (the wall buttons' +0basebtn...) frame by frame: the "
+                  "frame whose surface it is drawn with, its normal, specular and glow maps and detail, and whether its "
+                  "frames share one surface (Animated Surfaces A/B)."),
+        command("Relighting: Texture Lights", "vr_relight_lights")
+            .help("vr_relight_lights: the lights the map's glowing textures get with Graphics > Relighting's settings, a line "
+                  "each texture (its kind, where its glow came from: fullbright pixels or a glow image's file, its lights), "
+                  "and the lights into relight_lights.txt (to compare with relight_maps.py --list-glows)."),
+        command("Relighting: Status", "vr_relight_status").help("vr_relight_status: the relighting's state (a batch's maps done, each light running: its stage and process id; the progress and time left), how the map in play is lit, the light.exe found."),
+        command("Relighting: Tool Lookup", "vr_relight_get_tool status").help("vr_relight_get_tool status: the light.exe found (or not), the folder Download ericw-tools writes, the pinned file (version, size, sha256), its URL and the last download's result. vr_relight_tool_dir points both lookup and download at a test folder; vr_relight_tool_url at a test server."),
+        command("Relighting: Batch's Maps", "vr_relight_batch -list").help("vr_relight_batch -list: the maps Graphics > Relighting's Relight These Maps would take (Maps, Episode, Game), with their files and sizes, without relighting them."),
+        command("Menu Help Fit", "menu_vr helpcheck").help("menu_vr helpcheck [columns]: every VR page's help wrapped as drawn: the pages whose box grew, the help shown in parts, the longest (HELPSUM)."),
         command("Main Menu Lettering", "vr_bigfont").help("vr_bigfont: which of the main menu's letters were cut from the menu pictures, and which were left out (a mod's own picture: the menu then shows the picture)."),
     };
 }
@@ -4020,8 +4447,14 @@ za::Vector<Item> pageDebugTools()
             .help("maps_fetch force: Quaddicted's index fetched again now, on its own thread (the cached copy forgotten). Nothing waits for it; maps_stats says what happened."),
         toggle("Include Packages with progs.dat", vr_maps_allow_progs)
             .help("vr_maps_allow_progs: packages that ship their own progs.dat replace the game's code, so they are left out of the list by default. They are in the index either way (maps_info shows them, maps_stats counts them)."),
+        slider("Download Cache Size", vr_maps_cache_mb, 0.f, 4096.f, 64.f, "%.0f MB").extend(0.f, 65536.f)
+            .help("vr_maps_cache_mb: the downloaded packages' zips (cache/maps/) kept up to this size; past it the oldest are removed (before a download, at start-up, and when this is lowered). 0: none kept once a package is installed. Installed maps are not affected."),
+        command("Download Cache Usage", "maps_cache")
+            .help("maps_cache [trim]: the download cache's zips, oldest first (the first removed when it is over the size above), and how much of it they use. maps_cache trim: trimmed to the size now."),
         command("Map Browser Costs", "maps_page_stats")
-            .help("maps_page_stats: the Map Library page - how many times its list was built and what it cost, what a frame of the page costs, and its layout. The list is built when the text, a filter or the index changes, never per frame."),
+            .help("maps_page_stats: the Map Library page - how many times its list was built and what it cost, what a frame of the page costs, and its layout, and where its first row, Uninstall and Reinstall are drawn. The list is built when the text, a filter or the index changes, never per frame."),
+        command("Clear Search's Recent List", "menu_vr recent clear")
+            .help("menu_vr recent [clear]: the Search page's results opened recently (quakevr/search_recent.txt), printed with where each is drawn, or cleared."),
         command("Open the Map Browser", "maps_page")
             .help("maps_page [text]: the Map Library page (the corner's Maps button, Single Player > Map Library), with the text typed in. maps_install <sha> gets a package, maps_play <sha> starts it."),
         header("Test Effects"),
@@ -4029,6 +4462,7 @@ za::Vector<Item> pageDebugTools()
         command("Gore Burst", "vr_gore_test burst").help("vr_gore_test burst: a body bursting into gibs 64 units ahead."),
         command("Blood Mist", "vr_gore_mist_test").help("vr_gore_mist_test: a bleed's blood mist 64 units ahead (Gore > Blood Mist)."),
         command("Gib Blood on Hand", "vr_gore_hands_test main").help("vr_gore_hands_test main: a gib's blood on the main hand, as taking one (Gore > Bloody Hands and Washing)."),
+        command("Wash a Quarter Off", "vr_gore_wash_test 0.25").help("vr_gore_wash_test 0.25: a quarter of the blood washed off your hands and body at once, as water over them (Gore > Bloody Hands and Washing)."),
         command("Blood from a Blow", "vr_gore_spatter_test blow").help("vr_gore_spatter_test blow: a blow's blood thrown onto what the main hand holds, the hand and the arm (Gore > Blood on You and Your Gear)."),
         command("List Clean Weapon Skins", "vr_cleanskins").help("vr_cleanskins: the weapon skins with a clean version (a patch beside the model: progs/<model>_<skin>.clean), whether it applies to your files, how often it was applied (Gore > Clean Weapon Skins)."),
         command("Blood from a Blow on Your Prop", "vr_gore_spatter_test prop").help("vr_gore_spatter_test prop: a blow on what the main hand holds (a weapon, a box, a crate, a brick), on its side facing you: the blood on held props (Gore > Blood on You and Your Gear)."),
@@ -4046,7 +4480,24 @@ za::Vector<Item> pageDebugTools()
         command("Test Message", "vr_message_test").help("vr_message_test: a message in the gadget's hologram (once the gadget has been drawn)."),
         command("Eject a Casing", "vr_shells_eject").help("vr_shells_eject: a spent casing out of the held weapon's port."),
         command("Lightning Shock", "vr_shock_test 0").help("vr_shock_test 0: the lightning gun's shock in water (the flash, the arcs over your arms and body), without the damage."),
+        command("Lightning Strikes You", "vr_shock_self_test 10; vr_shock_self_info")
+            .help("vr_shock_self_test [damage]: struck by a bolt of that much (10 a shambler's, 30 a lightning gun's): Quad's arcs over "
+                  "your hands, arms and body (Gore > Lightning Shock > Arcs on You), without the damage. vr_shock_self_info: the arcs "
+                  "on you last frame by part (console)."),
         command("Electrified Water", "vr_shock_test 1").help("vr_shock_test 1 [radius] [seconds]: arcs on the water below the point 128 units ahead."),
+        command("Lightning Bolt at the Nearest", "vr_shock_hit_test 30")
+            .help("vr_shock_hit_test <damage>: a lightning gun's bolt from your eyes into the nearest monster or corpse: its arcs and a burn "
+                  "where it strikes; it keeps Quad's arcs crawling over it (Lightning Shock), alive or dead, a ragdoll convulsing, a kill charred."),
+        command("Lightning Kill the Nearest", "vr_shock_hit_test -1").help("vr_shock_hit_test -1: the same, just enough to kill it (not to gib it)."),
+        command("Shocked Bodies", "vr_shock_info; vr_shock_ragdoll_check")
+            .help("vr_shock_info: the bodies with arcs on them (kind 3 a hit's, 4 lasting; the arcs drawn; next frame: how far off the "
+                  "skin they lie, bodyshock-arcs); vr_shock_ragdoll_check: each "
+                  "ragdoll's shock left, its limbs' turning speed, its fastest part and its joints' stretch (console)."),
+        command("Smoke Off the Bodies Near", "vr_smoulder_test 10")
+            .help("vr_smoulder_test [seconds]: every monster and body within 1000 units smokes that long as a lightning bolt's burns "
+                  "would (Smouldering Smoke); vr_smoulder_info: the smoking bodies and the wisps made since the last print."),
+        command("Smouldering Bodies", "vr_smoulder_info")
+            .help("vr_smoulder_info: the smoking bodies (lightning's smoke left, the fire's flames out in, the smoke left) and the wisps made since the last print (console)."),
         command("Mjolnir's Lightning", "impulse 215").help("impulse 215: Mjolnir in the main hand strikes its lightning now, "
                                                             "as a blow does (15 cells). In water: the shock, with its damage."),
         header("Small Gibs Tests (developer 1 for each hit)"),
@@ -4073,6 +4524,10 @@ za::Vector<Item> pageDebugTools()
         command("Held, Then Let Go", "vr_smallgibs_test 9").help("vr_smallgibs_test 9: one in the off hand for 3 s with Last 1 s, then let go: it waits until it lands."),
         command("Pass Through the Body", "vr_smallgibs_test 10").help("vr_smallgibs_test 10: one from just behind the monster through it at 300 u/s, with the grace and without."),
         command("Throw Gibs at a Wall", "vr_smallgibs_test 12").help("vr_smallgibs_test 12: a gib and a small gib thrown at 220 u/s into the nearest wall stick (Thrown Gibs Stick 1 for it), a gib at 400 bursts."),
+        command("Thrown Gibs Stick, by Mass", "vr_smallgibs_test_n 10; vr_smallgibs_test 22")
+            .help("vr_smallgibs_test 22 (Step Up to the Wall Ahead first, a wall 220 units wide): gibs of 8, 12 and 20 kg, "
+                  "a grunt's and an ogre's head and a small gib thrown at it as hand throws of 2 to 6 m/s make them, 10 each; "
+                  "prints how many stuck or burst (developer 1)."),
         command("Step Up to the Wall Ahead", "vr_smallgibs_test 15")
             .help("vr_smallgibs_test 15: puts you 64 units (vr_smallgibs_test_dist) from the wall you face, to throw gibs at it (Gibs and Corpses: Thrown Gibs Stick, Speed to Stick)."),
         command("Flight by Situation", "vr_smallgibs_test 13")
@@ -4096,6 +4551,15 @@ za::Vector<Item> pageDebugTools()
             .help("vr_smallgibs_test 18: a gib made at your feet, thrown at the monster nearest 1 s later: it still hurts it."),
         toggle("Trace Small Gibs", vr_smallgibs_trace)
             .help("vr_smallgibs_trace: each small gib's first 2.5 s in the console (sgibtrace:): where made, its speed and every jump in it, what touches, nudges or strikes it, how far it lay."),
+        header("Training Dummy Tests (dummytest: ...)"),
+        command("What the Dummy Is", "vr_dummy_test 1")
+            .help("vr_dummy_test 1: the training dummy nearest: its enemy, model, box and health, and the zone a level shot at "
+                  "its head, body and legs strikes (1 head, 0 body, 2 limbs, 3 legs)."),
+        command("Hit the Dummy for 10", "vr_dummy_test 2").help("vr_dummy_test 2: a plain 10-damage hit from you: its health after."),
+        command("Hit the Dummy for Its Health", "vr_dummy_test 3")
+            .help("vr_dummy_test 3: a hit of just the health it has left: with Dummy Dies it dies as its enemy."),
+        command("The Dummy's Health", "vr_dummy_test 4")
+            .help("vr_dummy_test 4: its health now and how long since its last hit (it fills up again after Dummy Health Refills)."),
         header("Decapitation Tests (developer 1: decap: ...)"),
         command("A Zombie Ahead", "vr_test_spawn 2; vr_test_spawn_dist 96; impulse 241")
             .help("A zombie 96 units ahead (a map with zombies: the firing range), for the tests below."),
@@ -4132,6 +4596,82 @@ za::Vector<Item> pageDebugTools()
         command("Sweep the Head Zone", "vr_decap_test 19")
             .help("vr_decap_test 19: blows moved level at the nearest live monster's head from 16 sides, at heights 24 units below "
                   "its head's middle to 16 above: how many meet the melee's beheading zone at each (decapsweep: in the console)."),
+        header("Limb Gore Tests (limbtest: ... in the console; developer 1: limbs: ...)"),
+        command("A Grunt Ahead", "vr_test_spawn 0; vr_test_spawn_dist 96; impulse 241").help("A grunt 96 units ahead, for the tests below."),
+        command("A Grunt's Corpse Ahead", "vr_test_spawn 0; vr_test_spawn_dist 96; vr_test_spawn_dead 1; impulse 241; vr_test_spawn_dead 0")
+            .help("A dead grunt 96 units ahead (a ragdoll), for the corpse tests."),
+        command("Spawn Its Limbs", "vr_limb_test 1")
+            .help("vr_limb_test 1: every limb of the nearest monster's model hung in a row before you: the limb models made "
+                  "from its own (vr_limb_models lists them)."),
+        command("List Its Limb Models", "vr_limb_models").help("vr_limb_models [model]: the grunt's (or that model's) limbs: each one's triangles, cap and size."),
+        command("Cut a Corpse Apart, Ends First", "vr_limb_test 2")
+            .help("vr_limb_test 2: the nearest corpse's limbs cut off one by one, hands and shins first, down to the torso, "
+                  "then its head: the parts left after each."),
+        command("Cut a Corpse Apart, Whole Limbs", "vr_limb_test 3").help("vr_limb_test 3: the same, whole arms and legs at once."),
+        command("Slash at a Limb", "vr_limb_test 4")
+            .help("vr_limb_test 4: the nearest live monster's health 1, a sword's slash at its forearm: it falls as a ragdoll, "
+                  "the forearm flies off."),
+        command("Punch a Limb", "vr_limb_test 5").help("vr_limb_test 5: a fist's killing blow there: popped by chance (vr_decap_pop_roll 0: always)."),
+        command("Shotgun at a Limb", "vr_limb_test 6").help("vr_limb_test 6: a shotgun blast there that kills."),
+        command("Lightning at a Limb", "vr_limb_test 7").help("vr_limb_test 7: a lightning bolt there that kills."),
+        command("Explosion by a Limb", "vr_limb_test 9").help("vr_limb_test 9: an explosion beside it that kills: its limbs near it pop by chance."),
+        command("Gib It", "vr_limb_test 10").help("vr_limb_test 10: gibbed: its own limbs thrown (Gibbed Bodies Throw Limbs)."),
+        command("Slash at Full Health", "vr_limb_test 12").help("vr_limb_test 12: a light slash at a limb at full health: a zombie dies of it, others don't."),
+        command("Chance Rates", "vr_limb_test 8").help("vr_limb_test 8: 2000 rolls at chance 0.5 for a head and a limb: the rates with Head Chance and Limb Chance."),
+        command("Most Limbs", "vr_limb_test 11").help("vr_limb_test 11: twice Most Limbs Lying About thrown: how many stay."),
+        command("Where Its Limbs Map", "vr_limb_test 13").help("vr_limb_test 13: each limb's surface point and the joint a hit there cuts."),
+        command("The Limbs Lying About", "vr_limb_test 17").help("vr_limb_test 17: each limb thrown: its model, where it is, how fast (none fallen out of the world)."),
+        command("Cut Ends' Fountains", "vr_limb_test 18")
+            .help("vr_limb_test 18: each flying limb's (or head's) own fountain: its age, its spout (how far from the piece's "
+                  "middle, and from the stump's joint as it was cut), the piece's speed and weight; the drops so far."),
+        command("Limb Weights Here", "vr_limb_test 19")
+            .help("vr_limb_test 19: every kind of monster on the map: what its head and each limb weigh cut off (kg, share of "
+                  "its ragdoll's Mass; * a whole limb) (Limb Gore > Limb Weight)."),
+        command("Enemy Laser at the Head", "vr_limb_test 20")
+            .help("vr_limb_test 20: an enforcer's laser bolt (an enemy's) into the nearest living monster's head that kills "
+                  "it (health 1): popped at Enforcer Laser's chance (vr_decap_pop_roll 0: always)."),
+        command("Enemy Laser at a Limb", "vr_limb_test 21").help("vr_limb_test 21: the same at its forearm."),
+        command("Hand to the Last Limb", "vr_limb_test 14").help("vr_limb_test 14: the mock main hand put on the last limb thrown (then grip: vr_mock_button main grip 1; vr_limb_test 15 says if it is held)."),
+        header("Crowd Gore Tests (goretest: crowd ... in the console; the benchmarks' gore scenarios)"),
+        slider("Crowd Radius", vr_gore_test_crowd, 0.f, 1024.f, 64.f, "%.0f units")
+            .help("Above 0, the limb and head tests act on every monster this near you at once, in one frame, quietly (one "
+                  "goretest: crowd line): Crowd: ... below, or any test above. 0: the nearest monster only (vr_gore_test_crowd)."),
+        command("Spawn a Crowd (16 Grunts)", "vr_physics_spawn monster_army 100 -60;vr_physics_spawn monster_army 100 -20;vr_physics_spawn monster_army 100 20;vr_physics_spawn monster_army 100 60;vr_physics_spawn monster_army 148 -60;vr_physics_spawn monster_army 148 -20;vr_physics_spawn monster_army 148 20;vr_physics_spawn monster_army 148 60;vr_physics_spawn monster_army 196 -60;vr_physics_spawn monster_army 196 -20;vr_physics_spawn monster_army 196 20;vr_physics_spawn monster_army 196 60;vr_physics_spawn monster_army 244 -60;vr_physics_spawn monster_army 244 -20;vr_physics_spawn monster_army 244 20;vr_physics_spawn monster_army 244 60")
+            .help("vr_physics_spawn: 16 grunts in a 4 by 4 grid ahead of you (notarget keeps them still)."),
+        command("Crowd: Slash a Limb", "vr_limb_test 4").help("vr_limb_test 4 on the crowd (Crowd Radius above 0): each killed by a slash at a limb."),
+        command("Crowd: Cut Corpses Apart", "vr_limb_test 3").help("vr_limb_test 3 on the crowd's corpses: every limb and the head cut off."),
+        command("Crowd: Gib", "vr_limb_test 10").help("vr_limb_test 10 on the crowd: each gibbed (its limbs thrown: Gibbed Bodies Throw Limbs)."),
+        command("Crowd: Head Pops", "vr_decap_test 14").help("vr_decap_test 14 on the crowd: a super shotgun headshot each (head pop by chance: vr_decap_pop_roll 0 pops all)."),
+        header("Head Pop Chance Tests (poptest: ... in the console)"),
+        slider("Test Range", vr_decap_poptest_dist, 0.5f, 25.f, 0.5f, "%.1f lengths")
+            .help("The tests below shoot (or throw) from this many player lengths (56 units) off the nearest live monster's head "
+                  "(you are moved there and back; round it till the way is clear) (vr_decap_poptest_dist)."),
+        command("Chance Table", "vr_decap_test 40")
+            .help("vr_decap_test 40: each weapon's head pop chance at ranges, for all, half and a fifth of the pellets at the head."),
+        command("Shotgun Headshot Kill", "vr_decap_test 41").help("vr_decap_test 41: a shotgun blast (no spread) at its head at health 1, from the Test Range."),
+        command("Super Shotgun Headshot Kill", "vr_decap_test 42").help("vr_decap_test 42: the same with the super shotgun."),
+        command("Lightning Headshot Kill", "vr_decap_test 43").help("vr_decap_test 43: the same with a lightning bolt."),
+        command("Super Shotgun Body Kill", "vr_decap_test 44").help("vr_decap_test 44: a super shotgun blast at its body at health 1: never popped."),
+        command("Shotgun Rates", "vr_decap_test 45")
+            .help("vr_decap_test 45: vr_decap_poptest_n shotgun blasts with its spread at its head from the Test Range, not killing "
+                  "it: the mean chance, the rate it would pop, by pellets at the head."),
+        command("Super Shotgun Rates", "vr_decap_test 46").help("vr_decap_test 46: the same with the super shotgun."),
+        command("Throw a Weapon at Its Head", "vr_decap_test 47")
+            .help("vr_decap_test 47: weapon vr_decap_poptest_wid (10: the rocket launcher) thrown at 16 m/s into its head at health 1."),
+        command("Throw an Explosive Box at Its Head", "vr_decap_test 48").help("vr_decap_test 48: the same with an explosive box (that never blows up)."),
+        command("Blunt Melee Rates", "vr_decap_test 49")
+            .help("vr_decap_test 49: each blunt weapon's blow (fist, gun, crowbar, pommel, club, Mjolnir) at its head, soft, medium "
+                  "and hard, vr_decap_poptest_n times, not killing it: the chance and the rate it pops."),
+        command("Hard Punch Kill", "vr_decap_test 50").help("vr_decap_test 50: a hard punch at its head at health 1 (popped by chance)."),
+        command("Hard Gun Butt Kill", "vr_decap_test 51").help("vr_decap_test 51: the same with a gun's blow."),
+        command("Hard Crowbar Kill", "vr_decap_test 52").help("vr_decap_test 52: the same with the crowbar."),
+        command("Hard Pommel Kill", "vr_decap_test 53").help("vr_decap_test 53: the same with a sword's pommel."),
+        command("Hard Club Kill", "vr_decap_test 54").help("vr_decap_test 54: the same with a club."),
+        command("Hard Mjolnir Kill", "vr_decap_test 55").help("vr_decap_test 55: the same with Mjolnir's head."),
+        command("Nail at Its Head", "vr_decap_test 56").help("vr_decap_test 56: a nail at its head at health 1 (popped only with Quad Damage)."),
+        command("Rocket at Its Head", "vr_decap_test 57").help("vr_decap_test 57: the same with a rocket."),
+        command("Grenade at Its Head", "vr_decap_test 58").help("vr_decap_test 58: the same with a grenade."),
+        command("Give Quad Damage", "impulse 255").help("impulse 255: Quad Damage for 30 s (the tests above: every head kill pops)."),
         header("Burning Tests (developer 1: burning: ...)"),
         command("Set It on Fire (a Torch's Blow)", "vr_burn_test 1")
             .help("vr_burn_test 1: the nearest monster, corpse, crate or crate's piece set on fire (an explosive box: it can't burn) as a lit torch's blow would, where it faces you "
@@ -4208,6 +4748,33 @@ za::Vector<Item> pageSpawnWeapons()
     };
 }
 
+za::Vector<Item> pageMachineHordeTests()
+{
+    return {
+        header("Machine Horde Tests"),
+        header("Reload the arena after destructive tests"),
+        command("Acceptance", "vr_mg_horde_test 1"),
+        command("Wave and Equipment Report", "vr_mg_horde_test 2"),
+        command("Complete Current Wave", "vr_mg_horde_test 3"),
+        command("Start Boss Wave", "vr_mg_horde_test 4"),
+        command("Collect Spawned Key", "vr_mg_horde_test 5"),
+        command("Death and Revival Check", "vr_mg_horde_test 6"),
+        command("Drop Powerup", "vr_mg_horde_test 7"),
+        command("Authored Keyed Button Check", "vr_mg_horde_test 8"),
+        command("Reset Source Hunger Timer", "vr_mg_horde_test 9"),
+        command("Activate Authored Deferred Monster", "vr_mg_horde_test 10"),
+        command("Wave Monitor On", "vr_mg_horde_test 13")
+            .help("Log each wave's squad budget and every squad's monsters to the console (developer 1)."),
+        command("Wave Monitor Off", "vr_mg_horde_test 14"),
+        command("All Players Report", "vr_mg_horde_test 15")
+            .help("Coop: every player's health, death state, shared keys and frags (developer 1)."),
+        command("Authored Keyed Door Check", "vr_mg_horde_test 18")
+            .help("A real keyed door stays shut without shared keys, then spends exactly one and opens."),
+        command("Team Wipe", "vr_mg_horde_test 17")
+            .help("Destructive: every player dies; press fire to restart the arena (coop: revival needs a living teammate)."),
+    };
+}
+
 za::Vector<Item> pageDebugTests()
 {
     return {
@@ -4217,6 +4784,16 @@ za::Vector<Item> pageDebugTests()
             .help("Destructive: redirect a visible native slipgate and report the new cached destination. Reload afterward."),
         command("Official Triggers: Lightning Damage", "vr_mg_trigger_test 3")
             .help("Check native positional lightning damage, backwards traces and wetsuit protection in a clear corridor."),
+        command("Machine: Hub and Rune Acceptance", "vr_mg_hub_test 1")
+            .help("Destructive rune/return checks in the Machine hub. Reload afterward."),
+        command("Machine: Electrode and Rune Egg", "vr_mg_hub_test 2")
+            .help("Destructive authored mge2m2 puzzle test. Reload afterward."),
+        command("Machine: Equipment Carry Setup", "vr_mg_hub_test 20")
+            .help("Destructive: seed independent hand/holster magazines for save/carry checks. Hold both grips and reload afterward."),
+        open("Machine Horde Tests", pageIndex(pageMachineHordeTests))
+            .help("Authored waves, currency, physical rewards, revival and saved equipment. Developer arena only."),
+        command("Machine: Progression Report", "vr_mg_hub_test 3")
+            .help("Report runes, return position, final gate and VR equipment."),
         command("Machine: mge5m2 Trigger Route", "vr_mg_trigger_test 2")
             .help("Destructive authored rune puzzle and quake sequence on mge5m2. Uses real buttons and engine movement. Reload afterward."),
         command("Official World: Fog Report", "vr_mg_world_test 1")
@@ -4348,6 +4925,10 @@ za::Vector<Item> pageDebugTests()
             .help("Ragdolls on (Gibs and Corpses > Ragdoll Settings) and a shambler killed at the Distance ahead: he goes limp as he falls."),
         command("A Gremlin's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 12; vr_test_spawn_dead 1; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0")
             .help("Ragdolls on (Gibs and Corpses > Ragdoll Settings) and a gremlin killed at the Distance ahead (Scourge of Armagon): it goes limp as it falls (a stolen gun dropped)."),
+        command("A Vore's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 10; vr_test_spawn_dead 1; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0")
+            .help("Ragdolls on (Gibs and Corpses > Ragdoll Settings) and a vore killed at the Distance ahead: it goes limp as it falls."),
+        command("A Centroid's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 13; vr_test_spawn_dead 1; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0")
+            .help("Ragdolls on (Gibs and Corpses > Ragdoll Settings) and a centroid killed at the Distance ahead (Scourge of Armagon): it goes limp as it falls."),
         command("A Grunt's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 0; vr_test_spawn_dead 1; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0")
             .help("Ragdolls on (Gibs and Corpses > Ragdoll Settings) and a grunt killed at the Distance ahead: he goes limp as "
                   "he falls."),
@@ -4374,6 +4955,9 @@ za::Vector<Item> pageDebugTests()
         command("Shove the Nearest Monster", "impulse 219")
             .help("impulse 219: the nearest monster within 200 units shoved as your two-handed shove does (knocked away, "
                   "staggered). Developer 1 logs grunts' and enforcers' shoves and why one can't shove (Combat > Enemy Shoves)."),
+        command("Remove Every Monster", "vr_knockdown_test 20")
+            .help("Every monster removed, standing, knocked down or dead: a clean slate between shove tests (with a grunt "
+                  "ahead: impulse 244). Shove one off vrclimb's long ledge or into its trench to see Over a Ledge, Always."),
         command("A Blast in 3 Seconds", "impulse 221")
             .help("impulse 221: an explosion of 60 at your feet 3 s from now, a little ahead of you (towards a wall you hang "
                   "from): hanging from a ledge or a rung, a blast of Climbing: Blasts Knock You Off or more makes you let go "
@@ -4415,6 +4999,16 @@ za::Vector<Item> pageDebugTests()
         command("To the Jump Wall", "setpos -40 -310 24 0 0 0; noclip")
             .help("In vrclimb: you facing a wall 96 high, 40 units ahead: walk into it, jump and grab its top (Climbing: "
                   "Mid-Air Grab Window)."),
+        header("Weapon Pickups (pickuptest: ... in the console)"),
+        command("Every Weapon Pickup Ahead", "vr_pickup_test 1")
+            .help("vr_pickup_test 1: every weapon pickup (the mission pack's when loaded) in rows ahead of you, each with "
+                  "the same weapon dropped beside it, to compare them (Items: Weapon Pickups Look); their models, "
+                  "offsets and boxes printed a second later."),
+        command("Next Pair Before You", "vr_pickup_test 3")
+            .help("vr_pickup_test 3: you moved before the next pickup and dropped weapon of the row above, for a close look."),
+        command("Take the Nearest Weapon Pickup", "+grabmain; wait; wait; vr_pickup_test 2; wait; wait; -grabmain")
+            .help("vr_pickup_test 2, the main grip held (+grabmain): the weapon pickup nearest you taken into an empty "
+                  "hand, as a grip takes it: the hand's weapon, its magazine and the ammo left printed."),
         header("Crowbar"),
         command("A Crowbar in Your Hand", "impulse 167").help("A crowbar in the main hand (impulse 187: the off hand)."),
         command("Drop a Crowbar Ahead", "impulse 217")
@@ -4508,6 +5102,12 @@ za::Vector<Item> pageDebugTests()
         command("Hand on the Stuck Axe", "impulse 207")
             .help("Moves you so that your main hand is on the handle of the nearest stuck axe: grip to pull it out."),
         command("Report the Axes", "impulse 208").help("Prints each thrown axe: what it is stuck in, where (developer 1)."),
+        command("Push the Props Axes Are In", "vr_test_axe_host 1; impulse 208")
+            .help("Each prop an axe is stuck in (a box, a crate, a pickup) is pushed up and across: the axe moves with it "
+                  "(Report the Axes again to see; vr_test_axe_host 1)."),
+        command("Break the Props Axes Are In", "vr_test_axe_host 2; impulse 208")
+            .help("Each prop an axe is stuck in is broken (an explosive box blows up, a crate breaks, a pickup is taken by "
+                  "you): the axe falls (vr_test_axe_host 2)."),
         command("Slide the Nearest Prop", "vr_physics_fling nearest 150")
             .help("Sends the loose prop nearest you skidding along the floor the way you face, at 150 units/s (5.7 m/s): "
                   "its scrape (Physics Sounds; Logs: Physics Sounds prints it)."),
@@ -5194,6 +5794,11 @@ const Page pages[] = {
     {"Spawn Pickup Weapons", pageSpawnWeapons, pageDebugTests, LevelDeveloper},
     {"Map Library", pageMaps, pageMain, LevelStandard}, // (the corner's Maps, and Single Player > Map Library; vr_menu_maps.inc)
     {"Official Campaigns", pageCampaigns, pageMain, LevelStandard},
+    {"Machine Horde Tests", pageMachineHordeTests, pageDebugTests, LevelDeveloper},
+    {"Graphics - Relighting", pageGraphicsRelighting, pageGraphics},
+    {"Gore - Limb Gore", pageLimbGore, pageGore},
+    {"Ragdolls - Vore", pageRagdollVore, pageRagdolls, LevelDeveloper},
+    {"Ragdolls - Centroid", pageRagdollCentroid, pageRagdolls, LevelDeveloper},
 };
 constexpr int pageCount = static_cast<int>(sizeof(pages) / sizeof(pages[0]));
 
@@ -5343,6 +5948,14 @@ void onPresetChosen(cvar_t* var)
     }
 }
 
+// The main page's last line: this build (VR_BuildVersion), to name in a bug report.
+[[nodiscard]] const char* buildVersionLine()
+{
+    char(&text)[64] = readouts.buildVersion;
+    q_snprintf(text, sizeof(text), "Quake VR build %s", VR_BuildVersion());
+    return text;
+}
+
 void openSearchRow()
 {
     qvr::menu::openSearch();
@@ -5425,6 +6038,7 @@ za::Vector<Item> pageMain()
         command("Run VR Calibration Again", "vr_setup")
             .help("The calibration room and its steps, as at the first start (the main menu's VR Calibration): your height, "
                   "your body, and the main settings on its wall buttons. Ends the game you are in."),
+        info([]() -> const char* { return buildVersionLine(); }),
     };
 }
 
@@ -6856,6 +7470,10 @@ void addMenuDetail(za::Vector<Item>& list, int page)
         weaponOffsetsStale = true; // Align Sights to My Aim: its phase or its result changed
         weaponOffsetsSightFocus = true;
     }
+    if(pages[page].build == pageGraphicsRelighting && relightToolState >= 0 && relightToolState != relight::toolPageState())
+    {
+        done[page] = false; // light.exe found or not, a download started or ended: Download ericw-tools shown or not
+    }
     if(pages[page].build == pageBodyArms && armsPageCalibrated >= 0 && armsPageCalibrated != (bodycal::calibrated() ? 1 : 0))
     {
         done[page] = false; // calibrated (Apply) or not (Undo): Arm Length shown or not
@@ -6992,8 +7610,9 @@ bool scrollGrab = false; // the scrollbar likewise
 constexpr int midPos = 204; // as Ironwail's OPTIONS_MIDPOS
 
 // Where things go, in the menu's height (menuui::menuHeight: Quake's 200 on the desktop, more in
-// a headset, Quake's 320 x 200 in its middle): the title at the top, the list under it, and four
-// lines of help under the list on pages with any.
+// a headset, Quake's 320 x 200 in its middle): the title at the top, the list under it, and the
+// help under the list on pages with any: four lines, more (helpMaxLines) on a page whose rows'
+// help is longer (helpBoxLines), the list a row shorter for each.
 struct Layout
 {
     int top;
@@ -7002,12 +7621,98 @@ struct Layout
     int bottom;
 };
 
+constexpr int helpMinLines = 4;     // the help's box: four lines at least (Search's and the Map Library's)
+constexpr int helpMaxLines = 7;     // and at most; a longer help turns pages in it (drawHelp)
+constexpr int helpMaxWrapped = 64;  // lines wrapped at most (the longest help is far shorter)
+
+// The help's line, in characters: the canvas's width (the flat menu's is 420, a headset's 320 or more), 50 at most.
+[[nodiscard]] int helpColumns()
+{
+    drawtransform_t t;
+    Draw_GetCanvasTransform(CANVAS_MENU, &t);
+    float cl, ct, cr, cb;
+    Draw_GetTransformBounds(&t, &cl, &ct, &cr, &cb);
+    return CLAMP(38, static_cast<int>((cr - cl - 16.f) / 8.f), 50);
+}
+
+// `text` word-wrapped to `columns`: the lines' count, and each line's start and length in `starts` and `lengths`
+// (when given; helpMaxWrapped lines at most).
+int wrapHelp(const char* text, int columns, int* starts = nullptr, int* lengths = nullptr)
+{
+    int line = 0;
+    const char* p = text;
+    while(*p && line < helpMaxWrapped)
+    {
+        while(*p == ' ')
+        {
+            p++;
+        }
+        if(!*p)
+        {
+            break;
+        }
+        int n = static_cast<int>(strlen(p));
+        if(n > columns)
+        {
+            n = columns;
+            while(n > 0 && p[n] != ' ')
+            {
+                n--;
+            }
+            if(n == 0)
+            {
+                n = columns;
+            }
+        }
+        if(starts)
+        {
+            starts[line] = static_cast<int>(p - text);
+            lengths[line] = n;
+        }
+        p += n;
+        line++;
+    }
+    return line;
+}
+
+[[nodiscard]] const char* itemHelp(const Item& item);
+
+// The help box's lines on the page shown: its rows' longest help, wrapped (helpMinLines to helpMaxLines). Worked out
+// again when the page, its rows or the line's width change, not every frame.
+struct HelpBox
+{
+    int page{-1};
+    int build{-1};
+    int columns{0};
+    int lines{helpMinLines};
+};
+HelpBox helpBox;
+
+[[nodiscard]] int helpBoxLines()
+{
+    const int columns = helpColumns();
+    if(helpBox.page != page || helpBox.build != builds[page] || helpBox.columns != columns)
+    {
+        helpBox.page = page;
+        helpBox.build = builds[page];
+        helpBox.columns = columns;
+        int longest = 0;
+        for(const Item& item : menuPages.built[page])
+        {
+            const char* help = itemHelp(item);
+            longest = help ? q_max(longest, wrapHelp(help, columns)) : longest;
+        }
+        helpBox.lines = CLAMP(helpMinLines, longest, helpMaxLines);
+    }
+    return helpBox.lines;
+}
+
 [[nodiscard]] Layout layout()
 {
     const int height = menuui::menuHeight();
     const int top = (200 - height) / 2;
     const int listTop = q_max(top + 36, static_cast<int>(za::ceil(menuui::toolbarBottom())) + 2); // below the corner's buttons
-    return {top, listTop, top + height - 36, top + height};
+    return {top, listTop, top + height - 4 - 8 * helpBoxLines(), top + height};
 }
 
 [[nodiscard]] bool hasHelp(const za::Vector<Item>& list)
@@ -7127,7 +7832,7 @@ void resetThisPage()
     int n = 0;
     for(const Item& item : items(page))
     {
-        if(item.cvar && item.kind != Item::Action && changedSetting(*item.cvar))
+        if(item.cvar && item.kind != Item::Action && changedSetting(*item.cvar) && !serverrules::locked(item.cvar))
         {
             Cvar_SetQuick(item.cvar, item.cvar->default_string);
             n++;
@@ -7216,12 +7921,25 @@ void openInTree(int target)
     }
 }
 
+// A setting's value as shown: a server rule's is the remote server's (vr_serverrules.cpp), the rest their own.
+[[nodiscard]] float valueOf(const Item& item)
+{
+    return serverrules::shown(item.cvar);
+}
+
+// A server rule while connected to a remote server: shown, dimmed, not changed from here.
+[[nodiscard]] bool lockedItem(const Item& item)
+{
+    return (item.kind == Item::Slider || item.kind == Item::Cycle) && serverrules::locked(item.cvar);
+}
+
 [[nodiscard]] int currentChoice(const Item& item)
 {
+    const float cur = valueOf(item);
     int best = 0;
     for(int i = 0; i < static_cast<int>(item.choices.size()); i++)
     {
-        if(za::fabs(item.choices[i].value - item.cvar->value) < za::fabs(item.choices[best].value - item.cvar->value))
+        if(za::fabs(item.choices[i].value - cur) < za::fabs(item.choices[best].value - cur))
         {
             best = i;
         }
@@ -7318,6 +8036,11 @@ float stepSlider(const Item& item, int dir, bool repeat)
 // read before.)
 void change(const Item& item, int dir, bool repeat = false)
 {
+    if(lockedItem(item))
+    {
+        S_LocalSound("misc/menu3.wav"); // the server's rule: not changed from here
+        return;
+    }
     switch(item.kind)
     {
         case Item::Slider:
@@ -7442,6 +8165,10 @@ void scrollTo(float cy)
 // midPos + 76), on its steps.
 void setSliderAt(const Item& item, float cx)
 {
+    if(lockedItem(item))
+    {
+        return; // the server's rule
+    }
     const float frac = CLAMP(0.f, (cx - midPos - 4.f) / 72.f, 1.f);
     float v = item.min + frac * (item.max - item.min);
     v = za::round(v / item.step) * item.step;
@@ -7776,6 +8503,25 @@ void drawItem(const Item& item, int y, bool selected)
         M_PrintWhite((320 - 8 * static_cast<int>(strlen(item.label))) / 2, y, item.label);
         return;
     }
+    if(item.kind == Item::Info && item.progress)
+    {
+        const float f = item.progress();
+        if(f < 0.f)
+        {
+            return;
+        }
+        // The bar from 16 to 200, its text from 208 (14 characters: "100% 1:02:03").
+        constexpr int x0 = 16, x1 = 200;
+        if(!menuui::drawProgress(x0, x1, y, f))
+        {
+            Draw_Fill(x0, y + 1, x1 - x0, 6, 4, 1.f);                                          // (the palette's dark grey)
+            Draw_Fill(x0, y + 1, static_cast<int>((x1 - x0) * CLAMP(0.f, f, 1.f)), 6, 192, 1.f); // (its yellow)
+        }
+        char text[15];
+        q_strlcpy(text, item.info ? item.info() : "", sizeof(text));
+        M_Print(x1 + 8, y, text);
+        return;
+    }
     if(item.kind == Item::Info)
     {
         char text[41];
@@ -7814,6 +8560,11 @@ void drawItem(const Item& item, int y, bool selected)
     }
 
     const int labelX = midPos - 28 - 8 * static_cast<int>(strlen(item.label));
+    const bool locked = lockedItem(item); // the remote server's rule: dimmed, its value shown
+    if(locked)
+    {
+        GL_PushCanvasColor(1.f, 1.f, 1.f, 0.5f);
+    }
     M_Print(labelX, y, item.label);
     if(item.cvar && item.kind != Item::Action && changedSetting(*item.cvar))
     {
@@ -7825,17 +8576,18 @@ void drawItem(const Item& item, int y, bool selected)
     {
         case Item::Slider:
         {
-            if(item.negativeLabel && item.cvar->value < 0.f)
+            const float value = valueOf(item);
+            if(item.negativeLabel && value < 0.f)
             {
                 q_strlcpy(buf, item.negativeLabel, sizeof(buf));
             }
             else
             {
-                q_snprintf(buf, sizeof(buf), item.format, item.cvar->value);
+                q_snprintf(buf, sizeof(buf), item.format, value);
             }
             // Past an end: the thumb stays there, marked, and the value (the real one) is white.
-            const float range = (item.cvar->value - item.min) / (item.max - item.min);
-            const int past = item.negativeLabel && item.cvar->value < 0.f ? 0 : pastEnd(item, item.cvar->value);
+            const float range = (value - item.min) / (item.max - item.min);
+            const int past = item.negativeLabel && value < 0.f ? 0 : pastEnd(item, value);
             char tinted[64];
             const char* text = past ? COM_TintString(buf, tinted, sizeof(tinted)) : buf;
             if(!menuui::drawSlider(midPos, y, range, past, text))
@@ -7847,7 +8599,7 @@ void drawItem(const Item& item, int y, bool selected)
         case Item::Cycle:
             if(isToggle(item))
             {
-                M_DrawCheckbox(midPos, y, item.cvar->value); // a switch in the VR menu style
+                M_DrawCheckbox(midPos, y, valueOf(item)); // a switch in the VR menu style
             }
             else
             {
@@ -7856,6 +8608,10 @@ void drawItem(const Item& item, int y, bool selected)
             break;
         case Item::Action: M_Print(midPos - 4, y, "..."); break;
         default: break;
+    }
+    if(locked)
+    {
+        GL_PopCanvasColor();
     }
 
     if(selected)
@@ -7881,6 +8637,22 @@ void drawItem(const Item& item, int y, bool selected)
                                    "edges, slower. Below 1: faster, blurrier.",
         w, h, s.width, s.height);
     return text;
+}
+
+// A server rule's help on a remote server's client: the server sets it (its value shown), yours applies when you host.
+[[nodiscard]] const char* serverRuleHelp(const Item& item, const char* help)
+{
+    za::String& text = readouts.serverRuleHelp;
+    char own[48], line[160];
+    q_snprintf(own, sizeof(own), item.kind == Item::Slider ? item.format : "%g", item.cvar->value);
+    q_snprintf(line, sizeof(line), "Set by the server you are connected to (its value shown). Yours, %s, applies when you host or play alone.", own);
+    text = line;
+    if(help && help[0])
+    {
+        text += ' ';
+        text += help;
+    }
+    return text.cStr();
 }
 
 // An extendable slider's help: its own (`help`, may be null), and that left and right go past the
@@ -7919,38 +8691,105 @@ void drawItem(const Item& item, int y, bool selected)
     return text.cStr();
 }
 
-// Word-wrapped to the screen's width, four lines at most.
+// A row's help as drawn under the list: its own (or its function's), a server rule's note, an extendable slider's
+// hint (null: none).
+const char* itemHelp(const Item& item)
+{
+    const char* help = item.cvar == &vr_render_scale ? renderScaleHelp() : item.helpArg ? item.helpArg(item.arg) : item.helpText;
+    if(lockedItem(item))
+    {
+        help = serverRuleHelp(item, help);
+    }
+    else if(item.kind == Item::Slider && item.extendable)
+    {
+        help = extendableHelp(item, help);
+    }
+    return help;
+}
+
+// The help shown, and since when (its pages turn from the first; a new text starts over).
+struct HelpPaging
+{
+    za::U32 hash{0};
+    double since{0.0};
+    int shown{-1}; // the page of it shown (for the developer line when it turns)
+};
+HelpPaging helpPaging;
+
+constexpr double helpPageBase = 2.0; // seconds a part of the help stays, and more for each word on it (vr_menu_help_wpm)
+
+// Word-wrapped to the canvas's width (helpColumns) in the box under the list (helpBoxLines). A longer text turns pages
+// by itself, each kept long enough to read its words, with a bar at the box's right showing which part is shown.
 void drawHelp(const char* text)
 {
-    constexpr int columns = 38;
-    constexpr int maxLines = 4;
-    int line = 0;
-    const char* p = text;
-    while(*p && line < maxLines)
+    const int columns = helpColumns();
+    const int box = helpBoxLines();
+    int starts[helpMaxWrapped], lengths[helpMaxWrapped];
+    const int lines = wrapHelp(text, columns, starts, lengths);
+    int first = 0;
+    if(lines > box)
     {
-        while(*p == ' ')
+        za::U32 hash = 2166136261u;
+        for(const char* c = text; *c; c++)
         {
-            p++;
+            hash = (hash ^ static_cast<unsigned char>(*c)) * 16777619u;
         }
-        int n = static_cast<int>(strlen(p));
-        if(n > columns)
+        if(hash != helpPaging.hash)
         {
-            n = columns;
-            while(n > 0 && p[n] != ' ')
-            {
-                n--;
-            }
-            if(n == 0)
-            {
-                n = columns;
-            }
+            helpPaging.hash = hash;
+            helpPaging.since = realtime;
+            helpPaging.shown = -1;
         }
-        char buf[columns + 1];
-        memcpy(buf, p, n);
+        // Each page's time from its words; the pages one after another, then the first again.
+        const int pageCount = (lines + box - 1) / box;
+        double durations[helpMaxWrapped];
+        double cycle = 0.0;
+        for(int pg = 0; pg < pageCount; pg++)
+        {
+            int words = 0;
+            for(int l = pg * box; l < lines && l < (pg + 1) * box; l++)
+            {
+                for(int i = 0; i < lengths[l]; i++)
+                {
+                    words += text[starts[l] + i] != ' ' && (i == 0 || text[starts[l] + i - 1] == ' ') ? 1 : 0;
+                }
+            }
+            durations[pg] = helpPageBase + 60.0 * words / CLAMP(60.0, static_cast<double>(vr_menu_help_wpm.value), 600.0);
+            cycle += durations[pg];
+        }
+        double t = fmod(realtime - helpPaging.since, cycle);
+        int shown = 0;
+        while(shown < pageCount - 1 && t >= durations[shown])
+        {
+            t -= durations[shown];
+            shown++;
+        }
+        first = shown * box;
+        if(shown != helpPaging.shown)
+        {
+            helpPaging.shown = shown;
+            Con_DPrintf("menu help: part %d of %d (%d lines, %.1f s)\n", shown + 1, pageCount, lines, realtime - helpPaging.since);
+        }
+
+        // Which part is shown: the bar's thumb, and its share of the text.
+        const Layout l = layout();
+        const menupaint::Painter p;
+        namespace colors = menupaint::colors;
+        const float x = static_cast<float>((320 + 8 * columns) / 2 + 3);
+        const float top = static_cast<float>(l.helpTop);
+        const float height = static_cast<float>(box * 8);
+        p.rect(x, x + 2.f, top + height * 0.5f, height * 0.5f * p.k, colors::track);
+        const float t0 = top + height * static_cast<float>(first) / static_cast<float>(lines);
+        const float t1 = top + height * static_cast<float>(q_min(first + box, lines)) / static_cast<float>(lines);
+        p.rect(x, x + 2.f, (t0 + t1) * 0.5f, (t1 - t0) * 0.5f * p.k, colors::scrollThumb);
+    }
+    for(int line = first; line < lines && line < first + box; line++)
+    {
+        char buf[64];
+        const int n = q_min(lengths[line], static_cast<int>(sizeof(buf)) - 1);
+        memcpy(buf, text + starts[line], n);
         buf[n] = '\0';
-        M_PrintWhite((320 - 8 * n) / 2, layout().helpTop + line * 8, buf);
-        p += n;
-        line++;
+        M_PrintWhite((320 - 8 * n) / 2, layout().helpTop + (line - first) * 8, buf);
     }
 }
 
@@ -8043,6 +8882,65 @@ void dumpPages()
         Con_Printf("MDLINKS|%d|%s|%d|%d\n", p, pages[p].title, linksIn[p], depth[p]);
     }
     showPage(was);
+}
+
+// menu_vr helpcheck [columns]: every page's rows' help wrapped as drawHelp wraps it (at `columns`, else the canvas's
+// width now): HELPLONG for each help longer than its page's box (its pages turn), HELPPAGE for each page whose box
+// grew, HELPSUM the count, the longest and how many need turning pages. For the help's fit (the menu's tests).
+void helpCheck(int columnsAsked)
+{
+    const int was = page;
+    const int columns = columnsAsked > 0 ? columnsAsked : helpColumns();
+    int rows = 0, longest = 0, longestChars = 0, turning = 0, grown = 0;
+    int histogram[helpMaxLines + 2]{};
+    for(int p = 0; p < pageCount; p++)
+    {
+        if(pages[p].build == pageSearch || pages[p].build == pageConsole || pages[p].build == pageMaps)
+        {
+            continue;
+        }
+        showPage(p);
+        const auto& list = items(p);
+        int box = helpMinLines;
+        for(const Item& item : list)
+        {
+            const char* help = itemHelp(item);
+            box = help ? q_max(box, wrapHelp(help, columns)) : box;
+        }
+        box = q_min(box, helpMaxLines);
+        if(box > helpMinLines)
+        {
+            grown++;
+            Con_Printf("HELPPAGE|%d|%s|%d lines|%d rows shown\n", p, pages[p].title, box, visibleRows(list));
+        }
+        for(const Item& item : list)
+        {
+            const char* help = itemHelp(item);
+            if(!help || !help[0])
+            {
+                continue;
+            }
+            const int lines = wrapHelp(help, columns);
+            rows++;
+            histogram[q_min(lines, helpMaxLines + 1)]++;
+            longest = q_max(longest, lines);
+            longestChars = q_max(longestChars, static_cast<int>(strlen(help)));
+            if(lines > box)
+            {
+                turning++;
+                Con_Printf("HELPLONG|%d|%s|%s|%d chars|%d lines|box %d\n", p, pages[p].title,
+                    item.label ? item.label : "", static_cast<int>(strlen(help)), lines, box);
+            }
+        }
+    }
+    showPage(was);
+    Con_Printf("HELPSUM|%d columns|%d rows with help|longest %d lines (%d chars)|%d pages grown|%d turn pages|lines:",
+        columns, rows, longest, longestChars, grown, turning);
+    for(int l = 1; l <= helpMaxLines + 1; l++)
+    {
+        Con_Printf(" %d%s=%d", l, l > helpMaxLines ? "+" : "", histogram[l]);
+    }
+    Con_Printf("\n");
 }
 
 // The path to a page from Quake's main menu, by what the player reads on the way (menu::pathTo): the fewest links from
@@ -8283,13 +9181,34 @@ int qvr::menu::retroOverridePage()
     return pageIndex(pageRetroOverride);
 }
 
+// Whether the VR Settings were opened from the main menu's rows (Back from them goes back there, else to Options).
+namespace
+{
+bool openedFromMainMenu = false;
+}
+
 extern "C" void VR_Menu_Open()
 {
     IN_DeactivateForMenu();
     key_dest = key_menu;
     m_state = m_vr;
     m_entersound = true;
+    openedFromMainMenu = false;
     showPage(PageMain);
+}
+
+// The main menu's VR Settings and Advanced VR rows (menu.c).
+extern "C" void VR_Menu_OpenFromMain(int advanced)
+{
+    if(advanced)
+    {
+        qvr::menu::jumpToAdvanced();
+    }
+    else
+    {
+        VR_Menu_Open();
+    }
+    openedFromMainMenu = true;
 }
 
 // Single Player > Map Library (menu.c): the map browser page, from Quake's own menu.
@@ -8337,6 +9256,16 @@ void qvr::menu::command_f()
     if(Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "dump"))
     {
         dumpPages();
+        return;
+    }
+    if(Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "recent"))
+    {
+        searchRecentCommand(Cmd_Argc() > 2 && !q_strcasecmp(Cmd_Argv(2), "clear"));
+        return;
+    }
+    if(Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "helpcheck"))
+    {
+        helpCheck(Cmd_Argc() > 2 ? Q_atoi(Cmd_Argv(2)) : 0);
         return;
     }
     if(Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "pos"))
@@ -8549,6 +9478,50 @@ void qvr::menu::jumpToChecklist()
     showPage(target);
 }
 
+void qvr::menu::jumpToSettings()
+{
+    if(m_state == m_vr && page == PageMain)
+    {
+        S_LocalSound("misc/menu1.wav");
+        return;
+    }
+    if(m_state == m_vr)
+    {
+        S_LocalSound("misc/menu2.wav");
+        showPage(PageMain);
+        return;
+    }
+    VR_Menu_Open(); // (its sound as it is drawn)
+}
+
+void qvr::menu::jumpToRelighting()
+{
+    const int target = pageIndex(pageGraphicsRelighting);
+    if(menuLevel() < pages[target].level)
+    {
+        Cvar_SetValueQuick(&vr_menu_level, static_cast<float>(pages[target].level)); // (as the corner's Advanced VR)
+    }
+    if(m_state == m_vr && page == target)
+    {
+        S_LocalSound("misc/menu1.wav");
+        return;
+    }
+    if(m_state == m_vr)
+    {
+        S_LocalSound("misc/menu2.wav");
+    }
+    else
+    {
+        VR_Menu_Open(); // (its sound as it is drawn)
+    }
+    // Back walks up its place in the tree (Graphics, Advanced VR Options, VR Settings), as after the menus' own links.
+    for(int p = target; p != PageMain; p = homeOf(p))
+    {
+        parentPage[p] = homeOf(p);
+    }
+    showPage(target);
+}
+
 void qvr::menu::selectEnd(int dir)
 {
     if(m_state == m_vr && pages[page].build == pageSearch)
@@ -8712,7 +9685,10 @@ extern "C" void VR_Menu_Draw()
     }
 
     const Layout l = layout();
-    M_DrawTransPic(16, l.top + 4, Draw_CachePic("gfx/qplaque.lmp"));
+    // (Below a flat screen's row of icons where that reaches over it: a window narrower than 16:9.)
+    const bool underRow = menuui::toolbarRow() && menuui::toolbarRight() > 16.f;
+    M_DrawTransPic(16, underRow ? q_max(l.top + 4, static_cast<int>(za::ceil(menuui::toolbarBottom())) + 2) : l.top + 4,
+        Draw_CachePic("gfx/qplaque.lmp"));
     qpic_t* title = Draw_CachePic("gfx/p_option.lmp");
     M_DrawPic((320 - title->width) / 2, l.top + 4, title);
     const char* name = pages[page].title;
@@ -8759,12 +9735,7 @@ extern "C" void VR_Menu_Draw()
 
     if(cursor < n && rowSelected)
     {
-        const Item& item = list[cursor];
-        const char* help = item.cvar == &vr_render_scale ? renderScaleHelp() : item.helpArg ? item.helpArg(item.arg) : item.helpText;
-        if(item.kind == Item::Slider && item.extendable)
-        {
-            help = extendableHelp(item, help);
-        }
+        const char* help = itemHelp(list[cursor]);
         if(help)
         {
             drawHelp(help);
@@ -8822,7 +9793,14 @@ extern "C" void VR_Menu_Key(int key, int repeat)
             }
             else if(page == PageMain)
             {
-                M_Menu_Options_f();
+                if(openedFromMainMenu)
+                {
+                    M_Menu_Main_f(); // (its sound as it is drawn)
+                }
+                else
+                {
+                    M_Menu_Options_f();
+                }
             }
             else
             {
@@ -8831,11 +9809,11 @@ extern "C" void VR_Menu_Key(int key, int repeat)
             }
             break;
 
-        // Up from the first setting, or down from the last: the corner's buttons (in the VR style), before
+        // Up from the first setting, or down from the last: the corner's buttons (where shown), before
         // round to the other end; a held stick stops at the end first, a new push goes on.
         case K_UPARROW:
         case K_MWHEELUP:
-            if(key == K_UPARROW && menuui::active() && cursor == firstSelectable(list))
+            if(key == K_UPARROW && menuui::toolbarShown() && cursor == firstSelectable(list))
             {
                 if(!repeat)
                 {
@@ -8849,7 +9827,7 @@ extern "C" void VR_Menu_Key(int key, int repeat)
 
         case K_DOWNARROW:
         case K_MWHEELDOWN:
-            if(key == K_DOWNARROW && menuui::active() && cursor == lastSelectable(list))
+            if(key == K_DOWNARROW && menuui::toolbarShown() && cursor == lastSelectable(list))
             {
                 if(!repeat)
                 {

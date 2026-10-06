@@ -20,7 +20,21 @@ enum Kind : int
     KindSurface = 1, // arcs over a liquid's surface round a point
     KindBody = 3,    // radius encodes the struck entity; arcs follow its current surface
     KindBurst = 2,   // arcs out from a point in a liquid (the shock's source)
+    KindBodyDeath = 4, // as KindBody, lasting: a body the lightning struck, alive or dead (QC vr_shock.qc; duration in 1/4 s)
+    KindSmoulder = 5,  // not arcs: a burning body's fire (radius: the entity) goes out in duration s (1/4 s), smoking on
+                       // after (vr_smoulder.cpp; QC vr_burning.qc bodysmoulder)
+    KindDoused = 6,    // ... put out in a liquid: it stops smoking
+    KindSelfHit = 7,   // the receiving player struck by lightning (sent to that client only; radius: the damage): arcs over
+                       // its arms, hands and body a while (vr_shock_self_time; QC weapons.qc playershock)
 };
+// Whether a kind's duration goes in 1/4 s (the lasting ones: up to 63 s) rather than 1/50 s (up to 5 s).
+[[nodiscard]] constexpr bool quarterSeconds(int kind)
+{
+    return kind >= KindBodyDeath && kind <= KindDoused;
+}
+// Whether models `a` and `b` are one body's: the same .mdl, or it and its ragdoll's skinned copy ("<model>#rag": the
+// client swaps them as the ragdoll is made and gone).
+[[nodiscard]] bool sameBody(const qmodel_s* a, const qmodel_s* b);
 
 // QVR_SVC_SHOCK.
 void parse();

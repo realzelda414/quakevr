@@ -7,6 +7,7 @@
 
 #include "Zancle/Container/Vector.hpp"
 #include "Zancle/Math/Clamp.hpp"
+#include "Zancle/Math/MinMax.hpp"
 #include "vr_zancle.hpp"
 
 #include <ctype.h>
@@ -43,6 +44,10 @@ struct Pending
     Material mat;
     float match{-2.f}; // -2: not compared (vr_extmaps_match 0)
     bool ok{false};
+    char normal[MAX_QPATH]{}; // the normal map's file ("vrext/basebtn+0_norm"): its own, or another frame's (below)
+    char normalFrame{0};      // ... another frame's of its animation ('0' for basebtn+1), or 0: its own
+    float normalMatch{-2.f};  // ... how well that frame's picture matches this texture (-2: not compared)
+    bool normalOnly{false};   // only that normal map (the pack has no picture of this frame: butn+a)
 };
 Pending pending;
 
@@ -53,6 +58,8 @@ struct Record
     float match{-2.f};
     bool missing{false}, skipped{false}, normal{false}, spec{false}, luma{false}, mat{false};
     bool item{false}; // an item box's (maps/b_*.bsp)
+    char normalFrame{0};     // its normal map another frame's of its animation (Pending::normalFrame)
+    float normalMatch{-2.f}; // ... that frame's picture's match
 };
 za::Vector<Record> records;
 char recordsWorld[MAX_QPATH] = {};
@@ -145,6 +152,37 @@ void readMat(const char* base, Material& mat)
     }
 }
 
+// Whether the pack has an image `name` ("vrext/<file>", no extension: Image_LoadImage's formats).
+bool imageExists(const char* name)
+{
+    static constexpr const char* exts[] = {"png", "tga", "jpg"};
+    for(const char* ext : exts)
+    {
+        char path[MAX_QPATH];
+        q_snprintf(path, sizeof(path), "%s.%s", name, ext);
+        if(FILE* f = VR_ExtMapsOpen(path))
+        {
+            fclose(f);
+            return true;
+        }
+    }
+    return false;
+}
+
+// The pack's normal map for `base` (its .mat's, else <base>_norm) into `file` ("vrext/..."): whether it has it.
+bool normalFile(const char* base, const Material& mat, char* file, size_t size)
+{
+    if(mat.normalmap[0])
+    {
+        q_snprintf(file, size, "%s%s", prefix, fileOf(mat.normalmap));
+    }
+    else
+    {
+        q_snprintf(file, size, "%s%s_norm", prefix, base);
+    }
+    return imageExists(file);
+}
+
 // A picture's detail: its luminance at sigSize x sigSize (box-filtered), less each cell's 5 x 5 neighbourhood's
 // (wrapping round: textures tile), into `out`; `tmp` as large.
 void signature(const byte* data, enum srcformat fmt, int w, int h, float* out, float* tmp)
@@ -214,6 +252,138 @@ float correlation(const float* a, const float* b)
     return aa > 0 && bb > 0 ? static_cast<float>(ab / sqrt(aa * bb)) : 0.f;
 }
 
+// An animated texture's frames (+0basebtn, +1basebtn, +abasebtn) are one surface in different colours: the lit frame
+// of a wall button is the same bevel with its diamond lit. Each frame had its own surface: its own normal map (the
+// pack's, another frame's, or one made from its own shading), so its own parallax heights, its own specular map (the
+// pack's basebtn+0_spec is red, basebtn+1_spec grey; +abasebtn none) and .mat numbers (button+0 hardness 5, button+1
+// none) and its own detail texture (chosen from its own colours): the relief and the sheen pulsed with the colours.
+// VR_AnimSurfaces gives every frame its animation's lead frame (the first, in frame order 0..9 then a..j, with a pack
+// normal map, else with a pack specular map, else the first) whose Quake picture matches its own (animMatch: the
+// detail correlation vr_extmaps_match uses; a frame whose picture moves, a scrolling arrow, keeps its own); drawn with
+// vr_anim_surface on, the frame takes that frame's normal map (made or the pack's), specular map, .mat numbers and
+// detail, and keeps only its colours and glow.
+constexpr float animMatch = 0.5f;
+constexpr const char* animOrder = "0123456789abcdefghij"; // an animation's frames, as VR_AnimSurfaces tries them
+constexpr int animFrames = 20;
+
+// `t`'s place in animOrder, or -1: not a sequenced animation's frame.
+int frameOf(const texture_t* t)
+{
+    if(!t || t->name[0] != '+' || t->anim_total <= 0 || !t->name[1])
+    {
+        return -1;
+    }
+    const char* at = strchr(animOrder, tolower(static_cast<unsigned char>(t->name[1])));
+    return at ? static_cast<int>(at - animOrder) : -1;
+}
+
+// The frames of `t`'s animation in `mod`, by frameOf (NULL where it has none).
+void framesOf(const qmodel_t* mod, const texture_t* t, texture_t* out[animFrames])
+{
+    for(int k = 0; k < animFrames; k++)
+    {
+        out[k] = nullptr;
+    }
+    for(int i = 0; i < mod->numtextures; i++)
+    {
+        texture_t* f = mod->textures[i];
+        const int k = frameOf(f);
+        if(k >= 0 && !strcmp(f->name + 2, t->name + 2))
+        {
+            out[k] = f;
+        }
+    }
+}
+
+// The frame an animation's surface is drawn from.
+texture_t* leadOf(texture_t* const frames[animFrames])
+{
+    for(int k = 0; k < animFrames; k++)
+    {
+        if(frames[k] && frames[k]->extnormal)
+        {
+            return frames[k];
+        }
+    }
+    for(int k = 0; k < animFrames; k++)
+    {
+        if(frames[k] && frames[k]->extspec)
+        {
+            return frames[k];
+        }
+    }
+    for(int k = 0; k < animFrames; k++)
+    {
+        if(frames[k])
+        {
+            return frames[k];
+        }
+    }
+    return nullptr;
+}
+
+// How alike two frames' Quake pictures (their 8-bit pixels, after the texture_t) are where they lie: the correlation
+// of their detail; into `moved`, the best of it with one shifted along s or t (a scrolling picture's frames match
+// better shifted; searched only while it could decide: past animMatch, until it beats where they lie). -1: other sizes.
+float frameMatch(const texture_t* a, const texture_t* b, float* moved = nullptr)
+{
+    if(moved)
+    {
+        *moved = -1.f;
+    }
+    if(a->width != b->width || a->height != b->height || a->width == 0 || a->height == 0)
+    {
+        return -1.f;
+    }
+    constexpr int n = sigSize * sigSize;
+    const int mark = Hunk_LowMark();
+    float* sig = static_cast<float*>(Hunk_AllocNoFill(sizeof(float) * n * 3));
+    float* shifted = sig + 2 * n;
+    const int w = static_cast<int>(a->width), h = static_cast<int>(a->height);
+    signature(reinterpret_cast<const byte*>(a + 1), SRC_INDEXED, w, h, sig, shifted);
+    signature(reinterpret_cast<const byte*>(b + 1), SRC_INDEXED, w, h, sig + n, shifted);
+    const float c = correlation(sig, sig + n);
+    if(moved && c >= animMatch) // (only where it could decide)
+    {
+        // a shift wraps round, so it keeps either's mean and spread: centred once, each shift is one sum
+        float* sa = sig;
+        float* sb = sig + n;
+        double ma = 0, mb = 0;
+        for(int i = 0; i < n; i++)
+        {
+            ma += sa[i];
+            mb += sb[i];
+        }
+        double aa = 0, bb = 0;
+        for(int i = 0; i < n; i++)
+        {
+            sa[i] -= static_cast<float>(ma / n);
+            sb[i] -= static_cast<float>(mb / n);
+            aa += static_cast<double>(sa[i]) * sa[i];
+            bb += static_cast<double>(sb[i]) * sb[i];
+        }
+        const double norm = aa > 0 && bb > 0 ? 1.0 / sqrt(aa * bb) : 0.0;
+        for(int d = 1; d < sigSize && *moved <= c; d++)
+        {
+            double along = 0, across = 0; // shifted along s (x), along t (y)
+            for(int y = 0; y < sigSize; y++)
+            {
+                const float* row = sa + y * sigSize;
+                const float* same = sb + y * sigSize;
+                const float* next = sb + ((y + d) & (sigSize - 1)) * sigSize;
+                for(int x = 0; x < sigSize; x++)
+                {
+                    along += static_cast<double>(row[x]) * same[(x + d) & (sigSize - 1)];
+                    across += static_cast<double>(row[x]) * next[x];
+                }
+            }
+            *moved = za::max(*moved, static_cast<float>(za::max(along, across) * norm));
+        }
+    }
+    Hunk_FreeToLowMark(mark);
+    return c;
+}
+
 Record& record(const qmodel_t* mod, const char* texname)
 {
     // A new map (not one of its item boxes, maps/b_*.bsp): the list starts again.
@@ -259,8 +429,13 @@ void stats_f()
         mat += r.mat;
         if(all)
         {
-            Con_Printf("%-16s %s match %5.2f%s%s%s%s\n", r.texname, r.missing ? "none   " : r.skipped ? "differs" : "used   ", r.match,
-                r.normal ? " norm" : "", r.spec ? " spec" : "", r.luma ? " luma" : "", r.mat ? " mat" : "");
+            char from[24] = "";
+            if(r.normal && r.normalFrame)
+            {
+                q_snprintf(from, sizeof(from), " (+%c's, %.2f)", r.normalFrame, r.normalMatch);
+            }
+            Con_Printf("%-16s %s match %5.2f%s%s%s%s%s\n", r.texname, r.missing ? "none   " : r.skipped ? "differs" : "used   ", r.match,
+                r.normal ? " norm" : "", from, r.spec ? " spec" : "", r.luma ? " luma" : "", r.mat ? " mat" : "");
         }
     }
     Con_Printf("extmaps %s: %d textures: %d used (%d normal maps, %d specular, %d glow, %d .mat), %d differ, %d not in the pack; "
@@ -269,11 +444,125 @@ void stats_f()
         vr_extmaps.value != 0.f ? vr_extmaps_dir.string : "vr_extmaps 0");
 }
 
+// A texture's maps as R_AddBModelCall binds them now.
+struct Bound
+{
+    gltexture_t *nm{nullptr}, *spec{nullptr}, *fb{nullptr};
+    float extmat[4]{};
+    float detail[4]{};
+    unsigned flags{0};
+};
+
+Bound boundOf(texture_t* t)
+{
+    Bound b;
+    b.nm = TexMgr_NormalMap(t->gltexture);
+    b.fb = t->fullbright;
+    b.flags = VR_ExtMapsCall(t, &b.nm, &b.spec, &b.fb, b.extmat);
+    VR_DetailCall(t, b.detail);
+    return b;
+}
+
+// A texture's name past its folder ("-": none; "flat": the flat normal map).
+const char* shortName(const gltexture_t* glt)
+{
+    if(!glt)
+    {
+        return "-";
+    }
+    if(glt == TexMgr_NormalMap(nullptr))
+    {
+        return "flat";
+    }
+    const char* slash = strrchr(glt->name, '/');
+    return slash ? slash + 1 : glt->name;
+}
+
+// vr_extmaps_frames [name]: the map's animated textures frame by frame, as drawn now: the frame whose surface each
+// takes (and how alike their pictures are), its normal map, specular map with its .mat numbers, glow and detail; then
+// whether an animation's frames share one surface (vr_anim_surface) or which maps differ.
+void frames_f()
+{
+    const qmodel_t* mod = cl.worldmodel;
+    if(!mod)
+    {
+        Con_Printf("vr_extmaps_frames: no map\n");
+        return;
+    }
+    const char* want = Cmd_Argc() > 1 ? Cmd_Argv(1) : "";
+    int anims = 0, one = 0;
+    for(int i = 0; i < mod->numtextures; i++)
+    {
+        texture_t* t = mod->textures[i];
+        if(frameOf(t) < 0 || (want[0] && !q_strcasestr(t->name, want)))
+        {
+            continue;
+        }
+        texture_t* frames[animFrames];
+        framesOf(mod, t, frames);
+        if(leadOf(frames) == nullptr)
+        {
+            continue;
+        }
+        int first = 0;
+        while(!frames[first])
+        {
+            first++;
+        }
+        if(frames[first] != t)
+        {
+            continue; // each animation once
+        }
+        anims++;
+        const Bound b0 = boundOf(t);
+        char differs[96] = "";
+        for(int k = first; k < animFrames; k++)
+        {
+            texture_t* f = frames[k];
+            if(!f)
+            {
+                continue;
+            }
+            const Bound b = boundOf(f);
+            const texture_t* s = surface(f);
+            Con_Printf("  %-10s surf %-10s %5.2f nm %s spec %s %.2f %.2f fb %s det %.0f %.2f\n", f->name, s->name,
+                s != f ? frameMatch(f, s) : 1.f, shortName(b.nm), shortName(b.spec), b.extmat[1], b.extmat[2], shortName(b.fb),
+                b.detail[3], b.detail[2]);
+            const struct
+            {
+                bool same;
+                const char* what;
+            } checks[] = {
+                {b.nm == b0.nm, " normal"},
+                {b.spec == b0.spec && b.flags == b0.flags, " specular"},
+                {!memcmp(b.extmat, b0.extmat, sizeof(b.extmat)), " .mat"},
+                {!memcmp(b.detail, b0.detail, sizeof(b.detail)), " detail"},
+            };
+            for(const auto& c : checks)
+            {
+                if(!c.same && !strstr(differs, c.what))
+                {
+                    q_strlcat(differs, c.what, sizeof(differs));
+                }
+            }
+        }
+        one += !differs[0];
+        Con_Printf("%s: %s%s\n", t->name + 2, differs[0] ? "frames differ in" : "one surface", differs);
+    }
+    Con_Printf("vr_extmaps_frames: %d animations, %d with one surface (vr_anim_surface %g)\n", anims, one, vr_anim_surface.value);
+}
+
 } // namespace
+
+const texture_t* surface(const texture_t* t)
+{
+    return t && t->surface && vr_anim_surface.value != 0.f ? t->surface : t;
+}
 
 void init()
 {
     Cmd_AddCommand("vr_extmaps_stats", stats_f);
+    Cmd_AddCommand("vr_extmaps_frames", frames_f);
 }
 
 } // namespace qvr::extmaps
@@ -314,9 +603,95 @@ extern "C" FILE* VR_ExtMapsOpen(const char* path)
 
 // Mod_LoadTextures, a regular texture, before its upload (which mipmaps `data` in place): whether the pack's maps are
 // to be used on it (VR_ExtMapsAttach next): its picture there, compared with `data` (RGBA, or Quake's 8-bit), matches
-// (vr_extmaps_match). Its .mat is read here.
+// (vr_extmaps_match). Its .mat is read here. A frame of an animation the pack has no normal map for (basebtn+1, the
+// lit frame: only basebtn+0 has one) or no picture at all (+abasebtn) takes another frame's (siblingNormal): else it
+// had the one made from its own shading, with other bumps and heights, and the relief jumped as the frames changed.
 namespace
 {
+
+// The detail signatures prepare compares (vr_extmaps_match), on the hunk: the texture's (made once), a pack
+// picture's, and scratch.
+struct Signatures
+{
+    const byte* data;
+    enum srcformat fmt;
+    int width, height;
+    float* sig;
+    bool made{false};
+
+    // How well a pack picture matches the texture (correlation of their detail; -1: another shape).
+    float match(const byte* img, enum srcformat efmt, int ew, int eh)
+    {
+        constexpr int n = extmaps::sigSize * extmaps::sigSize;
+        if(efmt != SRC_RGBA || static_cast<long long>(ew) * height != static_cast<long long>(eh) * width)
+        {
+            return -1.f;
+        }
+        if(!made)
+        {
+            extmaps::signature(data, fmt, width, height, sig, sig + 2 * n);
+            made = true;
+        }
+        extmaps::signature(img, efmt, ew, eh, sig + n, sig + 2 * n);
+        return extmaps::correlation(sig, sig + n);
+    }
+};
+
+// Frames in the order tried: an animation's own (+0..+9) from its first, then its alternates (+a..+j); an alternate's
+// the other way round.
+constexpr const char* framesMain = "0123456789abcdefghij";
+constexpr const char* framesAlt = "abcdefghij0123456789";
+
+// `anim` ("basebtn+1"): another frame's normal map whose picture matches the texture (as vr_extmaps_match asks: any at
+// 0) into p.normal, p.normalFrame, p.normalMatch: whether there is one.
+bool siblingNormal(extmaps::Pending& p, const char* anim, Signatures& sigs, float need)
+{
+    const char* plus = strrchr(anim, '+');
+    if(!plus || !plus[1] || plus[2])
+    {
+        return false;
+    }
+    const char own = plus[1];
+    const size_t stemLen = static_cast<size_t>(plus - anim);
+    for(const char* c = own >= 'a' ? framesAlt : framesMain; *c; c++)
+    {
+        if(*c == own)
+        {
+            continue;
+        }
+        char base[MAX_QPATH], file[MAX_QPATH];
+        q_snprintf(base, sizeof(base), "%.*s+%c", static_cast<int>(stemLen), anim, *c);
+        extmaps::Material mat;
+        extmaps::readMat(base, mat);
+        if(!extmaps::normalFile(base, mat, file, sizeof(file)))
+        {
+            continue;
+        }
+        float m = -2.f;
+        if(need > 0.f)
+        {
+            char pic[MAX_QPATH];
+            q_snprintf(pic, sizeof(pic), "%s%s", extmaps::prefix, mat.diffusemap[0] ? extmaps::fileOf(mat.diffusemap) : base);
+            const int mark = Hunk_LowMark();
+            int ew = 0, eh = 0;
+            enum srcformat efmt = SRC_RGBA;
+            const byte* img = Image_LoadImage(pic, &ew, &eh, &efmt);
+            m = img ? sigs.match(img, efmt, ew, eh) : -1.f;
+            Hunk_FreeToLowMark(mark);
+            if(m < need)
+            {
+                Con_DPrintf("extmaps: %s: %s's normal map not taken (match %.2f)\n", p.texname, base, m);
+                continue;
+            }
+        }
+        q_strlcpy(p.normal, file, sizeof(p.normal));
+        p.normalFrame = *c;
+        p.normalMatch = m;
+        return true;
+    }
+    return false;
+}
+
 int prepare(const qmodel_t* mod, const char* texname, const byte* data, enum srcformat fmt, int width, int height)
 {
     extmaps::pending = extmaps::Pending{};
@@ -327,13 +702,18 @@ int prepare(const qmodel_t* mod, const char* texname, const byte* data, enum src
     extmaps::Pending& p = extmaps::pending;
     q_strlcpy(p.texname, texname, sizeof(p.texname));
     extmaps::packName(texname, p.base, sizeof(p.base));
+    char anim[MAX_QPATH]; // the pack's name for it with its frame (p.base may lose it below)
+    q_strlcpy(anim, p.base, sizeof(anim));
     extmaps::readMat(p.base, p.mat);
     extmaps::Record& r = extmaps::record(mod, texname);
 
     const float need = za::clamp(vr_extmaps_match.value, 0.f, 1.f);
+    const int mark = Hunk_LowMark();
+    constexpr int sigFloats = extmaps::sigSize * extmaps::sigSize * 3;
+    Signatures sigs{data, fmt, width, height, need > 0.f ? static_cast<float*>(Hunk_AllocNoFill(sizeof(float) * sigFloats)) : nullptr};
+    const int pictures = Hunk_LowMark(); // the pack's pictures, after the signatures
     char file[MAX_QPATH];
     q_snprintf(file, sizeof(file), "%s%s", extmaps::prefix, p.mat.diffusemap[0] ? extmaps::fileOf(p.mat.diffusemap) : p.base);
-    const int mark = Hunk_LowMark();
     int ew = 0, eh = 0;
     enum srcformat efmt = SRC_RGBA;
     byte* img = Image_LoadImage(file, &ew, &eh, &efmt);
@@ -347,24 +727,17 @@ int prepare(const qmodel_t* mod, const char* texname, const byte* data, enum src
     }
     if(!img)
     {
-        Hunk_FreeToLowMark(mark);
         r.missing = true;
-        return 0;
+        // a frame it has no picture of (butn+a): only another frame's normal map, if one fits
+        p.normalOnly = VR_NormalMaps() && siblingNormal(p, anim, sigs, need);
+        Hunk_FreeToLowMark(mark);
+        return p.normalOnly;
     }
     if(need > 0.f)
     {
-        p.match = -1.f; // another shape: no match
-        if(efmt == SRC_RGBA && static_cast<long long>(ew) * height == static_cast<long long>(eh) * width)
-        {
-            float* sig = static_cast<float*>(Hunk_AllocNoFill(sizeof(float) * extmaps::sigSize * extmaps::sigSize * 3));
-            float* sig2 = sig + extmaps::sigSize * extmaps::sigSize;
-            float* tmp = sig2 + extmaps::sigSize * extmaps::sigSize;
-            extmaps::signature(data, fmt, width, height, sig, tmp);
-            extmaps::signature(img, efmt, ew, eh, sig2, tmp);
-            p.match = extmaps::correlation(sig, sig2);
-        }
+        p.match = sigs.match(img, efmt, ew, eh); // -1, another shape: no match
     }
-    Hunk_FreeToLowMark(mark);
+    Hunk_FreeToLowMark(pictures);
     r.match = p.match;
     p.ok = need <= 0.f || p.match >= need;
     r.skipped = !p.ok;
@@ -372,6 +745,11 @@ int prepare(const qmodel_t* mod, const char* texname, const byte* data, enum src
     {
         Con_DPrintf("extmaps: %s differs from the pack's %s (match %.2f)\n", texname, p.base, p.match);
     }
+    else if(VR_NormalMaps() && !extmaps::normalFile(p.base, p.mat, p.normal, sizeof(p.normal)))
+    {
+        siblingNormal(p, anim, sigs, need); // a frame it has no normal map of (basebtn+1)
+    }
+    Hunk_FreeToLowMark(mark);
     return p.ok;
 }
 
@@ -391,11 +769,12 @@ extern "C" int VR_ExtMapsPrepare(const qmodel_t* mod, const char* texname, const
 }
 
 // Mod_LoadTextures, after the upload and the texture's own glow (`glows`: a _luma or _glow file, or Quake's fullbright
-// colours): the pack's normal map (beside the made one), specular map and glow (only if it has none) loaded onto tx.
+// colours): the pack's normal map (beside the made one; another frame's for a frame it has none of), specular map and
+// glow (only if it has none) loaded onto tx; only that normal map for a frame it has no picture of.
 extern "C" void VR_ExtMapsAttach(texture_t* tx, qmodel_t* mod, int glows)
 {
     extmaps::Pending& p = extmaps::pending;
-    if(!p.ok || !tx || !tx->gltexture || strcmp(p.texname, tx->name) != 0)
+    if((!p.ok && !p.normalOnly) || !tx || !tx->gltexture || strcmp(p.texname, tx->name) != 0)
     {
         p = extmaps::Pending{};
         return;
@@ -407,16 +786,9 @@ extern "C" void VR_ExtMapsAttach(texture_t* tx, qmodel_t* mod, int glows)
     enum srcformat fmt;
     const int mark = Hunk_LowMark();
 
-    if(VR_NormalMaps())
+    if(VR_NormalMaps() && p.normal[0])
     {
-        if(p.mat.normalmap[0])
-        {
-            q_snprintf(file, sizeof(file), "%s%s", extmaps::prefix, extmaps::fileOf(p.mat.normalmap));
-        }
-        else
-        {
-            q_snprintf(file, sizeof(file), "%s%s_norm", extmaps::prefix, p.base);
-        }
+        q_strlcpy(file, p.normal, sizeof(file)); // (prepare's: its own, or another frame's)
         tx->extnormal = TexMgr_LoadExtNormalMap(tx->gltexture, file, 0, 0, nullptr, tx->width); // another texture's
         byte* img = tx->extnormal ? nullptr : Image_LoadImage(file, &w, &h, &fmt);
         if(img && fmt == SRC_RGBA)
@@ -424,6 +796,19 @@ extern "C" void VR_ExtMapsAttach(texture_t* tx, qmodel_t* mod, int glows)
             tx->extnormal = TexMgr_LoadExtNormalMap(tx->gltexture, file, w, h, img, tx->width);
         }
         Hunk_FreeToLowMark(mark);
+        r.normal = tx->extnormal != nullptr;
+        r.normalFrame = p.normalFrame;
+        r.normalMatch = p.normalMatch;
+        if(p.normalFrame && tx->extnormal)
+        {
+            Con_DPrintf("extmaps: %s takes +%c's normal map %s (match %.2f)\n", tx->name, p.normalFrame, file, p.normalMatch);
+        }
+    }
+    if(p.normalOnly)
+    {
+        p = extmaps::Pending{};
+        VR_TimeAdd("external material maps (vr_extmaps)", Sys_DoubleTime() - t0);
+        return;
     }
 
     if(p.mat.specularmap[0])
@@ -465,7 +850,6 @@ extern "C" void VR_ExtMapsAttach(texture_t* tx, qmodel_t* mod, int glows)
     }
     Hunk_FreeToLowMark(mark);
 
-    r.normal = tx->extnormal != nullptr;
     r.spec = tx->extspec != nullptr;
     r.luma = tx->extluma != 0;
     r.mat = p.mat.specularity != 1.f || p.mat.hardness != 1.f || p.mat.normalmap[0] || p.mat.specularmap[0];
@@ -473,9 +857,93 @@ extern "C" void VR_ExtMapsAttach(texture_t* tx, qmodel_t* mod, int glows)
     VR_TimeAdd("external material maps (vr_extmaps)", Sys_DoubleTime() - t0);
 }
 
+// Mod_LoadTextures, its animations sequenced (each frame's maps attached): the frame each animation's frame takes its
+// surface from (texture_t surface; see animMatch). A frame joins the lead's surface if its picture matches the lead's or
+// that of a frame already joined (a glow that brightens over the frames, +0slip to +6slip, 0.90 down to 0.46 against
+// the first: 0.9 and more from one to the next), where it lies (a picture moving over the frames matches better
+// shifted: it keeps its own).
+extern "C" void VR_AnimSurfaces(qmodel_t* mod)
+{
+    if(!mod || isDedicated || !mod->textures)
+    {
+        return;
+    }
+    const double t0 = Sys_DoubleTime();
+    for(int i = 0; i < mod->numtextures; i++)
+    {
+        texture_t* t = mod->textures[i];
+        if(extmaps::frameOf(t) >= 0)
+        {
+            t->surface = nullptr;
+        }
+    }
+    for(int i = 0; i < mod->numtextures; i++)
+    {
+        texture_t* t = mod->textures[i];
+        texture_t* frames[extmaps::animFrames];
+        if(extmaps::frameOf(t) < 0)
+        {
+            continue;
+        }
+        extmaps::framesOf(mod, t, frames);
+        int first = 0;
+        while(!frames[first])
+        {
+            first++;
+        }
+        texture_t* lead = extmaps::leadOf(frames);
+        if(frames[first] != t || !lead) // each animation once
+        {
+            continue;
+        }
+        bool joined[extmaps::animFrames] = {};
+        for(int k = 0; k < extmaps::animFrames; k++)
+        {
+            joined[k] = frames[k] == lead;
+        }
+        for(bool more = true; more;) // until no frame joins (a frame before the lead may join through a later one)
+        {
+            more = false;
+            for(int k = 0; k < extmaps::animFrames; k++)
+            {
+                if(!frames[k] || joined[k])
+                {
+                    continue;
+                }
+                for(int j = 0; j < extmaps::animFrames && !joined[k]; j++)
+                {
+                    if(!joined[j])
+                    {
+                        continue;
+                    }
+                    float moved = -1.f;
+                    const float m = extmaps::frameMatch(frames[k], frames[j], &moved);
+                    if(m >= extmaps::animMatch && m >= moved) // alike, and not a moving picture
+                    {
+                        joined[k] = more = true;
+                        frames[k]->surface = lead;
+                        Con_DPrintf("%s: %s's surface taken (match with %s %.2f, shifted %.2f)\n", frames[k]->name, lead->name,
+                            frames[j]->name, m, moved);
+                    }
+                }
+            }
+        }
+        for(int k = 0; k < extmaps::animFrames; k++)
+        {
+            if(frames[k] && !joined[k])
+            {
+                Con_DPrintf("%s: %s's surface not taken (its picture differs)\n", frames[k]->name, lead->name);
+            }
+        }
+    }
+    VR_TimeAdd("animated textures' surfaces (vr_anim_surface)", Sys_DoubleTime() - t0);
+}
+
 // R_AddBModelCall: a texture's maps as drawn: the pack's normal map instead of the made one (vr_extmaps_normals), its
 // specular map (vr_extmaps_spec: `spec`, `extmat` y its brightness, z its hardness, CF_SPECMAP returned), its glow
-// hidden if off (vr_extmaps_luma); all of them as without the pack while vr_extmaps_ab is on.
+// hidden if off (vr_extmaps_luma); all of them as without the pack while vr_extmaps_ab is on. An animation's frame
+// takes its lead frame's normal map (made or the pack's), specular map and numbers (surface, vr_anim_surface); its
+// glow stays its own.
 extern "C" unsigned VR_ExtMapsCall(const texture_t* t, gltexture_t** normalmap, gltexture_t** spec, gltexture_t** fullbright,
     float extmat[4])
 {
@@ -484,6 +952,11 @@ extern "C" unsigned VR_ExtMapsCall(const texture_t* t, gltexture_t** normalmap, 
     if(!t)
     {
         return 0u;
+    }
+    const texture_t* s = extmaps::surface(t); // an animation's frame: its lead frame's surface (its glow its own)
+    if(s != t && s->gltexture)
+    {
+        *normalmap = TexMgr_NormalMap(s->gltexture);
     }
     const bool show = vr_extmaps_ab.value == 0.f;
     if(t->extluma && (!show || vr_extmaps_luma.value == 0.f) && *fullbright == t->fullbright)
@@ -494,15 +967,15 @@ extern "C" unsigned VR_ExtMapsCall(const texture_t* t, gltexture_t** normalmap, 
     {
         return 0u;
     }
-    if(t->extnormal && vr_extmaps_normals.value != 0.f)
+    if(s->extnormal && vr_extmaps_normals.value != 0.f)
     {
-        *normalmap = t->extnormal;
+        *normalmap = s->extnormal;
     }
-    if(t->extspec && vr_extmaps_spec.value != 0.f)
+    if(s->extspec && vr_extmaps_spec.value != 0.f)
     {
-        *spec = t->extspec;
-        extmat[1] = t->extmat[1] * za::clamp(vr_extmaps_spec_scale.value, 0.f, 16.f);
-        extmat[2] = t->extmat[2];
+        *spec = s->extspec;
+        extmat[1] = s->extmat[1] * za::clamp(vr_extmaps_spec_scale.value, 0.f, 16.f);
+        extmat[2] = s->extmat[2];
         return extmaps::cfSpecMap;
     }
     return 0u;

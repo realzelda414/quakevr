@@ -13,12 +13,15 @@
 #include "vr_progs.hpp"
 #include "vr_protocol.hpp"
 #include "vr_server.hpp"
+#include "vr_serverrules.hpp"
+#include "vr_shock.hpp"
 #include "vr_portals.hpp"
 #include "vr_tips.hpp"
 #include "vr_worldtext.hpp"
 
 #include "Zancle/Base/GetArraySize.hpp"
 #include "Zancle/Container/Vector.hpp"
+#include "Zancle/Math/MinMax.hpp"
 #include "Zancle/Vocabulary/Optional.hpp"
 
 
@@ -433,6 +436,81 @@ extern "C" int VR_BroadcastSendable(int before, int room)
 }
 
 // SV_SendClientMessages, before sv.reliable_datagram is copied to the clients (vr_debug_net 2).
+// ----------------------------------------------------------------------------
+// vr_net_stats: what each client's datagrams carry of the entities (the debris' cost in multiplayer: MULTIPLAYER.md).
+
+namespace
+{
+struct NetStat
+{
+    int sent{0}, insight{0}, bytes{0}, maxsize{0};
+    int peakBytes{0}, peakSent{0}, frames{0}, overflowFrames{0};
+    double sumBytes{0.0};
+};
+NetStat netStats[MAX_SCOREBOARD];
+
+void netStats_f()
+{
+    if(Cmd_Argc() > 1 && !strcmp(Cmd_Argv(1), "reset"))
+    {
+        for(NetStat& n : netStats)
+        {
+            n = NetStat{};
+        }
+        Con_Printf("vr_net_stats: reset\n");
+        return;
+    }
+    if(!sv.active)
+    {
+        Con_Printf("vr_net_stats: no server here\n");
+        return;
+    }
+    qcvm_t* oldVm = nullptr;
+    PR_PushQCVM(&sv.qcvm, &oldVm);
+    int used = 0;
+    for(int i = 1; i < qcvm->num_edicts; i++)
+    {
+        used += EDICT_NUM(i)->free ? 0 : 1;
+    }
+    const int most = qcvm->max_edicts;
+    PR_PopQCVM(oldVm);
+    Con_Printf("vr_net_stats: %d entities in use (of %d)\n", used, most);
+    for(int i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++)
+    {
+        const client_t& c = svs.clients[i];
+        if(!c.active)
+        {
+            continue;
+        }
+        const NetStat& n = netStats[i];
+        const char* where = c.netconnection ? NET_QSocketGetAddressString(c.netconnection) : "?";
+        Con_Printf("  client %d (%s): entities %d of %d in sight, %d B (room %d); peak %d B, %d sent; mean %.0f B over %d "
+                   "frames, %d full\n",
+            i + 1, where, n.sent, n.insight, n.bytes, n.maxsize, n.peakBytes, n.peakSent,
+            n.frames ? n.sumBytes / n.frames : 0.0, n.frames, n.overflowFrames);
+    }
+}
+} // namespace
+
+extern "C" void VR_NetStatsEntities(edict_t* clent, int sent, int insight, int bytes, int maxsize)
+{
+    const int i = NUM_FOR_EDICT(clent) - 1;
+    if(i < 0 || i >= MAX_SCOREBOARD)
+    {
+        return;
+    }
+    NetStat& n = netStats[i];
+    n.sent = sent;
+    n.insight = insight;
+    n.bytes = bytes;
+    n.maxsize = maxsize;
+    n.peakBytes = za::max(n.peakBytes, bytes);
+    n.peakSent = za::max(n.peakSent, sent);
+    n.frames++;
+    n.overflowFrames += sent < insight ? 1 : 0;
+    n.sumBytes += bytes;
+}
+
 extern "C" void VR_ReliableSent()
 {
     broadcastRoom.peakReliable = q_max(broadcastRoom.peakReliable, sv.reliable_datagram.cursize);
@@ -671,6 +749,10 @@ extern "C" int VR_EntityUpdateBits(edict_t* ent)
     {
         bits |= U_QVR_NOROTATE;
     }
+    else if(fieldFloatOr(ent, f.vr_pickup_spin, 0.f) != 0.f)
+    {
+        bits |= U_QVR_SPIN; // a weapon pickup drawn as its prop (QC vr_pickup_prop_models): spins as the g_ models do
+    }
     if(NUM_FOR_EDICT(ent) > svs.maxclients && weaponUid(weaponInst(ent, f.weaponinst)) != 0)
     {
         bits |= U_QVR_WEAPONUID; // a weapon prop (not a player: his .weaponinst is his main hand's, sent as a stat)
@@ -719,15 +801,18 @@ extern "C" void VR_WriteClientSpawnState(sizebuf_t* msg)
     {
         worldtext::serverWriteAll(msg);
         tips::serverWriteAll(msg);
+        serverrules::serverWriteAll(msg);
     }
 }
 
 extern "C" void VR_ServerFrameEnd()
 {
     sweepWeaponInsts(); // the weapons' records nothing has any more: freed, their ids gone
+    tips::serverFrame(); // the map tips whose entity is gone (before its slot is reused)
 
     qvr::hitmodel::serverFrame(); // precise hits: the client's lerp of the monsters' poses and steps, kept
     qvr::axestick::serverFrame(); // thrown axes stuck in things go with them (after the poses above)
+    progs::loadNoticeFrame(); // a loaded save's warning (another build's), once the player is in
 
     if(!vrProtocol())
     {
@@ -743,6 +828,7 @@ extern "C" void VR_ServerFrameEnd()
     // Late precaches (setmodel on an unprecached model, precache_* after load).
     broadcastNewPrecaches(sv.model_precache, broadcastModelCount, QVR_SVC_PRECACHE_MODEL);
     broadcastNewPrecaches(sv.sound_precache, broadcastSoundCount, QVR_SVC_PRECACHE_SOUND);
+    serverrules::serverFrame(); // a server rule changed: every client gets the new value
 
     qvr::motion::serverFrame(); // the motion recorder's sample of this server frame
     qvr::fatigue::serverFrame(); // vr_debug_stamina_hold
@@ -936,7 +1022,7 @@ void sendEject(edict_t* player, int hand, int kind, int count, int flags, float 
 void sendShock(edict_t* player, int kind, const float org[3], float radius, float duration)
 {
     sizebuf_t* msg = nullptr;
-    if(kind == 0)
+    if(kind == shock::KindSelf || kind == shock::KindSelfHit)
     {
         msg = clientMessage(player);
     }
@@ -957,7 +1043,8 @@ void sendShock(edict_t* player, int kind, const float org[3], float radius, floa
         MSG_WriteCoord(msg, org[i], sv.protocolflags);
     }
     MSG_WriteShort(msg, CLAMP(0, static_cast<int>(radius), 32767));
-    MSG_WriteByte(msg, CLAMP(0, static_cast<int>(duration * 50.f + 0.5f), 255));
+    // (In 1/50 s: 5 s at most; a body's lasting shock, kind 4, and a fire's smoulder, 5 and 6, in 1/4 s: 63 s.)
+    MSG_WriteByte(msg, CLAMP(0, static_cast<int>(duration * (shock::quarterSeconds(kind) ? 4.f : 50.f) + 0.5f), 255));
     if(msg == &sv.datagram)
     {
         VR_BroadcastMessageEnd(); // a boundary
@@ -1002,6 +1089,7 @@ void sendTracer(edict_t* shooter, int hand, const float from[3], const float to[
 void init()
 {
     Cmd_AddCommand("vr_dumpplayer", dumpPlayer_f);
+    Cmd_AddCommand("vr_net_stats", netStats_f);
     climb::init();
     ledges::init();
 }
@@ -1011,6 +1099,7 @@ void onSpawnServerAfterLoad()
 {
     broadcastModelCount = precacheCount(sv.model_precache);
     broadcastSoundCount = precacheCount(sv.sound_precache);
+    serverrules::serverReset(); // (the clients get every rule with their spawn state)
 }
 
 } // namespace qvr::server

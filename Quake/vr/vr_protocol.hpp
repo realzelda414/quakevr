@@ -22,6 +22,7 @@ inline constexpr int U_QVR_SCALEORIGIN = 1 << 25;  // 3 coords
 inline constexpr int U_QVR_OFFSET = 1 << 26;       // 3 coords
 inline constexpr int U_QVR_NOROTATE = 1 << 27;     // no data: a rigid body, whose EF_ROTATE model keeps its angles
 inline constexpr int U_QVR_WEAPONUID = 1 << 28;    // long: a weapon prop's weapon id (QC vr_weaponinst.qc: its record's)
+inline constexpr int U_QVR_SPIN = 1 << 29;         // no data: drawn spinning as an EF_ROTATE pickup (a weapon pickup drawn as its prop)
 
 // Server -> client.
 inline constexpr int svc_quakevr = 39;
@@ -53,11 +54,12 @@ enum SvcQuakeVr : int
     QVR_SVC_TIP_NAME = 23,        // [short handle][string]: its name (its key in vr_tips_seen, with the map's)
     QVR_SVC_TIP_TEXT = 24,        // [short handle][string]: its text (\n new lines)
     QVR_SVC_TIP_POS = 25,         // [short handle][coord3]: its point in the map
-    QVR_SVC_TIP_ENT = 26,         // [short handle][short entity index, -1 a fixed point]: what it follows
+    QVR_SVC_TIP_ENT = 26,         // [short handle][short entity index, -1 a fixed point, -2 gone]: what it follows
     QVR_SVC_TIP_DISTANCE = 27,    // [short handle][float]: how near (units) it must be to show (0: vr_tips_distance)
     QVR_SVC_TIP_SIZE = 28,        // [short handle][float]: its screen's text size (0: vr_tips_size)
     QVR_SVC_TIP_DELAY = 29,       // [short handle][float]: seconds near and seen before it shows (< 0: vr_tips_delay)
     QVR_SVC_TIP_FLAGS = 30,       // [short handle][byte]: its flags (qvr::tips::Flags)
+    QVR_SVC_RULES = 31,           // [byte count]([string cvar][float value]) x count: server rules' values (vr_serverrules.cpp; reliable, with the spawn state and on a change)
 };
 inline constexpr int ropeEnded = 255; // QVR_SVC_ROPE's count: the beam's rope ended (no corners follow)
 

@@ -145,7 +145,7 @@ plants the object on the floor
 void() VRScalePickup =
 {
     float s = cvar_hget(cvarh_vr_pickup_scale);
-    if(s <= 0 || s == 1)
+    if(s <= 0 || s == 1 || self.vr_pickup_spin) // (a weapon drawn as its prop: at its size, as dropped)
     {
         return;
     }
@@ -334,6 +334,7 @@ float (entity e, float healamount, float ignore) T_Heal =
         return 0;
 
     healamount = ceil(healamount);
+    MGH_ResetHunger(e);
 
     e.health = e.health + healamount;
 
@@ -788,6 +789,7 @@ void() VR_PickupObj_WeaponTouch =
 // The hand touch of an object pickup (VR_Carry_Handtouch's, but for these).
 void() VR_PickupObj_Handtouch =
 {
+    if(cvar("vr_campaign") == 4 && self.MG1_rune_locked) return;
     if(!VR_PickupObj_Enabled(self))
     {
         self.carry_use(); // touching takes it
@@ -864,7 +866,7 @@ void() VR_PickupObj_Place =
     }
 
     float s = cvar_hget(self.vr_pickup_obj == QVR_PICKUPOBJ_ARMOUR ? cvarh_vr_armor_scale : cvarh_vr_pickup_scale);
-    if(s <= 0)
+    if(s <= 0 || self.vr_pickup_spin) // (a weapon drawn as its prop: at its size, as the weapon dropped is)
     {
         s = 1;
     }
@@ -874,6 +876,14 @@ void() VR_PickupObj_Place =
     self.model_offset = '0 0 0';
     vector lo = modelbounds(self, 0) * s;
     vector hi = modelbounds(self, 1) * s;
+    if(self.vr_pickup_spin)
+    {
+        // A weapon drawn as its prop (VR_WeaponPickup_SetModel): its drawn box (a weapon model's raw box is not where
+        // it is drawn), its middle on its origin, which it turns about hanging and as a rigid body.
+        self.model_offset = modeloffsetto(self, '0 0 0');
+        lo = drawnbounds(self, 0);
+        hi = drawnbounds(self, 1);
+    }
     setsize(self, lo, hi);
 
     // Hangs with its middle at the float height; a honey floating item where it is; else on the floor.
@@ -1131,8 +1141,29 @@ void() weapon_touch =
     self.solid = SOLID_NOT;
 };
 
+.float vr_pickup_mid; // a weapon pickup drawn as its prop: its middle's height above its origin (the classic model's, as drawn)
+
+// A weapon pickup drawn as its prop, not an object (vr_item_objects 0; an object is centred by VR_PickupObj_Place): its
+// middle on its origin's vertical, as high as the classic model's middle, never into the floor (the box's bottom, 4
+// units under the origin). Again at its first think: as the map spawns, the weapon models' own scale is not known yet
+// (the server not running: weapons::modelTransform), the offset made then at the raw model's.
+void() VR_WeaponPickup_Centre =
+{
+    self.model_offset = modeloffsetto(self, '0 0 1' * self.vr_pickup_mid);
+    vector lo = drawnbounds(self, 0);
+    if(lo_z < -3)
+    {
+        self.model_offset = modeloffsetto(self, '0 0 1' * (self.vr_pickup_mid - 3 - lo_z));
+    }
+}
+
 void() weapon_item_think =
 {
+    if(self.vr_pickup_spin == 1 && !self.vr_pickup_obj)
+    {
+        VR_WeaponPickup_Centre();
+        self.vr_pickup_spin = 2; // (centred with the weapon models' scale)
+    }
     if(self.model != string_null)
     {
         // A faint sparkle now and then, drifting up (Quake VR's was a busy fountain).
@@ -1141,12 +1172,50 @@ void() weapon_item_think =
     }
 }
 
+// The map's weapons drawn as the weapons you hold and drop (vr_pickup_prop_models, next map): the weapon's own model
+// (WeaponIdToModel, as a dropped one is drawn, at its size: not vr_pickup_scale), turning about its middle
+// (.vr_pickup_spin: the engine spins it as it does the classic g_ models, EF_ROTATE; VR_WeaponPickup_Centre). The
+// classic model when the setting is off or the weapon has no model of its own; a classic model only a pack has
+// (Hipnotic's Mjolnir and laser cannon): the weapon's own model anyway, which Quake VR ships (the weapon itself works
+// without the pack). Both are precached here, so that a saved game made with the other setting loads.
+void(string xClassic, float xWeaponId) VR_WeaponPickup_SetModel =
+{
+    string prop = WeaponIdToModel(xWeaponId, 0);
+    float hasProp = fileexists(prop);
+    float hasClassic = fileexists(xClassic);
+    self.vr_pickup_mid = 8;
+    if(hasClassic)
+    {
+        precache_model(xClassic);
+        setmodel(self, xClassic);
+        vector clo = modelbounds(self, 0);
+        vector chi = modelbounds(self, 1);
+        float cs = cvar_hget(cvarh_vr_pickup_scale); // (the classic model drawn at it: VRScalePickup)
+        self.vr_pickup_mid = (clo_z + chi_z) * 0.5 * (cs > 0 ? cs : 1);
+    }
+    if(hasProp)
+    {
+        precache_model(prop);
+    }
+
+    self.vr_pickup_spin = 0;
+    self.model_offset = '0 0 0';
+    if(!hasProp || (hasClassic && !cvar_hget(cvarh_vr_pickup_prop_models)))
+    {
+        setmodel(self, hasClassic ? xClassic : prop);
+        return;
+    }
+
+    setmodel(self, prop);
+    self.vr_pickup_spin = 1;
+    VR_WeaponPickup_Centre();
+}
+
 void(string xModelName, float xWeaponId) impl_weapon_item =
 {
     if(!VR_Pack_WeaponAvailable(xWeaponId)) { remove(self); return; }
 
-    precache_model(xModelName);
-    setmodel(self, xModelName);
+    VR_WeaponPickup_SetModel(xModelName, xWeaponId);
     self.weapon = xWeaponId;
     self.vr_itemId = WeaponIdToItemId(self.weapon);
     self.netname = WeaponIdToWeaponName(self.weapon);
@@ -1438,7 +1507,7 @@ void(string xModelNameSmall, string xModelNameBig,
      float xAmmoId, vector xSize)
 impl_item_ammo_pickup =
 {
-    if(!VR_Pack_Rogue() && (xAmmoId == AID_LAVA_NAILS || xAmmoId == AID_MULTI_ROCKETS || xAmmoId == AID_PLASMA))
+    if(!VR_Pack_AmmoAvailable(xAmmoId) || !fileexists(xModelNameSmall) || !fileexists(xModelNameBig))
     {
         remove(self);
         return;
@@ -1714,12 +1783,13 @@ void() sigil_touch =
 };
 
 
-/*QUAKED item_sigil (0 .5 .8) (-16 -16 -24) (16 16 32) E1 E2 E3 E4
+/*QUAKED item_sigil (0 .5 .8) (-16 -16 -24) (16 16 32) E1 E2 E3 E4 E5 E6
 End of level sigil, pick up to end episode and return to jrstart.
 */
 
 void() item_sigil =
 {
+    if(cvar("vr_campaign") == 4) { MG1_item_sigil(); return; }
     if(!self.spawnflags)
         objerror ("no spawnflags");
 
@@ -1770,7 +1840,7 @@ void() powerup_touch =
 {
     VRItemPickupHaptic(other);
 
-    sprint(other, "You got the ");
+    sprint(other, self.MGH_powerup_expire ? "You got " : "You got the ");
     sprint(other, self.netname);
     sprint(other,"\n");
 
@@ -2065,6 +2135,10 @@ DropBackpack
 */
 void() DropBackpack =
 {
+    if(self.vr_dummy_dead)
+    {
+        return; // VR: the firing range's training dummy killed as its enemy (vr_dummy.qc): no loot
+    }
     if(!(self.ammo_shells + self.ammo_nails + self.ammo_rockets + self.ammo_cells
     + self.ammo_lava_nails + self.ammo_multi_rockets + self.ammo_plasma))
     {

@@ -230,18 +230,24 @@ float(entity xTarget) PositionalHead =
 {
     string c = xTarget.classname;
     if(c == "monster_army")             { xHeadForward = 3;  xHeadUp = 23; xHeadRadius = 7.2; return TRUE; }
-    if(c == "monster_ogre")             { xHeadForward = 9;  xHeadUp = 33; xHeadRadius = 10;  return TRUE; }
+    if(c == "monster_ogre" || c == "monster_ogre_marksman") { xHeadForward = 9; xHeadUp = 33; xHeadRadius = 10; return TRUE; }
     if(c == "monster_enforcer")         { xHeadForward = 2;  xHeadUp = 27; xHeadRadius = 7.4; return TRUE; }
     if(c == "monster_gremlin")          { xHeadForward = 7;  xHeadUp = 12; xHeadRadius = 6.4; return TRUE; }
     if(c == "monster_hell_knight")      { xHeadForward = 6;  xHeadUp = 33; xHeadRadius = 7.2; return TRUE; }
     if(c == "monster_knight")           { xHeadForward = 4;  xHeadUp = 22; xHeadRadius = 6.2; return TRUE; }
     if(c == "monster_shambler")         { xHeadForward = 14; xHeadUp = 57; xHeadRadius = 12;  return TRUE; }
-    if(c == "monster_shalrath")         { xHeadForward = 1;  xHeadUp = 34; xHeadRadius = 9;   return TRUE; }
+    // A vore's: Quake VR's own model (progs/shalrath.mdl, taller than id's): his head 40-53 above his origin (round 21).
+    if(c == "monster_shalrath")         { xHeadForward = 0;  xHeadUp = 45; xHeadRadius = 8;   return TRUE; }
     if(c == "monster_zombie")           { xHeadForward = 0;  xHeadUp = 22; xHeadRadius = 6;   return TRUE; }
     if(c == "monster_wizard")           { xHeadForward = 6;  xHeadUp = 25; xHeadRadius = 7;   return TRUE; }
     if(c == "monster_mummy")            { xHeadForward = 0;  xHeadUp = 30; xHeadRadius = 6.5; return TRUE; }
+    // A fiend's ($stand1: crouched, his head thrust forward, below his origin; decapitation's zone since round 21). Below
+    // his origin it is his legs' zone too: Head Priority (vr_hit_head_priority, on by default) gives it to the head.
+    if(c == "monster_demon1")           { xHeadForward = 27; xHeadUp = -5; xHeadRadius = 8;   return TRUE; }
+    // A centroid's (Hipnotic's monster_scourge, $stand1): the front of its body, low and wide, below its origin (its legs'
+    // zone too: Head Priority, as the fiend's).
+    if(c == "monster_scourge")          { xHeadForward = 11; xHeadUp = -9; xHeadRadius = 8;   return TRUE; }
     if(c == "player")                   { xHeadForward = 4;  xHeadUp = 23; xHeadRadius = 7.2; return TRUE; }
-    if(c == "vr_dummy")                 { xHeadForward = 3;  xHeadUp = 23; xHeadRadius = 7.2; return TRUE; } // a grunt
     return FALSE;
 };
 
@@ -1181,37 +1187,22 @@ void() W_Precache =
     precache_sound("weapons/shotgn2.wav");    // super shotgun
     precache_sound("knight/sword1.wav");    // gun melee
 
-    if(VR_Pack_Hipnotic())
-    {
-        // HIPNOTIC
-        //MED
-       precache_sound("enforcer/enfstop.wav");   // laser cannon
-    //MED 11/06/96
-       precache_sound("hipweap/laserg.wav");   // laser cannon
-       precache_sound("hipweap/laserric.wav");   // laser cannon ricochet
-       precache_sound("hipweap/proxwarn.wav");   // proximity bomb
-       precache_sound("hipweap/proxbomb.wav");   // proximity bomb
-    //MED 11/19/96
-       precache_sound("hipweap/mjolhit.wav");   // mjolnir
-       precache_sound("hipweap/mjolslap.wav");   // mjolnir
-       precache_sound("hipweap/mjoltink.wav");   // mjolnir
-
-    }
-
-    if(VR_Pack_Rogue())
-    {
-        // ROGUE
-        //ZOID--
-        // grapple
-        precache_sound("weapons/chain1.wav");
-        precache_sound("pendulum/hit.wav");
-        precache_sound("vr/grapple_reel.wav"); // the reel winding in (vr_grapple.qc)
-        precache_sound("vr/grapple_unreel.wav"); // the unreel paying out (vr_grapple.qc)
-        precache_sound("vr/grapple_taut.wav"); // the rope snapping taut
-        precache_sound("lavagun/snail.wav");        // lava nail gun cooldown
-    //--ZOID
-
-    }
+    // HIPNOTIC and ROGUE weapons: Quake VR ships their sounds (the pack's lava gun cooldown when it is there)
+    precache_sound("enforcer/enfstop.wav");   // laser cannon
+    precache_sound("hipweap/laserg.wav");   // laser cannon
+    precache_sound("hipweap/laserric.wav");   // laser cannon ricochet
+    precache_sound("hipweap/proxwarn.wav");   // proximity bomb
+    precache_sound("hipweap/proxbomb.wav");   // proximity bomb
+    precache_sound("hipweap/mjolhit.wav");   // mjolnir
+    precache_sound("hipweap/mjolslap.wav");   // mjolnir
+    precache_sound("hipweap/mjoltink.wav");   // mjolnir
+    //ZOID-- grapple
+    precache_sound("weapons/chain1.wav");
+    precache_sound("pendulum/hit.wav");
+    precache_sound("vr/grapple_reel.wav"); // the reel winding in (vr_grapple.qc)
+    precache_sound("vr/grapple_unreel.wav"); // the unreel paying out (vr_grapple.qc)
+    precache_sound("vr/grapple_taut.wav"); // the rope snapping taut
+    if(VR_Has("sound/lavagun/snail.wav")) { precache_sound("lavagun/snail.wav"); } // lava nail gun cooldown
 
     // QUAKE VR
     precache_sound("knight/sword1.wav");
@@ -1953,6 +1944,8 @@ void(float shotcount, vector dir, vector spread, vector src, float xRange, float
 
     ClearMultiDamage();
     VR_SmallGib_BlastBegin(); // VR: the blast's pellets one hit for the small gibs (vr_smallgibs.qc)
+    vr_decap_pellets = shotcount; // VR: head pops' chance (vr_decap.qc): the share of the blast at the head, the range
+    vr_decap_src = src;
     while(shotcount > 0)
     {
         direction = dir + crandom()*spread_x*v_right + crandom()*spread_y*v_up;
@@ -2267,15 +2260,22 @@ LIGHTNING
 
 // VR: a bolt's damage to `t` (trace_ent, struck at trace_endpos going `xDir`): the player's at a head that it kills pops
 // it (vr_decap.qc, "Head pops"). T_Damage's answer; the trace globals as they were (the death code may trace).
+void(entity t, float xAlive, vector xAt, vector xDir) VR_Shock_Hit; // (vr_shock.qc)
 float(entity t, entity from, float damage, vector xDir) VR_LightningHit =
 {
     vector at = trace_endpos;
+    float shockAlive = t.health > 0; // (killed by it, or struck dead: VR_Shock_Hit)
     if((t.flags & FL_MONSTER) || t.vr_corpse)
     {
         bodyshock(t, 0.75);
     }
+    if((t.flags & FL_CLIENT) && shockAlive)
+    {
+        playershock(t, damage, at); // VR: arcs over the struck player's arms and body (vr_shock_self_time)
+    }
     float pop = VR_Decap_BoltArm(t, at, xDir, damage);
     float r = T_Damage(t, from, from, damage);
+    VR_Shock_Hit(t, shockAlive, at, xDir); // VR: lightning's lasting shock (vr_shock.qc)
     if(pop)
     {
         VR_Decap_After(t);
@@ -2407,6 +2407,10 @@ float(vector xAt, float xDamage, float xRadius, entity xSkip) VR_LGWater_Spread 
             {
                 dprint(sprintf("lgwater: %s takes %g at %g units\n", head.classname, damage, vlen(mid - xAt)));
                 particle2(mid, '0 0 0', QVR_PARTICLE_PRESET_SPARKS, 6);
+                if((head.flags & FL_CLIENT) && head.health > 0 && !head.wetsuit_finished)
+                {
+                    playershock(head, damage, mid); // (arcs over that player's arms and body)
+                }
                 T_Damage(head, self, self, damage);
                 hurt = hurt + 1;
             }
@@ -3534,12 +3538,11 @@ void() CheatCommand =
     self.ammo_shells = 100;
     self.ammo_cells = 200;
 
-    // ROGUE
-    if(VR_Pack_Rogue())
+    // ROGUE (each where its projectile is there)
     {
-        self.ammo_lava_nails = 200;
+        self.ammo_lava_nails = VR_Pack_AmmoAvailable(AID_LAVA_NAILS) ? 200 : 0;
         self.ammo_multi_rockets = 100;
-        self.ammo_plasma = 100;
+        self.ammo_plasma = VR_Pack_AmmoAvailable(AID_PLASMA) ? 100 : 0;
     }
 
     VR_WeaponUtil_EntAddWeapon(self, WID_GRAPPLE);
@@ -3851,7 +3854,7 @@ void(float xHand) ToggleSecondaryAmmo =
     float weapon = VRGetWeapon(xHand);
 
     if(!WeaponSupportsSecondaryAmmoFlag(weapon) ||
-       (!VR_Pack_Rogue() && weapon != WID_SWORD))
+       (weapon != WID_SWORD && !VR_Pack_WeaponFlags(weapon, QVR_WPNFLAG_USE_SECONDARY_AMMO))) // (its secondary's projectile not here)
     {
         return;
     }
@@ -5710,7 +5713,12 @@ void() forcegrabbable_touch =
                 dprint(sprintf("throw: %s fell on its thrower at %.0f u/s, %.2f s after the throw: %.1f damage\n",
                     self.classname, vlen(self.velocity), time - self.carry_letgo_time, adjDmg));
             }
+            float pop = VR_Decap_ThrownArm(other, self, thrower, adjDmg); // VR: a heavy blunt thing at the head pops it if it kills (vr_decap.qc)
             T_Damage(other, self, thrower, adjDmg);
+            if(pop)
+            {
+                VR_Decap_After(other);
+            }
             self.vr_fling_hit = time; // (not hit again as a flung prop as it bounces off: VR_FLING_REHIT)
         }
         // hit wall

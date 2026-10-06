@@ -520,6 +520,7 @@ WORLD_CALLDATA_BUFFER
 WORLD_INSTANCEDATA_BUFFER
 WORLD_VERTEX_BUFFER
 LIQUID_SWELL // QVR
+QVR_ZFIX_FUNCTION // QVR: gl_zfix's push back (vr_glsl.h)
 "layout(location=5) in vec3 in_surfacecentre; // QVR: BSP slipgate visual scaling pivot\n"
 "layout(location=4) in float in_swellpin; // QVR: the geometric waves' mesh (vr/vr_water.cpp); 0 elsewhere (unset)\n"
 "\n"
@@ -559,13 +560,8 @@ QVR_WORLD_VS_OUTPUTS // QVR: the world vertex shader's Quake VR outputs
 "		gl_Position = ViewProj * vec4(LiquidDisplace(out_pos, in_swellpin, LiquidKind(call.flags)), 1.0);\n"
 "	out_rim = in_swellpin; // QVR\n"
 "#endif\n"
-"#if REVERSED_Z\n"
-"	const float ZBIAS = -1./1024;\n"
-"#else\n"
-"	const float ZBIAS =  1./1024;\n"
-"#endif\n"
-"	if ((call.flags & CF_USE_POLYGON_OFFSET) != 0u)\n"
-"		gl_Position.z += ZBIAS;\n"
+"	if ((call.flags & CF_USE_POLYGON_OFFSET) != 0u)\n" // QVR: pushed back a fixed fraction of its distance (QVR_ZFIX)
+"		gl_Position.z = QVR_ZFixDepth(gl_Position.z, gl_Position.w);\n"
 "	out_uv = in_uv.xy;\n"
 "	out_lmuv = in_uv.zw;\n"
 "	out_depth = gl_Position.w;\n"
@@ -612,6 +608,20 @@ QVR_WORLD_VS_OUTPUTS // QVR: the world vertex shader's Quake VR outputs
 
 ////////////////////////////////////////////////////////////////
 
+// QVR: the opaque world's depth pre-pass with pixel depth offset (vr_parallax_depth_write; r_world.c): each pixel's
+// depth as far as its parallax hit can be (QVR_WORLD_DEPTH_FS_MAIN)
+static const char world_depth_fragment_shader[] =
+FRAMEDATA_BUFFER
+WORLD_CALLDATA_BUFFER
+PARALLAX_FUNCTIONS
+QVR_PARALLAX_DEPTH_OUT // PDO 1
+"\n"
+"layout(location=0) flat in uint in_flags;\n"
+"layout(location=2) in vec3 in_pos;\n"
+"layout(location=12) flat in float in_pdepth;\n"
+"\n"
+QVR_WORLD_DEPTH_FS_MAIN;
+
 static const char world_fragment_shader[] =
 "#if BINDLESS\n"
 "	#extension GL_ARB_bindless_texture : require\n"
@@ -656,8 +666,12 @@ QVR_WORLD_FS_INPUTS // QVR: the world fragment shader's Quake VR inputs
 OIT_OUTPUT (out_fragcolor)
 "\n"
 QVR_WORLD_FS_FUNCTIONS // QVR: detail, parallax, specular anti-aliasing, the baked light's bumps
+QVR_PARALLAX_DEPTH_OUT // QVR: pixel depth offset (vr_parallax_depth_write): PDO 1 in glprogs.world_pdo only (solid, not OIT)
 "void main()\n"
 "{\n"
+"#if QVR_PDO\n"
+"	gl_FragDepth = gl_FragCoord.z; // QVR: the surface's own, unless the parallax mapping's hit is further\n"
+"#endif\n"
 "#if " QS_STRINGIFY (SHOW_WORLD_NORMALS) "\n"
 "	out_fragcolor = vec4(0.5 + 0.5 * normalize(cross(dFdx(in_pos), dFdy(in_pos))), 0.75);\n"
 "	return;\n"
@@ -688,6 +702,10 @@ QVR_WORLD_FS_FUNCTIONS // QVR: detail, parallax, specular anti-aliasing, the bak
 "	bool parallax = in_pdepth > 0.; // the instance's depth: the world's, an item box's (vr_parallax_items)\n"
 "	if (parallax)\n"
 "		puv = ParallaxUV(NormalTex, uv, duvdx, duvdy, dpdx, dpdy, facing, in_pos - EyePos, in_pdepth, Parallax.z, in_uvclamp);\n"
+"#if QVR_PDO\n"
+"	if (ParallaxDist > 0. && Parallax2.w > 0.) // QVR: the hit's depth (bounded by the pre-pass's: glprogs.world_depth_pdo)\n"
+"		gl_FragDepth = ParallaxFragDepth(ViewProj, in_pos, normalize(in_pos - EyePos), ParallaxDist, (in_flags & CF_USE_POLYGON_OFFSET) != 0u);\n"
+"#endif\n"
 "#else\n"
 "	const bool parallax = false;\n" // QVR: no parallax mapping here
 "#endif\n"
@@ -868,6 +886,10 @@ QVR_WORLD_FS_ALPHA // QVR: alpha to coverage; the liquid's alpha and refraction
 "	out_fragcolor.rgb = floor(out_fragcolor.rgb * 255. + 0.5) * (1./255.);\n"
 "#elif DITHER == 0\n"
 "	out_fragcolor.rgb += SUPPRESS_BANDING() * ScreenDither;\n"
+"#endif\n"
+"#if QVR_PDO\n"
+"	if (Parallax2.w > 1.5) // QVR: vr_parallax_debug 1: red how deep below the surface its depth was written, of the full depth; blue the surface's own (no hit)\n"
+"		out_fragcolor.rgb = gl_FragDepth != gl_FragCoord.z ? vec3(0.15 + 0.85 * clamp(ParallaxDist * dot(facing, normalize(EyePos - in_pos)) / max(in_pdepth, 1e-3), 0., 1.), 0., 0.) : vec3(0., 0., 0.25);\n"
 "#endif\n"
 "}\n";
 

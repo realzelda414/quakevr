@@ -132,6 +132,7 @@ void VR_PushPortalLights (void);
 void VR_AliasShadowClip (void); // the alias depth program has just been bound
 void VR_PushMapLights (void);							// R_PushDlights, after the dynamic lights
 int VR_AliasBonePoses (const struct entity_s *e, const float **matrices); // bone count of an IK-posed skeletal entity (0: none), its 3x4 skinning matrices
+int VR_AliasShadowBonePoses (const struct entity_s *e, const float **matrices); // as VR_AliasBonePoses, for the shadow maps: your body with its head (vr_shadow_head)
 void VR_AliasWound (const struct entity_s *e, float out[4], float side[4]);	// instance: its wound mask (vr_wounds.cpp): layer + 1 (0 none; negative: -(layer + 1) in the fine masks), size in texels, time; side: vraliasinstance_t's woundside
 void VR_AliasWoundPaintSide (const struct entity_s *e, int side, float out[4]);	// R_PaintAliasWounds: its woundside, painting side `side` alone (-1: all of it)
 void VR_BrushWound (const struct entity_s *e, float wound[4], float box[4]);	// R_InitBModelInstance: a held prop's blood (vr_wounds.cpp): its box mask's layer + 1 (0 none), size in texels, opacity; its box's centre, 1 / its largest side
@@ -190,6 +191,7 @@ int VR_ExtMapsPrepare (const struct qmodel_s *mod, const char *texname, const un
 	int width, int height);									// Mod_LoadTextures, before the upload: 1 if the pack's maps fit this picture
 void VR_ExtMapsAttach (struct texture_s *tx, struct qmodel_s *mod, int glows); // ... after it: its maps loaded onto tx
 void VR_ExtMapsGreen (unsigned char *data, int width, int height, const char *name); // VR_MakeNormalMap: its green as ours (NORMALMAP_EXT)
+void VR_AnimSurfaces (struct qmodel_s *mod);				// Mod_LoadTextures, its animations sequenced: each frame's surface (texture_t surface)
 unsigned VR_ExtMapsCall (const struct texture_s *t, struct gltexture_s **normalmap, struct gltexture_s **spec,
 	struct gltexture_s **fullbright, float extmat[4]);		// R_AddBModelCall: the maps drawn; CF_SPECMAP if a specular map
 

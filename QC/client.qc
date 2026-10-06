@@ -30,6 +30,9 @@ void() SetChangeParms =
         return;
     }
 
+    // The authored MG1 hub starts each episode with fresh VR equipment.
+    if(MG1_Hub()) { SetNewParms(); return; }
+
     VR_HandGrenade_LevelEnd(); // an unarmed hand grenade in a hand: its rocket goes on with you (vr_grenade.qc)
 
     VR_ItemUtil_EntDelItem(self, IID_KEY1);
@@ -50,9 +53,9 @@ void() SetChangeParms =
 
     self.gravity = 1.0;
 
-    // Dopa Nightmare uses the authored 50 cap and half-cap transition floor.
+    // Dopa/Machine Nightmare use the authored 50 cap and half-cap transition floor.
     // Other campaigns keep VR's existing 100/50 carry bounds.
-    float carryHealthCap = ((cvar("vr_campaign") == 3) && (skill == 3) && !deathmatch) ? 50 : 100;
+    float carryHealthCap = ((cvar("vr_campaign") == 3 || cvar("vr_campaign") == 4) && (skill == 3) && !deathmatch) ? 50 : 100;
     if(self.health > carryHealthCap)
     {
         self.health = carryHealthCap;
@@ -198,7 +201,7 @@ void() SetNewParms =
         parm1 = IT_SHOTGUN | IT_AXE;
     }
 
-    parm2 = ((cvar("vr_campaign") == 3) && (skill == 3) && !deathmatch) ? 50 : 100;
+    parm2 = ((cvar("vr_campaign") == 3 || cvar("vr_campaign") == 4) && (skill == 3) && !deathmatch) ? 50 : 100;
     parm3 = 0;
     parm4 = 25;
     parm5 = 0;
@@ -233,7 +236,7 @@ void() SetNewParms =
     parm17 = 0;
 
     // ROGUE
-    if(VR_Pack_Rogue() && deathmatch && teamplay >= TEAM_CTF)
+    if(deathmatch && teamplay >= TEAM_CTF) // (the grapple is Quake VR's own)
     {
         parm18 = ROGUE_IT_GRAPPLE;
     }
@@ -282,6 +285,8 @@ void() SetNewParms =
 
 void() DecodeLevelParms =
 {
+    if(MGH_Active() && !self.MGH_reviving) SetNewParms();
+    if(MG1_Hub()) SetNewParms();
     if(VR_GameUtil_InTutorialMap())
     {
         SetNewParms();
@@ -308,12 +313,22 @@ void() DecodeLevelParms =
         SetNewParms(); // PGM - 01/29 change to have level 8 reset all your stuff.
 
     // Changing installations must not resurrect unavailable weapons or powerups from level parms.
-    if(!VR_Pack_Hipnotic())
-    {
-        parm1 = parm1 - (parm1 & (IT_MJOLNIR | IT_LASER_CANNON));
-        parm17 = parm17 - (parm17 & (HIP_IT_WETSUIT | HIP_IT_EMPATHY_SHIELDS | HIP_IT_HORN_OF_CONJURING | HIP_IT_PROXIMITY_GUN));
-    }
-    if(!VR_Pack_Rogue()) { parm18 = parm19 = parm20 = parm21 = 0; }
+    // (each item by whether its files are here: Quake VR's own weapons always are)
+    parm17 = VR_Pack_KeepBit(parm17, HIP_IT_WETSUIT, IID_WETSUIT);
+    parm17 = VR_Pack_KeepBit(parm17, HIP_IT_EMPATHY_SHIELDS, IID_EMPATHY_SHIELDS);
+    parm17 = VR_Pack_KeepBit(parm17, HIP_IT_HORN_OF_CONJURING, IID_HORN_OF_CONJURING);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_LAVA_NAILGUN, IID_LAVA_NAILGUN);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_LAVA_SUPER_NAILGUN, IID_LAVA_SUPER_NAILGUN);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_LAVA_NAILS, IID_LAVA_NAILS);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_MULTI_ROCKET, IID_MULTI_ROCKET);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_PLASMA_GUN, IID_PLASMA_GUN);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_PLASMA_AMMO, IID_PLASMA_AMMO);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_SHIELD, IID_SHIELD);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_ANTIGRAV, IID_ANTIGRAV);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_EARTHQUAKE, IID_EARTHQUAKE);
+    parm18 = VR_Pack_KeepBit(parm18, ROGUE_IT_V_SPHERE, IID_V_SPHERE);
+    if(!VR_Pack_AmmoAvailable(AID_LAVA_NAILS)) { parm19 = 0; }
+    if(!VR_Pack_AmmoAvailable(AID_PLASMA)) { parm21 = 0; }
     if(!VR_Pack_WeaponAvailable(parm8)) { parm8 = WID_FIST; }
     parm23 = VR_Pack_WeaponFlags(parm8, parm23);
     if(!VR_Pack_WeaponAvailable(parm10)) { parm10 = WID_FIST; }
@@ -457,13 +472,14 @@ void() GotoNextMap =
     }
     else
     {
-        changelevel(nextmap);
+        changelevel(MGH_Active() ? MGH_NextArena() : nextmap);
     }
 };
 
 
 void() ExitIntermission =
 {
+    if(MGH_Active()) { GotoNextMap(); return; }
     // skip any text in deathmatch
     if(deathmatch)
     {
@@ -484,7 +500,7 @@ void() ExitIntermission =
             MG_intermissiontext = "";
             return;
         }
-        if(cvar("vr_campaign") == 3 && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
+        if((cvar("vr_campaign") == 3 || cvar("vr_campaign") == 4) && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
         if(world.model == "maps/e1m7.bsp")
         {
             WriteByte(MSG_ALL, SVC_CDTRACK);
@@ -578,17 +594,17 @@ void() ExitIntermission =
 
     if(intermission_running == 3)
     {
-        if(cvar("vr_campaign") == 3 && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
+        if((cvar("vr_campaign") == 3 || cvar("vr_campaign") == 4) && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
         if(!cvar_hget(cvarh_registered))
         {    // shareware episode has been completed, go to sell screen
             WriteByte(MSG_ALL, SVC_SELLSCREEN);
             return;
         }
 
-        if((serverflags&15) == 15)
+        if((serverflags & (MG1_Campaign() ? 31 : 15)) == (MG1_Campaign() ? 31 : 15))
         {
             WriteByte(MSG_ALL, SVC_FINALE);
-            WriteString(MSG_ALL, "Now, you have all four Runes. You sense\ntremendous invisible forces moving to\nunseal ancient barriers. Shub-Niggurath\nhad hoped to use the Runes Herself to\nclear off the Earth, but now instead,\nyou will use them to enter her home and\nconfront her as an avatar of avenging\nEarth-life. If you defeat her, you will\nbe remembered forever as the savior of\nthe planet. If she conquers, it will be\nas if you had never been born.");
+            WriteString(MSG_ALL, MG1_Campaign() ? "$qc_mg1_endtext_all_runes" : "Now, you have all four Runes. You sense\ntremendous invisible forces moving to\nunseal ancient barriers. Shub-Niggurath\nhad hoped to use the Runes Herself to\nclear off the Earth, but now instead,\nyou will use them to enter her home and\nconfront her as an avatar of avenging\nEarth-life. If you defeat her, you will\nbe remembered forever as the savior of\nthe planet. If she conquers, it will be\nas if you had never been born.");
             return;
         }
 
@@ -715,6 +731,12 @@ void() changelevel_touch =
 
     nextmap = self.map;
     if(MG_WorldCampaign()) MG_intermissiontext = self.endtext;
+    // Dimension of the Machine finished: its runes cleared, as upstream (the hub's final gate closed again: a coop game,
+    // which keeps serverflags, would otherwise start with it open).
+    if(MG1_Campaign() && world.model == "maps/mgend.bsp")
+    {
+        serverflags = 0;
+    }
 
     SUB_UseTargets();
 
@@ -804,6 +826,7 @@ Player entered the suicide command
 */
 void() ClientKill =
 {
+    if(MGH_Active()) { self.health=0; PlayerDie(); return; }
     if((intermission_running)&&((coop)||(deathmatch)))  // not allowed during intermission
         return;
 
@@ -860,6 +883,7 @@ Returns the entity to spawn at
 entity() SelectSpawnPoint =
 {
     entity spot;
+    if(MGH_Active()) { spot=MGH_SelectSpawn(); if(spot) return spot; }
     entity thing;
     float  pcount;
 
@@ -971,6 +995,11 @@ entity() SelectSpawnPoint =
         }
     }
 
+    if(MG1_Campaign()) {
+        spot = MG1_ReturnSpawn();
+        if(spot) return spot;
+    }
+
     if(serverflags)
     {    // return with a rune to start
         spot = find(world, classname, "info_player_start2");
@@ -1011,7 +1040,7 @@ void() PutClientInServer =
     self.solid = SOLID_SLIDEBOX;
     self.movetype = MOVETYPE_WALK;
     self.show_hostile = 0;
-    self.max_health = ((cvar("vr_campaign") == 3) && (skill == 3) && !deathmatch) ? 50 : 100;
+    self.max_health = ((cvar("vr_campaign") == 3 || cvar("vr_campaign") == 4) && (skill == 3) && !deathmatch) ? 50 : 100;
     self.flags = FL_CLIENT;
     self.air_finished = time + VR_AirSupply();
     self.dmg = 2;           // initial water damage
@@ -1079,7 +1108,7 @@ void() PutClientInServer =
     // oh, this is a hack!
 
     modelindex_hammer = 0;
-    if(VR_Pack_Hipnotic())
+    if(vr_have_playham) // (Hipnotic's third-person player holding Mjolnir: the weapon itself is Quake VR's)
     {
         setmodel(self, "progs/playham.mdl");
         modelindex_hammer = self.modelindex;
@@ -1144,6 +1173,7 @@ void() PutClientInServer =
     {
         readytime = time + 0.5;
     }
+    if(MGH_Active()) { MGH_horde_set_keys(self); MGH_ResetHunger(self); }
 };
 
 void() SpawnAllAmmoBoxWeapons =
@@ -1346,6 +1376,8 @@ void() PlayerDeathThink =
     self.button0 = 0;
     self.button1 = 0;
     self.button2 = 0;
+    // MG1 Horde (official client.qc): the same release-then-press gate, then a team wipe restarts the arena.
+    if(MGH_Active()) { MGH_DeathThink(); return; }
     respawn();
 };
 
@@ -2149,6 +2181,9 @@ void() ClientDisconnect =
         return;
     // if the level end trigger has been activated, just return
     // since they aren't *really* leaving
+
+    // MG1 Horde (official client.qc): a leaving player no longer counts as alive for waves, targets or revival.
+    if(MGH_Active()) self.health = 0;
 
     // let everyone else know
     bprint(self.netname);

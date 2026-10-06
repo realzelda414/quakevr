@@ -46,6 +46,8 @@ vr_mg_rope.qc
 vr_mg_corpses.qc
 vr_mg_world.qc
 vr_mg_triggers.qc
+vr_mg_hub.qc
+vr_mg_horde.qc
 // The grapple after vr_carry.qc and vr_walltorch.qc: it reads their fields.
 vr_grapple.qc
 // Grunts' and enforcers' shoves (ai.qc calls it; the monsters' files use it).
@@ -64,13 +66,17 @@ weapons.qc
 vr_chainsaw.qc
 // Decapitation after the chainsaw (its bar) and weapons.qc (positional damage's head zone).
 vr_decap.qc
+vr_limbs.qc
+vr_limbs_test.qc
 vr_enemyguns.qc
 vr_crowbar.qc
+vr_pickup_test.qc
 vr_axestick.qc
 vr_weaponinst_test.qc
 vr_liquids.qc
 vr_wounds.qc
 vr_burning.qc
+vr_shock.qc
 vr_smallgibs_test.qc
 world.qc
 vr_dummy.qc
@@ -78,6 +84,8 @@ vr_motion.qc
 vr_highlights.qc
 vr_mg_world_test.qc
 vr_mg_trigger_test.qc
+vr_mg_hub_test.qc
+vr_mg_horde_test.qc
 
 orig_mon_boss.qc
 orig_mon_demon.qc
@@ -202,3 +210,4 @@ waypoints/map_dm3.qc
 waypoints/map_dm4.qc
 waypoints/map_dm5.qc
 waypoints/map_dm6.qc
+vr_dummy_types.qc

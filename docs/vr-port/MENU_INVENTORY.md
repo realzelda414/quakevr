@@ -806,6 +806,7 @@ gameplay rows such as `vr_timescale` (Slow Motion) and the `vr_hull_*`/`vr_gamep
         - Corpses Burn → `vr_burn_corpses`
         - Corpse Burn Time → `vr_burn_corpse_time`
         - Corpse Burn Damage → `vr_burn_corpse_damage`
+        - Smoke After Flames → `vr_smoulder_burn_time`
         - — What Sets Things on Fire —
         - Torch Touch → `vr_burn_touch`
         - Lava Nails → `vr_burn_lava_nails`
@@ -1545,6 +1546,16 @@ gameplay rows such as `vr_timescale` (Slow Motion) and the `vr_hull_*`/`vr_gamep
       - Your Burns' Relief → `vr_wounds_bump_burns`
       - Your Wounds' Depth → `vr_wounds_bump_blood`
       - Blood Opacity → `vr_wounds_blood_alpha`
+      - — Lightning Shock —
+      - Lightning Shock → `vr_shock_death`
+      - Arcs on the Living → `vr_shock_living`
+      - Lightning Shock Duration → `vr_shock_death_time`
+      - Convulsions → `vr_shock_seizure`
+      - Arcs on Bodies → `vr_shock_arcs`
+      - Burn Marks → `vr_shock_burns`
+      - Smoke After Lightning → `vr_smoulder_time`
+      - Smouldering Smoke → `vr_smoulder`
+      - Smoke Opacity → `vr_smoulder_alpha`
       - — Your Wounds —
       - Arm Drip Rate → `vr_body_blood`
       - Drop Size → `vr_body_blood_amount`
@@ -1584,9 +1595,13 @@ gameplay rows such as `vr_timescale` (Slow Motion) and the `vr_hull_*`/`vr_gamep
       - — Dying Bodies —
       - Hit While Dying → `vr_corpse_dying`
       - — Training Dummy —
+      - Dummy Enemy → `vr_dummy_type`
       - Dummy Bleeds → `vr_dummy_gore`
-      - Dummy Gibs → `vr_dummy_gib`
+      - Dummy Dies → `vr_dummy_gib`
       - Dummy Stands Again → `vr_dummy_gib_respawn`
+      - Dummy Health → `vr_dummy_health`
+      - Dummy Health Refills → `vr_dummy_regen`
+      - Dummy Health Bar → `vr_dummy_healthbar`
       - — Marks —
       - Decals → `vr_decals`
       - Max Decals → `vr_decal_max`
@@ -2345,6 +2360,9 @@ gameplay rows such as `vr_timescale` (Slow Motion) and the `vr_hull_*`/`vr_gamep
         - Parallax → `vr_parallax`
         - Parallax Depth → `vr_parallax_depth`
         - Parallax Distance → `vr_parallax_distance`
+        - Parallax Refinement → `vr_parallax_refine`
+        - Parallax Side Fade → `vr_parallax_grazing`
+        - Parallax Depth Write → `vr_parallax_depth_write`
         - Parallax Items Depth → `vr_parallax_items`
         - Parallax Models Depth → `vr_parallax_models`
         - Parallax Depth: Authored Models → `vr_parallax_authored`
@@ -2838,6 +2856,8 @@ gameplay rows such as `vr_timescale` (Slow Motion) and the `vr_hull_*`/`vr_gamep
         - [cmd] Eject a Casing → `vr_shells_eject`
         - [cmd] Lightning Shock → `vr_shock_test 0`
         - [cmd] Electrified Water → `vr_shock_test 1`
+        - [cmd] Smoke Off the Bodies Near → `vr_smoulder_test 10`
+        - [cmd] Smouldering Bodies → `vr_smoulder_info`
         - [cmd] Mjolnir's Lightning → `impulse 215`
         - — Small Gibs Tests (developer 1 for each hit) —
         - [cmd] A Grunt Ahead → `vr_test_spawn 0; vr_test_spawn_dist 96; impulse 241`
@@ -3723,7 +3743,7 @@ see `Misc/quakevr/pvs/FINDINGS.md` for the corrected measurements.
 | `vr_flashlight_brightness` | `1` | yes | C | graphics | Flashlight | 3 | 0 |  | 876 |
 | `vr_flashlight_range` | `1000` | yes | C | graphics | Flashlight | 1 | 0 |  | 877 |
 | `vr_flashlight_shadows` | `1` | yes | C | graphics | Flashlight | 1 | 0 |  | 878 |
-| `vr_flashlight_cord` | `3` | yes | C | graphics | Flashlight | 5 | 0 |  | 879 |
+| `vr_flashlight_cord` | `1` | yes | C | graphics | Flashlight | 5 | 0 |  | 879 |
 | `vr_flashlight_beam` | `0.35` | yes | C | graphics | Flashlight | 1 | 0 | vr_defaults.cfg | 880 |
 | `vr_flashlight_beam_quality` | `1` | yes | C | graphics | Flashlight | 1 | 0 |  | 881 |
 | `vr_flashlight_tilt` | `8` | yes | C | graphics | Flashlight | 1 | 0 | vr_defaults.cfg | 882 |

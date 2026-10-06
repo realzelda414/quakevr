@@ -455,6 +455,14 @@ struct State
     // the thumb's side) or the overhead one (true: out of the little finger's side). Set as it is taken (chooseGrip).
     bool overhead[2]{};
     double flipAt[2]{-10.0, -10.0}; // vr_gametime each hand's last flip began (its spin: flipTime)
+    // The wrist flick (flickFlip): each hand's forward and up on the body at the last frame (flickTime, realtime; <0:
+    // none), whether a flick may count (re-armed once the wrist turns slower than half vr_flashlight_flick_speed), and
+    // the realtime of the last flick that counted (vr_flashlight_flick_cooldown).
+    glm::vec3 flickFwd[2]{glm::vec3{0.f}, glm::vec3{0.f}};
+    glm::vec3 flickUp[2]{glm::vec3{0.f}, glm::vec3{0.f}};
+    double flickTime{-1.0};
+    bool flickArmed[2]{true, true};
+    double flickAt[2]{-10.0, -10.0};
 
     // Round 21, what a deliberate press is (intent): per hand, for the grip [0] and the trigger [1], since when the
     // analog value has been under openBelow (-1: it is not) and when it last was; and until when the hand counts as
@@ -1439,6 +1447,84 @@ void flip(int hand)
     haptic(hand, 0.025f, 0.3f);
 }
 
+// Once a frame (voice note vrfiringrange 17:28): a sharp flick of the wrist up or down turns the torch held in a hand
+// over, as its B/Y does (flip), where B/Y would (away from the other hand's gun and the head). The wrist's turn is
+// measured from frame to frame on the body (the play space's turn taken out, as bodyLocal), in the player's real time:
+// a flick is the hand turning about its own right (pitch: up or down) at vr_flashlight_flick_speed or more, that turn
+// most of the hand's whole turn (a twist of the wrist or a wave to the side doesn't count), the hand itself slower than
+// vr_flashlight_flick_max_move (a swing or a punch never flicks). One flick per vr_flashlight_flick_cooldown, and the
+// wrist must slow below half the speed before the next (the wrist coming back is not a second flick).
+void flickFlip(const hands::State& s)
+{
+    const double now = realtime;
+    const float dt = static_cast<float>(now - st.flickTime);
+    const bool have = s.valid && st.flickTime >= 0.0 && dt > 1e-4f && dt <= 0.1f;
+    const float speed = za::max(1.f, vr_flashlight_flick_speed.value);
+    for(int hand = 0; hand < 2; hand++)
+    {
+        glm::vec3 fwd, right, up;
+        hands::angleVectors(s.rot[hand], fwd, right, up);
+        fwd = hands::rotateYaw(fwd, -s.turnYaw);
+        right = hands::rotateYaw(right, -s.turnYaw);
+        up = hands::rotateYaw(up, -s.turnYaw);
+        const glm::vec3 lastFwd = st.flickFwd[hand], lastUp = st.flickUp[hand];
+        st.flickFwd[hand] = fwd;
+        st.flickUp[hand] = up;
+        if(!have)
+        {
+            continue;
+        }
+        // The turn since the last frame: its axis times its angle (radians), on the body.
+        const glm::mat3 before{lastFwd, glm::cross(lastUp, lastFwd), lastUp};
+        const glm::mat3 after{fwd, glm::cross(up, fwd), up};
+        glm::quat q = glm::quat_cast(after * glm::transpose(before));
+        if(q.w < 0.f)
+        {
+            q = -q;
+        }
+        const float angle = 2.f * glm::acos(za::clamp(q.w, -1.f, 1.f));
+        const glm::vec3 axis{q.x, q.y, q.z};
+        const float axisLen = glm::length(axis);
+        const glm::vec3 turn = axisLen > 1e-6f ? axis * (angle / axisLen) : glm::vec3{0.f};
+        const float pitchRate = glm::degrees(glm::dot(turn, right)) / dt; // degrees a second about the hand's right (<0: up)
+        const float totalRate = glm::degrees(glm::length(turn)) / dt;
+        const float rate = za::fabs(pitchRate);
+        const bool holding = st.mode == Mode::Held && st.holder == hand;
+        if(holding && vr_flashlight_flick_debug.value >= 2.f)
+        {
+            Con_Printf("flashlight flick: %s hand pitch %+.0f deg/s of %.0f, moving %.2f m/s\n",
+                hand == HAND_MAIN ? "main" : "off", pitchRate, totalRate, realSpeed(s, hand));
+        }
+        if(rate < 0.5f * speed)
+        {
+            st.flickArmed[hand] = true;
+        }
+        if(rate < speed || !st.flickArmed[hand] || !holding || vr_flashlight_flick.value == 0.f)
+        {
+            continue;
+        }
+        st.flickArmed[hand] = false; // this turn is judged once, whatever comes of it
+        const char* refused = angle > glm::radians(120.f)                                ? "a jump (tracking)"
+                              : rate < 0.7f * totalRate                                    ? "not up or down (a twist or a wave)"
+                              : realSpeed(s, hand) > vr_flashlight_flick_max_move.value     ? "the hand moving (a swing)"
+                              : now - st.flickAt[hand] < vr_flashlight_flick_cooldown.value ? "too soon after the last"
+                              : st.nearGun || st.nearHead                                   ? "at a gun or the head"
+                                                                                            : nullptr;
+        if(vr_flashlight_flick_debug.value)
+        {
+            Con_Printf("flashlight flick: %s hand %s at %+.0f deg/s (of %.0f), moving %.2f m/s: %s\n",
+                hand == HAND_MAIN ? "main" : "off", pitchRate < 0.f ? "up" : "down", pitchRate, totalRate,
+                realSpeed(s, hand), refused ? refused : "flipped");
+        }
+        if(!refused)
+        {
+            st.flickAt[hand] = now;
+            flip(hand);
+        }
+    }
+    st.flickTime = s.valid ? now : -1.0;
+}
+
 void clipOn(int gunHand, const view::WeaponMount& m)
 {
     const int hand = st.holder;
@@ -1725,42 +1811,24 @@ void lightBeam(const Pose& p)
     shapeBeam(p, lens, dir, st.beamLength, warm * za::max(0.f, vr_flashlight_brightness.value));
 }
 
-// The retracting cord from the clip on the belt to the lamp's tail, while it is off the belt (vr_flashlight_cord): a
-// coiled cord, as an old telephone's (vr_coil.cpp; 2: a plain cable; 3: a rusty iron chain, round 21: its links along
-// the same line, paid out of the clip, the default; 4: that chain low-poly, chunky faceted links), springy and sagging, swinging as the hand moves; drawn lit in the opaque scene
-// (drawOpaque), depth-tested. It leaves the clip where the torch hung (down along the stored torch) and goes into the
-// tail cap.
+// The retracting cord from the clip on the belt to the lamp's tail, while it is off the belt (vr_flashlight_cord 1): a
+// rusty low-poly iron chain (vr_coil.cpp; round 21, NOTES.md start_2026-10-03_02-19-12: Quake's look), its links paid
+// out of the clip, springy and sagging, swinging as the hand moves; drawn lit in the opaque scene (drawOpaque),
+// depth-tested. It leaves the clip where the torch hung (down along the stored torch) and goes into the tail cap.
 coil::Cord cord;
 
 void updateCord(const Pose& mount, const Pose& lamp)
 {
+    // A coiled cord's relaxed length; chunky links, each a hexagon of 4 mm square iron bar, 1.6 cm by 0.8 cm inside, its
+    // faces flat-shaded; dull iron rusting.
     coil::Style style;
-    style.albedo = glm::vec3{0.14f, 0.14f, 0.135f};
-    if(vr_flashlight_cord.value >= 3.f)
-    {
-        // The chain: the coil's line (its relaxed length kept), links of 3.2 mm iron wire 1.3 cm by 0.75 cm inside,
-        // dull iron rusting.
-        style.length = 0.243f;
-        style.chain = true;
-        style.turns = 0;
-        style.wireRadius = 0.0016f;
-        style.albedo = glm::vec3{0.2f, 0.19f, 0.175f};
-        style.rust = glm::vec3{0.3f, 0.13f, 0.05f};
-        if(vr_flashlight_cord.value >= 4.f)
-        {
-            // Low-poly (round 21, NOTES.md start_2026-10-03_02-19-12: Quake's look): fewer, chunkier links, each a
-            // hexagon of 4 mm square iron bar, 1.6 cm by 0.8 cm inside, its faces flat-shaded.
-            style.lowPoly = true;
-            style.wireRadius = 0.002f;
-            style.linkLength = 0.016f;
-            style.linkWidth = 0.008f;
-        }
-    }
-    else if(vr_flashlight_cord.value >= 2.f)
-    {
-        style.turns = 0;
-        style.wireRadius = 0.002f;
-    }
+    style.length = 0.243f;
+    style.chain = true;
+    style.wireRadius = 0.002f;
+    style.linkLength = 0.016f;
+    style.linkWidth = 0.008f;
+    style.albedo = glm::vec3{0.2f, 0.19f, 0.175f};
+    style.rust = glm::vec3{0.3f, 0.13f, 0.05f};
     cord.update(modelPointAt(mount, shape().cap), glm::normalize(mount.rot * glm::vec3{1.f, 0.f, 0.f}),
         modelPointAt(lamp, shape().cap), glm::normalize(lamp.rot * glm::vec3{-1.f, 0.f, 0.f}), style);
 }
@@ -2661,6 +2729,14 @@ bool button(int hand, Button b, bool pressed)
         startLate(s, hand);
     }
     return false;
+}
+
+void flicks()
+{
+    if(enabled() && key_dest == key_game && cl.stats[STAT_HEALTH] > 0 && !cl.intermission)
+    {
+        flickFlip(hands::current());
+    }
 }
 
 void lateGrips()

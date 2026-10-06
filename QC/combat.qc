@@ -96,6 +96,9 @@ float(entity targ, entity inflictor) CanDamage =
 };
 
 
+// The firing range's training dummy that died as the grunt it stands for (vr_dummy.qc, vr_dummy_gib): not counted, no loot.
+.float vr_dummy_dead;
+
 /*
 ============
 Killed
@@ -107,6 +110,13 @@ void(entity targ, entity attacker) Killed =
 
     oself = self;
     self = targ;
+    // VR: the firing range's training dummy killed by what passed by its own report (VR_Dummy_Hit; a zombie it stands as
+    // beheaded: vr_decap.qc): it dies as its enemy with Dummy Dies, else it stands, unhurt (vr_dummy.qc).
+    if(VR_IsDummy(self) && !VR_Dummy_Killed(self))
+    {
+        self = oself;
+        return;
+    }
     targ.vr_ai_gate = 0; // (a dead monster's, its head's or its gibs': no gate route left for portal tosses)
 
     if(self.health < -99)
@@ -132,7 +142,7 @@ void(entity targ, entity attacker) Killed =
     self.enemy = attacker;
 
 // bump the monster counter
-    if(self.flags & FL_MONSTER)
+    if((self.flags & FL_MONSTER) && !self.vr_dummy_dead && (!MGH_Active() || self.classname != "monster_zombie"))
     {
         killed_monsters = killed_monsters + 1;
         WriteByte(MSG_ALL, SVC_KILLEDMONSTER);
@@ -149,11 +159,13 @@ void(entity targ, entity attacker) Killed =
     ClientObituary(self, attacker);
 
     self.takedamage = DAMAGE_NO;
+    MGH_Kill(attacker);
     self.touch = SUB_Null;
 
     monster_death_use();
     VR_Corpse_DieWhole(self); // VR: never gibbed (vr_corpse_nogib 2: testing ragdolls with explosions)
     VR_Decap_Killed(self); // VR: beheaded by the blow (vr_decap.qc): its ragdoll headless at once, its head flying; dies whole
+    VR_Shock_Killed(self); // VR: a living one's lasting shock (shorter) carried on as a body's (vr_shock.qc)
     float kdDown = self.vr_knockdown == 1; // VR: knocked down (vr_knockdown.qc): already a ragdoll
     float kdModel = self.modelindex;
     self.vr_knockdown = 0;
@@ -211,7 +223,17 @@ void(entity targ, entity attacker) Killed =
 
 // Decapitation (vr_decap.qc): its head cut off (its ragdoll headless; gibbed, no head thrown); the blows that cut it.
 .float vr_headless;
+.float vr_limbcut; // its ragdoll's bones cut off (bits; the engine sets it, vr_box3d.cpp cutLimb): a saved game's made so again (vr_limbs.qc)
 void(entity e) VR_Decap_Killed;
+// Limb gore (vr_limbs.qc).
+float vr_decap_limb;
+vector vr_limb_blast_at;
+entity vr_limb_blast_by;
+float vr_limb_blast_time;
+float(entity e, entity by, vector xVel, float xHow, float xBone, float xLive) VR_Limb_Cut;
+float(entity e, float xLive) VR_Limb_BlastPops;
+void(float dm) VR_Limb_GibAll;
+float() VR_Limb_GibsWanted;
 float(entity targ, entity attacker, float xDamage) VR_Decap_Blow;
 void(entity targ) VR_Decap_After;
 
@@ -242,11 +264,17 @@ float QVR_DECAP_SHOTGUN = 4;   // a shotgun blast
 float QVR_DECAP_SSG = 5;       // a super shotgun blast
 float QVR_DECAP_LIGHTNING = 6; // a lightning gun bolt
 float vr_decap_weapon;
+float vr_decap_pellets; // the blast's pellets fired (FireBulletsImpl; Head pop chance: the share at the head)
+vector vr_decap_src;    // and where from
 void(entity e, float xDamage, vector xAt, vector xDir) VR_Decap_Pellet;
 float(entity targ) VR_Decap_BlastArm;
 float(entity targ, vector xAt, vector xDir, float xDamage) VR_Decap_BoltArm;
 float(entity m, entity xAxe) VR_Decap_Thrown;
+float(entity targ, entity xThing, entity by, float xDamage) VR_Decap_ThrownArm;
+float(entity targ, entity inflictor, entity attacker, float xDamage) VR_Decap_QuadArm;
+float(entity e) VR_Decap_Roll;
 void() VR_Decap_TestFrame;
+void() VR_Limb_TestFrame;
 void() VR_Decap_ZombieDie;
 
 // The monsters' death code (their th_die), to know what gibs they make.
@@ -318,9 +346,9 @@ float(entity e) VR_Corpse_Parts =
         vr_corpse_healthh = e.th_die == knight_die ? cvarh_vr_corpse_health_knight : cvarh_vr_corpse_health_hellknight;
         if(e.spawnflags & 2) // a statue
         {
-            vr_corpse_gib1 = "progs/statgib1.mdl";
-            vr_corpse_gib2 = "progs/statgib2.mdl";
-            vr_corpse_gib3 = "progs/statgib3.mdl";
+            vr_corpse_gib1 = VR_StatueFile("progs/statgib1.mdl", "progs/vr_rock1.mdl");
+            vr_corpse_gib2 = VR_StatueFile("progs/statgib2.mdl", "progs/vr_rock2.mdl");
+            vr_corpse_gib3 = VR_StatueFile("progs/statgib3.mdl", "progs/vr_rock3.mdl");
         }
     }
     else if(e.th_die == shalrath_die)
@@ -647,13 +675,26 @@ float(entity targ, entity inflictor, entity attacker, float damage) VR_Corpse_Da
 
     // A headshot on a corpse pops its head, leaving the physical body in place.
     // Use the same weapon toggles and head-share test as a living killing blow.
-    if(vr_decap_ent == targ && vr_decap_time == time && !targ.vr_headless)
+    // A shot at a corpse's limb pops it the same way (Limb gore, vr_limbs.qc: vr_decap_limb its joint).
+    if(vr_decap_ent == targ && vr_decap_time == time && (vr_decap_limb >= 0 || !targ.vr_headless))
     {
         vr_decap_ent = world;
-        if(VR_Decap_Cut(targ, vr_decap_by, vr_decap_vel, vr_decap_how))
+        if(vr_decap_limb >= 0)
+        {
+            if(VR_Decap_Roll(targ) && VR_Limb_Cut(targ, vr_decap_by, vr_decap_vel, vr_decap_how, vr_decap_limb, FALSE))
+            {
+                return TRUE;
+            }
+        }
+        else if(VR_Decap_Roll(targ) && VR_Decap_Cut(targ, vr_decap_by, vr_decap_vel, vr_decap_how))
         {
             return TRUE;
         }
+    }
+    // An explosion pops a corpse's limbs near it by chance (vr_limbs_blast; vr_limbs.qc).
+    if(vr_hitkind == QVR_HITKIND_SPLASH)
+    {
+        VR_Limb_BlastPops(targ, FALSE);
     }
 
     VR_SmallGib_Hit(targ, inflictor, attacker, damage); // (the chainsaw always; Quad always)
@@ -728,6 +769,7 @@ void(entity c, entity inflictor, entity attacker, float damage) VR_Corpse_Gib =
     else
     {
         VR_SmallGib_Gibbed(dm); // (ThrowHead's, with a head)
+        VR_Limb_GibAll(dm); // (and its own limbs: vr_gib_limbs, vr_limbs.qc)
         self.solid = SOLID_NOT;
         self.model = string_null;
         self.modelindex = 0;
@@ -1380,11 +1422,11 @@ float(entity targ, entity inflictor, entity attacker, float damage, float isVRMe
     VR_SmallGib_Hit(targ, inflictor, attacker, damage); // VR: small gibs torn out (vr_smallgibs.qc)
     VR_Wound_Hit(targ, inflictor, attacker, take); // VR: painted on its model (vr_wounds.qc)
 
-    // VR: the firing range's training dummy reports the hit and takes no harm (vr_dummy.qc; gibbed, with vr_dummy_gib,
-    // by what would gib a grunt).
-    if(targ.classname == "vr_dummy")
+    // VR: the firing range's training dummy reports the hit and takes no harm (vr_dummy.qc); with vr_dummy_gib, a blow
+    // that would kill a grunt makes it the grunt it stands for, and the blow is dealt to it as to one: it dies, is
+    // beheaded, has its head popped or is gibbed as a grunt is.
+    if(VR_IsDummy(targ) && !VR_Dummy_Hit(targ, inflictor, attacker, damage, isVRMelee))
     {
-        VR_Dummy_Hit(targ, inflictor, attacker, damage, isVRMelee);
         return TRUE;
     }
 
@@ -2061,7 +2103,12 @@ float(entity targ, entity inflictor, entity attacker, float damage) T_Damage =
 {
     float parried = VR_Parry(targ, inflictor, attacker, damage);
     float corpse = targ.vr_corpse == 2 || targ.vr_corpse_dying;
+    float qpop = VR_Decap_QuadArm(targ, inflictor, attacker, parried); // VR: with Quad, any headshot kill pops (vr_decap.qc)
     float r = T_DamageImpl(targ, inflictor, attacker, parried, 0);
+    if(qpop)
+    {
+        VR_Decap_After(targ);
+    }
     if(cvar_hget(cvarh_vr_debug_shots) && (attacker.flags & FL_CLIENT) && targ != attacker)
     {
         dprint(sprintf("damage: %s %g by %s (part %g at %v), health %g\n", targ.classname, parried, inflictor.classname,
@@ -2189,6 +2236,9 @@ void(entity inflictor, entity attacker, float damage, entity ignore) T_RadiusDam
     vector    org;
 
     IsExplosionDamage = 1;
+    vr_limb_blast_at = inflictor.origin; // VR: the limbs near it may pop (vr_limbs.qc, vr_limbs_blast)
+    vr_limb_blast_by = attacker;
+    vr_limb_blast_time = time;
     float hlKills = vr_hl_kills; // VR: the highlight log: the kills it makes (vr_highlights.qc)
     vr_hl_blast_depth = vr_hl_blast_depth + 1;
 

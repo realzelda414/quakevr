@@ -264,7 +264,7 @@ void() door_touch =
                 centerprint(other, "You need the silver runekey");
                 sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM);
             }
-            else if(world.worldtype == 0)
+            else if((world.worldtype == 0 || world.worldtype == 3))
             {
                 centerprint(other, "You need the silver key");
                 sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM);
@@ -282,7 +282,7 @@ void() door_touch =
                 centerprint(other, "You need the gold runekey");
                 sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM);
             }
-            else if(world.worldtype == 0)
+            else if((world.worldtype == 0 || world.worldtype == 3))
             {
                 centerprint(other, "You need the gold key");
                 sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM);
@@ -291,7 +291,8 @@ void() door_touch =
         return;
     }
 
-    VR_ItemUtil_EntDelItem(other, self.vr_itemId);
+    if(MGH_Active()) MGH_horde_key_spend(self.vr_itemId == IID_KEY1 ? IT_KEY1 : IT_KEY2);
+    else VR_ItemUtil_EntDelItem(other, self.vr_itemId);
     self.touch = SUB_Null;
 
     if(self.enemy)
@@ -487,7 +488,7 @@ void() func_door =
 {
     if(MG_MonsterInhibited()) return;
     float mgExplicitMove = MG_WorldCampaign() && self.movedir != '0 0 0';
-    if(world.worldtype == 0)
+    if((world.worldtype == 0 || world.worldtype == 3))
     {
         precache_sound("doors/medtry.wav");
         precache_sound("doors/meduse.wav");

@@ -5,14 +5,16 @@
 //
 // The API (measured, 2026-10): `https://www.quaddicted.com/api/v1/?q=*:*&rows=N&start=N` returns a bare JSON array.
 // One unpaginated call does return the whole index (1947 packages, 18.4 MB, 1.6 s) — but json.c builds one
-// jsonentry_t per token, so that payload alone is a ~44 MB parse tree. A page of 200 is ~1.9 MB with a ~5 MB tree,
+// jsonentry_t per token, so that payload alone is a ~44 MB parse tree. A page of 200 is 0.7-4.9 MB (the older
+// packages' pages are the big ones; 18 MB in 10 pages, peak held ~21 MB, measured 2026-10-06),
 // the pages come in one stable order (checked against the unpaginated call), and a page that fails costs only itself:
 // so the index is paged, and the cache is written in our own slim line format rather than as the JSON we were given
 // (1 MB rather than 18 MB, and reading it back needs no JSON parser and no big tree).
 //
-// The cache lives in the user's game dir — the same place the installed maps will go: quakevr/cache/maps_index.txt.
-// It is not in git. -nomapindex, or vr_maps_fetch 0, keeps the fetch off; a failed one says so in one console line
-// and leaves the game running with no index.
+// The cache lives in the user's base dir (com_basedirs' last), beside the installed maps' cache and qvr_addons/:
+// <base>/cache/maps_index.txt. It is not in git. -nomapindex keeps the start-up pass off, vr_maps_fetch 0 makes it
+// read the cache only; maps_fetch fetches whatever they say. A failed fetch says so in one console line and leaves the
+// game running with the index it had (or an older cached copy).
 
 #include "vr_mapindex.hpp"
 #include "vr_cvars.hpp"
@@ -60,6 +62,7 @@ const char* acceptHeader = "Accept: application/json"; // (file-scope, not a fun
 
 // The live index, counted by vr_memstats (mem::Never: only the fetch thread's handoff replaces it). Main thread.
 mem::Cache<Index> indexSet{"map index", mem::Never};
+za::U32 indexGeneration = 0; // generation(): poll() replaced indexSet this many times
 
 // The handoff: the fetch thread fills it, poll() takes it on the main thread (the console is never written from the
 // fetch thread, as host_cmd.c's Modlist_DownloadJSON does with Host_InvokeOnMainThread).
@@ -179,7 +182,7 @@ void parseEntry(Index& idx, const jsonentry_t* e, za::Vector<za::String>& zipNam
 {
     za::String zipName; // the filename tag (its ratings' key)
     const char* sha = JSON_FindString(e, "sha256");
-    if(!sha || !sha[0])
+    if(!sha || !validSha(za::StringView{sha}))
     {
         return;
     }
@@ -513,7 +516,7 @@ bool loadCache(Index& idx, const za::String& url, bool anyAge)
         // sha title author date types modes sizes themes bytes startmap extract progs urls description files rating
         // userRating
         za::String fields[17];
-        if(splitFields(l.data(), l.size(), fields) < 17)
+        if(splitFields(l.data(), l.size(), fields) < 17 || !validSha(fields[0]))
         {
             return;
         }
@@ -561,6 +564,10 @@ size_t writeChunk(void* buffer, size_t size, size_t nmemb, void* stream)
     return nmemb;
 }
 
+// fetchPage's "HTTP <code>": the fetch thread's own (va() is not: its buffers are shared with the main thread, which
+// may write over one before this thread has read it). One pass runs at a time.
+char httpError[32];
+
 bool fetchPage(const za::String& url, za::Vector<char>& body, const char*& error)
 {
     body.clear();
@@ -571,7 +578,8 @@ bool fetchPage(const za::String& url, za::Vector<char>& body, const char*& error
     dl.write_data = &body;
     dl.abort = &cancel;
     const bool ok = Download(url.cStr(), &dl);
-    error = dl.error ? dl.error : (dl.response ? va("HTTP %d", dl.response) : "no response");
+    q_snprintf(httpError, sizeof(httpError), "HTTP %d", dl.response);
+    error = dl.error ? dl.error : (dl.response ? httpError : "no response");
     return ok;
 }
 
@@ -658,6 +666,7 @@ void publish(Index&& built, za::String&& status)
 }
 
 za::String runUrl; // the pass's URL, read on the main thread as it starts (a cvar's string may be freed meanwhile)
+bool runCacheOnly = false; // the pass reads the cache only (vr_maps_fetch 0); set before its thread starts
 
 void run() noexcept
 {
@@ -669,6 +678,21 @@ void run() noexcept
     Index built;
     note("map index: started (%s, cache %s)", url.cStr(), cachePath().cStr());
 
+    if(runCacheOnly)
+    {
+        if(!loadCache(built, url, true)) // (not under the handoff's lock: loadCache's note() takes it)
+        {
+            za::LockGuard lock{handoff};
+            pendingStatus = za::String{"map index: none (vr_maps_fetch 0, and no cached copy; maps_fetch fetches it)"};
+            pendingReady.storeSeqCst(true);
+            return;
+        }
+        char status[160];
+        q_snprintf(status, sizeof(status), "map index: %d packages, from the cache (fetched %lld s ago); vr_maps_fetch 0",
+            static_cast<int>(built.entries.size()), static_cast<long long>(time(nullptr) - built.fetchedAt));
+        publish(ZA_MOVE(built), za::String{status});
+        return;
+    }
     if(loadCache(built, url, false))
     {
         char status[256];
@@ -1050,7 +1074,7 @@ void fetch_f()
         files::remove(path.cStr()); // (loadCache would otherwise take the cached copy)
     }
     lastStatus = za::String{};
-    start();
+    start(true); // (asked for: not gated by -nomapindex or vr_maps_fetch 0, which keep the start-up fetch off)
     Con_Printf("maps_fetch: fetching %s (maps_stats shows what happened)\n", indexUrl().cStr());
 }
 
@@ -1058,16 +1082,11 @@ void fetch_f()
 
 // ---------------------------------------------------------------- the API
 
-void start()
+void start(bool asked)
 {
-    if(COM_CheckParm("-nomapindex"))
+    if(!asked && COM_CheckParm("-nomapindex"))
     {
         Con_DPrintf("map index: off (-nomapindex)\n");
-        return;
-    }
-    if(!vr_maps_fetch.value)
-    {
-        Con_DPrintf("map index: off (vr_maps_fetch 0)\n");
         return;
     }
     if(running.loadSeqCst())
@@ -1080,6 +1099,8 @@ void start()
     }
     SDL_AtomicSet(&cancel, 0);
     runUrl = indexUrl();
+    // vr_maps_fetch 0: nothing is fetched, but the cached copy is read (of any age), as the cvar says.
+    runCacheOnly = !asked && !vr_maps_fetch.value;
     running.storeSeqCst(true);
     worker = za::Thread(run);
 }
@@ -1087,6 +1108,11 @@ void start()
 void finish()
 {
     // As mapinstall::finish: cancelled, given 3 s, then let go rather than joined (quitting never waits on the network).
+    // Host_Shutdown calls this (VR_StopDownloads) before NET_Shutdown's curl_global_cleanup, and VR_Shutdown again.
+    if(!worker.joinable())
+    {
+        return; // (no pass started, or it was joined or let go already)
+    }
     SDL_AtomicSet(&cancel, 1);
     const za::U32 t0 = SDL_GetTicks();
     while(running.loadSeqCst() && SDL_GetTicks() - t0 < 3000)
@@ -1098,6 +1124,7 @@ void finish()
         if(running.loadSeqCst())
         {
             Sys_Printf("map index: the fetch did not stop in 3 s; quitting without it\n");
+            Download_KeepGlobalState(); // (its transfer still reads libcurl's global state: not freed under it)
             worker.detach();
         }
         else
@@ -1136,6 +1163,7 @@ void poll()
     if(taken)
     {
         static_cast<Index&>(indexSet) = ZA_MOVE(*taken); // (the registered set holds the live index: vr_memstats)
+        indexGeneration++;
     }
     lastStatus = status;
     if(status.size())
@@ -1147,6 +1175,27 @@ void poll()
 const Index& index()
 {
     return indexSet;
+}
+
+bool validSha(za::StringView sha)
+{
+    if(sha.size() != 64)
+    {
+        return false;
+    }
+    for(const char c : sha)
+    {
+        if(!isxdigit(static_cast<unsigned char>(c)))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+za::U32 generation()
+{
+    return indexGeneration;
 }
 
 za::String state()

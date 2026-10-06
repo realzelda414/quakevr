@@ -328,7 +328,30 @@ context and screenshot, ready to paste or to point me at.
   - **The training dummy bleeds as a grunt** (ROUND21.md, that title): hit it with the sword, a punch, the shotgun,
     the chainsaw: blood sprays and mist, wounds on its model, small gibs torn out, blood on your hands, arms and what you
     hold, as on a grunt; it still reports every hit and never dies. Gore > Training Dummy: Dummy Bleeds off makes it
-    clean as before; Dummy Gibs on gibs it by what would gib a grunt (a hard blow, a rocket), and it stands again 2 s on.
+    clean as before; Dummy Dies on kills it as a grunt once a run of hits takes a grunt's 30 health: a slash at its head
+    beheads it, a shotgun headshot may pop its head (Head pop chance, as a grunt's), an overkill below -35 gibs it,
+    otherwise it falls and lies as a grunt's ragdoll; it stands again 2 s on (no backpack). The decapitation tests
+    (`vr_decap_test`, Debug > Gore Tests) work on it too.
+  - **The training dummy's enemy and health** (ROUND21.md, "Training dummy: any enemy, its health over its head"):
+    Gore > Training Dummy > Dummy Enemy picks what it stands as (grunt, enforcer, knight, death knight, ogre, fiend,
+    shambler, zombie, vore, scrag, rottweiler, spawn, rotfish; with the mission packs gremlin, centroid, mummy, wrath,
+    overlord, electric eel): its model, size, hit zones (a headshot's yellow number only where that monster has a head
+    zone: none on the fiend), the head it loses, its blood and its death are that monster's; it still stands still and
+    reports. Its board over its head shows its name, a bar and its health (in both eyes and the spectator view, turned
+    to face you); hits take it down, and 3 s after the last it fills up again (Dummy Health Refills). Dummy Health sets
+    it (Its Own: the monster's, a grunt's 30, an ogre's 200). Dummy Dies (on as shipped) kills it as that monster when
+    its health runs out: try a slash at a knight's head (beheaded), a shotgun at an ogre's head (popped), a zombie
+    (any head slash beheads it, as a zombie). It stands again 2 s on, as whatever enemy is chosen then. Off: it stays at
+    0 ("would kill" in its line). Debug > Gore Tests > Training Dummy Tests (`vr_dummy_test 1..4`) prints what it is,
+    hits it and prints its health.
+  - **Blunt melee head pops by chance** (ROUND21.md, that title): punch, pistol-whip and crowbar grunts dead in the
+    head: heads almost never pop; Mjolnir nearly always on a solid blow; a club now and then. Gore > Decapitation >
+    Head Pop Chance (Fist .. Mjolnir, Hit Speed and Damage); Debug > Gore Tests 49-55.
+  - **Blunt melee head pops by chance; Quad always pops** (ROUND21.md, that title): punch, pistol-whip and crowbar
+    grunts dead in the head: heads almost never pop; Mjolnir nearly always on a solid blow; a club now and then. With
+    Quad Damage every headshot kill pops (any gun at any range, nails, rockets, grenades, blows, throws); a slash still
+    cuts. Gore > Decapitation > Head Pop Chance (Fist .. Mjolnir, Hit Speed and Damage, Quad Damage: Always Pop);
+    Debug > Gore Tests 49-58.
   - **Dummy attacks, for parry practice** (ROUND21.md, "Dummy attacks (firing range)"): in the firing range, press
     DUMMY ATTACKS (the panel south of the training dummy). Stand in front of it: every 2.5 s or so it winds up (a
     sound, a glow, the rifle raised) and strikes you as a knight would. Parry it: the parry, parry stamina and
@@ -766,6 +789,12 @@ between frames. Under `screen/3D`, `eye L` and `eye R` hold each eye's `scene` (
 `postprocess`, the `hud panel` and the `mirror` to the window; the shadow maps (`dlight shadows`, `map light
 shadows`) are drawn once, in the left eye's `setup view`. `self` columns leave out the parts inside a part.
 
+**Benchmark scenarios** ([BENCHMARKS.md](BENCHMARKS.md)): the kit's `bench.sh` runs a set of fixed scenarios (idle,
+slipgates, combat, physics, effects, lights, liquids, custom maps, flat) and compares a baseline with new results;
+each run's numbers come from `vr_bench_begin <name> [frames | <seconds>s]` (frame, CPU and GPU percentiles, each GPU
+pass, heap events, what there is) into `quakevr/profile/bench/<name>.json`. In the headset: Debug > Profiling and
+Memory > *Benchmark Capture (10 s)* (`manual.json`).
+
 **Spatial audio:** Debug > Tests > Spatial Audio > *Spatial Audio Benchmark* (`vr_snd_bench <seconds> [label] [sounds a
 second] [orbit units/s]`) plays monsters', weapons' and explosions' sounds round you while the listener circles, then
 prints each stage of the mix (the voices, the reverb's convolution and decode, Quake's channels, the limiter, the
@@ -869,22 +898,26 @@ and run.sh prints it as `ENGINE CRASH`. `vr_debug_crash` (an access violation) o
 purpose, to check it (Debug > Profiling and Memory > Crash the Game).
 
 Menus (ROUND21.md, "Menu: scroll memory and shortcuts"): `menu_vr pos` prints the menu shown and, on a VR page, its
-selected row (with the header above it), its scroll and the page Back goes to. While a drop-down list is open (ROUND21.md, "Drop-down lists in the VR menus") a second line gives its row, highlighted choice, scroll and box (menu coordinates, for `vr_mock_laser`). `menu_vr list`: every page's number
+selected row (with the header above it), its scroll and the page Back goes to. While a drop-down list is open (ROUND21.md, "Drop-down lists in the VR menus") a second line gives its row, highlighted choice, scroll and box (menu coordinates, for `vr_mock_laser`). `menu_vr recent [clear]` prints Search's recent list (SRECENT lines, each row's middle in menu coordinates while Search is shown) or clears it (quakevr/search_recent.txt). `menu_vr list`: every page's number
 and place in the tree. `menu_vr dump` prints every page reached from VR Settings and its rows (MDPAGE/MDROW lines);
 `python Misc/quakevr/menu_coverage.py before.log after.log` compares two dumps (every setting and action still on a
 page, the tree, pages over 30 rows; ROUND21.md, "Menus reorganized"). Page numbers: 13 Grappling Hook, 23 Weapon
-Offsets, 41 Held Object Offsets, 42 Weapon Weights, 43 Held Object Weights, 44 and on the pages added then, 65 Recording. `vr_mock_laser back|advanced|levels|checklist`
+Offsets, 41 Held Object Offsets, 42 Weapon Weights, 43 Held Object Weights, 44 and on the pages added then, 65 Recording. `vr_mock_laser back|search|console|settings|advanced|levels|maps|relighting|checklist|spectator`
 (or `<x> <y>` in menu coordinates; `off`) puts the main hand's laser on a corner button or a spot, whatever the hand's
 pose; then `vr_mock_button main trigger 1` / `0` clicks. `vr_mock_button off stickclick 1` / `0` gives the corner
 buttons the selection, `vr_mock_stick off 0 -1` (then `0 0`) moves down, `vr_mock_button main primary` presses;
 `vr_mock_stick main 0 -1` scrolls a page. Back to Game: `vr_mock_button main menu 1; wait90; vr_mock_button main menu
 0`, reopened by `togglemenu`. Across a restart: `writeconfig <file>` writes `vr_menu_positions`; exec that line at the
-next start (the kit puts `ironwail.cfg` back after each run).
+next start (the kit puts `ironwail.cfg` back after each run). Flat screen (`vr_enabled 0`; ROUND21.md, "Corner buttons
+on a flat screen"): `vr_mock_mouse <x> <y> | back | search | console | settings | advanced | levels | maps | relighting | checklist [click]`
+moves the desktop mouse there (M_Mousemove) and clicks; `vr_mock_key <key>` presses a key (`uparrow`, `enter`,
+`rthumb`...) and prints the menu and the corner button selected; `vid_unlock` before `vid_width`/`vid_restart` changes
+the kit's window size.
 Playtest checklist (ROUND21.md, "In-game checklist"): **to update what the author is asked to test, edit
 `quakevr/checklist.txt`** (`[Section]` lines, one item a line, `#` comments; the format is at its top) and commit it: no
 rebuild, and a running game reads it again within a second. Ticks live in `quakevr/checklist_ticks.txt` (ignored), keyed
 by each item's exact text: rewording an item un-ticks it, moving or removing others does not. `vr_checklist` prints the
-list (CLSUM/CLITEM lines), `vr_checklist tick <n>` ticks or unticks item n, `vr_checklist reload` reads the file now;
+list (CLSUM/CLITEM lines), `vr_checklist tick <n>` ticks or unticks item n, `vr_checklist undo` takes the last tick or untick back (CLUNDO: the item, the undos left; the page's Undo Last Tick), `vr_checklist reload` reads the file now;
 the page is `menu_vr 72` (Debug > Checklist).
 Stuck (ROUND21.md, "Never stuck"): `vr_stuck_info` prints the player's server position (2 decimals), what its box is
 in, the movers near it and how often `vr_unstick` freed it; `vr_stuck_test <x> <y> <z>` puts the player there as if it
@@ -1169,6 +1202,7 @@ command (QC `localcmd`) is appended after everything left in the script**: to se
 1` (the two toggles put the keys back to the game: the A button's binding then runs after the buttons' commands).
 `vr_setup_option list` prints every setting and its choice. `vr_menu_path_check [maps/vrcalibration.map]` checks the
 boards' menu paths (any missing: `MENU PATH MISSING`).
+Elbow tucked by the face (ROUND21.md, the section of that name): `Misc/quakevr/armik/armsweep.py <tag> poses|orient|play ["<cvars>"]` (run from a scratch folder; `QVR_AGENT=<agent>`) poses the arms with the author's calibration and prints the elbows (cm past, behind and below the shoulder, the swing, the strain, `tuck`); `contin.py` and `orientsum.py` summarise the sweeps; `"vr_body_elbow_tuck 0"` is the old IK exactly. `vr_debug_arm 1` lines end with `tuck` and `torso` (the swing out of the torso).
 Arms options and holster limits (ROUND21.md, "Arms options after body calibration; holster limits"): `cvarlist
 vr_bodycal_` and `cvarlist vr_body_tweak` show the measurements and the tweaks (typing `vr_bodycal_undo` runs Undo;
 list it instead). To test a config's migration, copy it over the worktree's `quakevr/ironwail.cfg` before the run (the
@@ -1197,11 +1231,25 @@ neutral one (`vr_fixed_frames 1`), as the swing keeps the nearest good elbow. Pa
 Corpse collision (ROUND21.md, "Corpse collision"): `vr_corpse_list` prints each corpse's body and what touches it; `vr_corpse_drop [height]` puts the loose prop nearest you over the nearest corpse (it rests on it unless Corpses is Pass Through). In a cfg, put a few `wait`s between `impulse 241` and `vr_test_spawn_dead 0` (the impulse runs on the next frame).
 Ragdolls (ROUND21.md, "Ragdolls"; `vr_ragdoll 1`): `vr_ragdoll_list [1]` prints each ragdoll (and each part), `vr_ragdoll_info` the grunt's rig, `vr_ragdoll_blast_test [damage]` throws the nearest one away from you, `vr_debug_ragdoll 1` logs them; `vr_corpse_nogib 1` (2: monsters die whole too) keeps corpses and ragdolls from gibbing (blasts still throw them); `bash Misc/quakevr/ragdoll/ragdoll_test.sh <agent> [flat stairs blast shot gib cap save]` the scenarios (`EYES=1`: eyeshots).
 
+Limb gore (ROUND21.md, "Limb gore"; `vr_limbs 1`): `vr_limb_test <n>` (Debug > Gore Tests > Limb Gore Tests; `limbtest:` lines, `developer 1` also `limbs:`) on the nearest monster or corpse: 1 hangs every limb model of its model before you, 2 and 3 cut a corpse apart down to the torso (ends first, whole limbs first: the parts left after each), 4-7 a killing slash, punch, shotgun blast or bolt at a forearm, 9 an explosion beside it, 10 gibbed (its own limbs thrown), 11 twice Most Limbs thrown, 12 a light slash at full health (a zombie dies), 13 where each limb maps, 14 and 15 the grab test; `vr_limb_models [model]` lists a model's limb models (triangles, cap, size). `vr_mock_hand_to <main|off> nearest <classname> [units]` puts a hand on the nearest entity of a class (`vr_limb`). `bash Misc/quakevr/limbs/limbs_test.sh <agent> [models corpse live chance cap grab save zombie blast perf eyes]` the scenarios (`KINDS="0 9"`: the live case's monsters, the firing range's Thing numbers).
+
 After the posing test (ROUND21.md): `vr_debug_shots 1` with `developer 1` prints each hitscan shot (start, direction,
 what its pellets hit, headshots) and each damage you deal; a monster at the muzzle: `impulse 150 + weapon id` (with
 `vr_weapon_grip_mode 1`, `impulse 9` for ammo a frame before), `vr_mock_hand main 0.08 1.05 -1.2 40 0 0`, then
 `vr_test_spawn 0; vr_test_spawn_dist 44; impulse 241` puts a grunt's head round the muzzle in vrfiringrange.
 `vr_pose_solve 1` solves the posing hand live (as before). Each headshot that plays its sound prints `headshot sound: <target> by <inflictor>` (`vr_debug_shots 1`). Weapon ids: impulse 154 shotgun, 156 nailgun, 162 laser cannon (hipnotic). `vr_test_dialog [seconds] [turn] [eyeshot]`: the New Game confirmation, closing by itself, while the mock head turns: eye images at its first and last frames and the eyes' yaw printed (they must follow the head).
+Training dummy enemies (round 21): `vr_dummy_type <n>` (0 grunt .. 18 electric eel: QC/vr_dummy_types.qc; it stands as
+the new one within a frame, unless someone stands where it would) and `vr_dummy_test 1` print its class, model, box,
+health and the zone a level shot at its head, body and legs strikes; `vr_dummy_test 2`/`3` hit it for 10 or for the
+health it has left, `4` prints its health (the refill: `vr_dummy_regen`). With `developer 1`: "dummy: stands as Ogre
+(monster_ogre)", "dummy: killed as its enemy, Ogre (...)". `vr_decap_test 1` (a slash at the head of the nearest live monster at
+health 1) and `12` (a shotgun headshot) behead and pop it as that monster. Recording melee takes against an enemy
+type: choose it (Dummy Enemy, or `vr_dummy_type`) and record as usual; the take's `settings` line holds
+`vr_dummy_type` and `vr_dummy_health`, and its `dummy` line says them (with `vr_dummy_gore`, `vr_dummy_gib`,
+`vr_dummy_regen`). `vr_motion_play` and `vr_motion_eval` stand the dummy as the take's enemy before placing it (a take
+from before: a grunt, of a grunt's health), and as before after; name the takes by enemy (the label or the note: e.g.
+`slash ogre`) to keep their expectations apart. Synthetic ones: `motion_synth.py <preset> --dummy-type 4` (and
+`--dummy-health`).
 Dummy attacks (round 21): `vr_dummy_attacks 1` in vrfiringrange (as the button); with `developer 1` each wind-up, blow
 and miss is printed with its time; `vr_dummy_attack_jitter 0` makes the blows regular (the first 1.6 s after it's
 turned on, then every `vr_dummy_attack_period`). Note: `setpos` turns noclip on, and in noclip a blow's knockback
@@ -1698,7 +1746,7 @@ recurse, and additional passes increase rendering/shadow cost.
 
 Combat > Parry and Bash: **Parry Stops Attacks** (`vr_parry_interrupt`, default 1) cancels a successful
 weapon or crossed-arm parry's remaining melee hits. **Parry Stagger** (`vr_parry_stagger`, default 0.35 s,
-clamped 0.1–3 s) holds the first pain pose before normal AI resumes. The first hit still uses the existing
+clamped 0.1ï¿½3 s) holds the first pain pose before normal AI resumes. The first hit still uses the existing
 damage reduction, push, stamina and counter rules. Off preserves the previous behavior; failed guards do not
 interrupt. Dog/fiend/spawn leap touches stop too. The dragon closes its attack through its own
 scheduler, keeps its flight route and normal attack cooldown, and resumes flying after the stagger. Its tail

@@ -82,8 +82,8 @@ string vr_button_how; // what pressed the button now firing, for vr_debug_wallbu
 void() button_fire =
 {
     if(self.buttonEffect == 3 &&
-        ((substring(self.targetname, 0, 26) == "vr_activestartpaknameidx 1; " && !VR_Pack_Hipnotic()) ||
-         (substring(self.targetname, 0, 26) == "vr_activestartpaknameidx 2; " && !VR_Pack_Rogue())))
+        ((substring(self.targetname, 0, 28) == "vr_activestartpaknameidx 1; " && !VR_Pack_Hipnotic()) ||
+         (substring(self.targetname, 0, 28) == "vr_activestartpaknameidx 2; " && !VR_Pack_Rogue())))
     {
         if(self.enemy.classname == "player")
         {
@@ -97,6 +97,11 @@ void() button_fire =
         return;
     }
 
+    if(MG1_Campaign() && self.classname == "mge2m2_electrode_button") {
+        if(self.MG1_electrode_pressed) return;
+        MG1_ElectrodePressed();
+    }
+
     if(cvar_hget(cvarh_vr_debug_wallbuttons))
     {
         dprint(sprintf("button: %s (target \"%s\") pressed by %s: %s\n", self.model, self.target, self.enemy.classname,
@@ -107,6 +112,7 @@ void() button_fire =
 
     if(MG_WorldCampaign() && self.items) {
         sound(self, CHAN_ITEM, self.noise4, 1, ATTN_NORM);
+        if(MGH_Active()) MGH_horde_key_spend(self.items);
         if(!(self.spawnflags & 32)) self.items = 0;
     }
     sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM);
@@ -191,9 +197,10 @@ void() button_touch_any;
 void() VR_Buttons_List =
 {
     vr_buttons = world;
-    entity b = find(world, classname, "func_button");
+    entity b = nextent(world);
     while(b != world)
     {
+        if(b.classname != "func_button" && !(MG1_Campaign() && b.classname == "mge2m2_electrode_button")) { b = nextent(b); continue; }
         if(b.vr_wpntouch == button_touch) // a save from before: its touches as func_button sets them now
         {
             b.touch = button_touch_any;
@@ -205,7 +212,7 @@ void() VR_Buttons_List =
             b.vr_button_next = vr_buttons;
             vr_buttons = b;
         }
-        b = find(b, classname, "func_button");
+        b = nextent(b);
     }
     vr_buttons_listed = TRUE;
 };
@@ -385,9 +392,13 @@ float(entity xThing) VR_Button_Thrown =
 // isn't pressed by the body, only by a hand), and anything thrown at it.
 void() button_touch_any =
 {
+    local vector dir;
+
     if(other.classname == "player")
     {
-        if(self.movedir_z == -1 || self.movedir_z == -2)
+        // (by its direction: the official campaigns keep an authored movedir as the whole move, '0 0 -8')
+        dir = normalize(self.movedir);
+        if(dir_z < -0.7)
         {
             vr_button_how = "stepped on";
             button_touch();
@@ -452,8 +463,8 @@ void() func_button =
     if(MG_MonsterInhibited()) return;
     if(MG_WorldCampaign()) MG_ButtonInit();
     if(self.buttonEffect == 3 &&
-       ((substring(self.targetname, 0, 26) == "vr_activestartpaknameidx 1; " && !VR_Pack_Hipnotic()) ||
-        (substring(self.targetname, 0, 26) == "vr_activestartpaknameidx 2; " && !VR_Pack_Rogue())))
+       ((substring(self.targetname, 0, 28) == "vr_activestartpaknameidx 1; " && !VR_Pack_Hipnotic()) ||
+        (substring(self.targetname, 0, 28) == "vr_activestartpaknameidx 2; " && !VR_Pack_Rogue())))
     {
         self.worldtext = strcat(self.worldtext, "\n(unavailable)");
     }
@@ -772,8 +783,7 @@ void() func_enemy_dispenser_use =
 
     // Not installed: say what it needs instead.
     string mdl = VR_EnemyDispenser_Model(choice);
-    if((choice >= 12 && choice <= 13 && !VR_Pack_Hipnotic()) ||
-       (choice >= 14 && choice <= 19 && !VR_Pack_Rogue()) || (mdl != NULLSTR && !fileexists(mdl)))
+    if(mdl != NULLSTR && !fileexists(mdl)) // (its model there: the monster's own spawn checks the rest)
     {
         if(activator.classname == "player")
         {
@@ -799,6 +809,11 @@ void() func_enemy_dispenser_use =
     }
 
     self = spawn();
+    self.spawnflags = cvar("vr_test_spawn_flags"); // (0; the tests' variants: 2 a statue knight, a multi-grenade ogre)
+    if((self.spawnflags & 2) && (choice == 5 || choice == 6))
+    {
+        self.targetname = "vr_test_statue"; // (a statue wakes when used: woken below, as its map's trigger would)
+    }
 
     // The classname a map's monster has: sight sounds, obituaries and the like go by it.
          if(choice == 0)  { self.classname = "monster_army";        monster_army(); }
@@ -824,6 +839,10 @@ void() func_enemy_dispenser_use =
     else if(choice == 20) { self.classname = "monster_ogre_marksman"; monster_ogre_marksman(); }
 
     setorigin(self, org);
+    if(self.targetname == "vr_test_statue" && self.use)
+    {
+        self.use(); // (Rogue's statue knight or hell knight: stone come alive)
+    }
 }
 
 void() func_enemy_dispenser =
@@ -841,8 +860,7 @@ void() func_enemy_dispenser =
         // The model now, if installed (no hitch at the first press); the monster's other models and
         // its sounds are precached (late) when it first spawns.
         string mdl = VR_EnemyDispenser_Model(self.weapon);
-        if(!(self.weapon >= 12 && self.weapon <= 13 && !VR_Pack_Hipnotic()) &&
-           !(self.weapon >= 14 && self.weapon <= 19 && !VR_Pack_Rogue()) && mdl != NULLSTR && fileexists(mdl))
+        if(mdl != NULLSTR && fileexists(mdl))
         {
             precache_model(mdl);
         }

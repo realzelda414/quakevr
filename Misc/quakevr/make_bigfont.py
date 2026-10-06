@@ -10,9 +10,11 @@
 #   C(band, x0, x1, y0, y1, dx, dy, flip): copies the band's rows y0..y1 (columns x0..x1) to column dx, down by the
 #     band's own offset plus dy (flip: the rows upside down);
 #   X(x0, x1, y0, y1): clears that part of the cell (a neighbour's pixels that reach into a letter's columns).
-# The pictures have no V, R, C or b (VR Calibration), nor L or y alone (Map Library): they are made from v (Save), r
-# (Player), G (Game) and p (Options); L from P's stem and l's foot, y from ay,
-# stretched or mirrored. "ay" is one glyph: the two letters overlap in the pictures.
+# The pictures have no V, R, C or b (VR Calibration), L or y alone (Map Library), f or c (Official Campaigns), A or v
+# alone (Advanced VR): they are made from others, stretched or mirrored: V, R, C and b from v (Save), r (Player), G
+# (Game) and p (Options); L from P's stem and l's foot; y from ay; f from e without its bottom arm, on i's foot; c from
+# o's left half and G's end; v is Save's without a's leg, A is a (Join a Game's) 2 rows taller, as R is r. m is Game's.
+# "ay" is one glyph: the two letters overlap in the pictures.
 # --preview draws the given texts (the main menu's rows by default) with the pak's letters, 3 times the size.
 import argparse
 import os
@@ -56,7 +58,7 @@ cut('u', 'J2', 59, 79); cut('t', 'J2', 40, 58)
 cut('p', 'M2', 22, 41, X(0, 1, 7, 11), X(18, 19, 3, 6))  # without O's edge and t's bar
 cut('O', 'M2', 0, 23, X(22, 23, 0, 7), X(22, 23, 11, 20), adv=22)  # its right edge is p's column
 cut('o', 'M2', 67, 88); cut('s', 'M2', 106, 123); cut('H', 'M3', 1, 22); cut('/', 'M3', 76, 91)
-cut('d', 'S1', 58, 77); cut('Q', 'M4', 0, 23)
+cut('d', 'S1', 58, 77); cut('Q', 'M4', 0, 23); cut('m', 'S0', 107, 128)  # Game's m
 # Made from others.
 glyph('R', 21, [C('M0', 200, 221, 2, 6, dy=-1), C('M0', 200, 221, 5, 12), C('M0', 200, 221, 11, 15, dy=1)])  # r, 2 rows taller
 glyph('V', 19, [C('S2', 32, 51, 3, 7, dy=-2), C('S2', 32, 51, 6, 11, dy=-1), C('S2', 32, 51, 10, 17),  # v, 2 rows taller,
@@ -69,6 +71,12 @@ glyph('y', 15, [C('M1', 138, 153), X(0, 1, 10, 17)])  # ay's y alone (without a'
 glyph('b', 19, [C('M2', 22, 31), X(0, 1, 7, 11),  # p's stem, and its bowl twice (rows 3-6 and 10-12 of it)
                 C('M2', 31, 41, 3, 7, dx=9), C('M2', 31, 41, 10, 13, dx=9, dy=-3),
                 C('M2', 31, 41, 3, 7, dx=9, dy=6), C('M2', 31, 41, 10, 13, dx=9, dy=3), X(18, 19, 3, 6), X(18, 19, 9, 12)])
+glyph('f', 17, [C('M0', 87, 104, 0, 10), C('M0', 22, 30, 10, 15)])  # e's top arm and middle bar, i's stem and foot
+glyph('c', 18, [C('M2', 67, 77), C('S0', 83, 90, 0, 5, dx=11, dy=2),  # o's left half, G's top end (5 rows of it),
+                C('S0', 83, 90, 0, 5, dx=11, dy=10, flip=True)])  # the end again at the bottom
+glyph('v', 19, [C('S2', 32, 51), X(0, 1, 6, 8), X(0, 2, 8, 9), X(0, 3, 9, 11), X(0, 4, 11, 12), X(0, 5, 12, 13),
+                X(0, 6, 13, 14), X(0, 7, 14, 16)])  # Save's v, without a's leg (as V)
+glyph('A', 19, [C('J0', 71, 90, 0, 5, dy=-1), C('J0', 71, 90, 4, 12), C('J0', 71, 90, 11, 16, dy=1)])  # a, 2 rows taller
 
 
 def read_pak(path):
@@ -205,7 +213,8 @@ def main():
         write_inc(pics, os.path.normpath(out))
         print('wrote', os.path.normpath(out))
     if a.preview:
-        preview(pics, a.texts or ['VR Calibration', 'Single Player', 'Multiplayer', 'Options', 'Mods', 'Help/Ordering', 'Quit'], a.preview)
+        preview(pics, a.texts or ['VR Calibration', 'Single Player', 'Multiplayer', 'Options', 'Mods', 'Help/Ordering', 'Quit',
+                                         'Official Campaigns', 'VR Settings', 'Advanced VR'], a.preview)
 
 
 if __name__ == '__main__':

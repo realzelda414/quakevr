@@ -104,8 +104,9 @@ struct Query
     int limit{0};                      // 0: every match
 };
 
-// Start-up: the fetch thread (nothing here waits for it). -nomapindex, or vr_maps_fetch 0, keeps it off.
-void start();
+// Start-up: the fetch thread (nothing here waits for it). -nomapindex, or vr_maps_fetch 0, keeps it off; `asked`
+// (maps_fetch) starts it whatever they say: they are about the start-up fetch.
+void start(bool asked = false);
 // Quit: the fetch is cancelled and its thread joined.
 void finish();
 // The main thread, every frame: takes the index the fetch thread finished (if any) and says what happened.
@@ -115,12 +116,19 @@ void registerCommands();
 
 // The index: never null, empty until one has arrived. Read from the main thread only.
 [[nodiscard]] const Index& index();
+// Counts the times poll() replaced the index: every Entry pointer and Text of the one before is gone then. What keeps
+// one (the Map Library's results) builds it again when this changes (fetchedAt can repeat: a cache read again).
+[[nodiscard]] za::U32 generation();
 
 // What the fetch is doing (its latest step while it runs), or how the last one ended. Main thread.
 [[nodiscard]] za::String state();
 
 // `out` cleared, then every match in the query's order (the caller keeps `out`; the menu keeps it in its scratch).
 void search(const Query&, za::Vector<const Entry*>& out);
+
+// A sha256 as the index gives it: 64 hex digits. Anything else is no package's (an entry with one is dropped): it
+// names the package's folder on disk (vr_mapinstall.cpp's addonDir), so it must never be a path.
+[[nodiscard]] bool validSha(za::StringView sha);
 
 // A package by its sha256, or by an unambiguous prefix of it. Null: none, or more than one.
 [[nodiscard]] const Entry* find(const za::String& shaPrefix);

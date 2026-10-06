@@ -10,7 +10,8 @@
 // seed from the map's name (and vr_debris_seed), the same layout at every load.
 //
 // Limits: vr_debris_max a map, vr_debris_area_max an area, vr_debris_spacing between spots, and never more than leaves
-// vr_debris_edicts_left entities free. None in multiplayer (a remote client's packets are 1400 bytes), in the maps of
+// vr_debris_edicts_left entities free. In multiplayer at most vr_debris_mp_max (server entities, to pick up and throw:
+// each in sight costs every remote client's 1400-byte datagram; MULTIPLAYER.md, "Debris"). None in the maps of
 // vr_debris_exclude, or in a map whose worldspawn has "_vr_debris" "0" (another number scales the chance).
 
 #pragma once
@@ -51,13 +52,14 @@ struct Obstacle
 // 24; items, weapons, monsters, explosive boxes, torches 40; anything else with a model or a solid 24) and `extra`.
 void gatherObstacles(za::Vector<Obstacle>& out, float extra = 0.f);
 
-// A number the map's worldspawn sets for Quake VR (`key`: "_vr_debris", "_vr_crates"), 1 if it has none.
-[[nodiscard]] float worldspawnValue(const char* key);
+// A number the map's worldspawn sets for Quake VR (`key`: "_vr_debris", "_vr_crates", "_vr_tips_repeat"), `absent` if
+// it has none. (QC cannot read these: the engine drops the keys that start with '_' as it spawns the entities.)
+[[nodiscard]] float worldspawnValue(const char* key, float absent = 1.f);
 
 // Whether `name` is one of the names in `list` (spaces, commas or semicolons between; case ignored).
 [[nodiscard]] bool inList(const char* list, const char* name);
 
-// Whether this map gets pieces (vr_debris, single player, not excluded, its worldspawn's "_vr_debris").
+// Whether this map gets pieces (vr_debris, single player or vr_debris_mp_max, not excluded, its worldspawn's "_vr_debris").
 [[nodiscard]] bool enabledHere();
 
 // A new map is loading: what was gathered for the last one goes (VR_OnSpawnServerBeforeLoad).

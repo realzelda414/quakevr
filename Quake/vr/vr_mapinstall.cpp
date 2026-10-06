@@ -1,21 +1,24 @@
 // vr_mapinstall.cpp -- a package from the map index (vr_mapindex.cpp) put into the game: its zip downloaded to
-// quakevr/cache/maps/<sha256>.zip, its files unpacked with miniz into the user's game dir, its startmap started, and
-// what was written recorded in quakevr/cache/maps_installed.txt so that it can be listed and removed again.
+// <base>/cache/maps/<sha256>.zip, its files unpacked with miniz into its own folder, <base>/qvr_addons/<sha16>/, and
+// what was written recorded in <base>/cache/maps_installed.txt so that it can be listed and removed again (<base>:
+// com_basedirs' last, the user's base dir). Installing never starts a map: play() does (vr_mapinstall.hpp).
 //
 // The download and the unpacking run on a thread of their own (as the index's fetch does): the game never waits for
 // them, and nothing is printed from that thread. poll() takes the finished job on the main thread: its console line,
-// the registry updated, the map queued.
+// and the registry updated (or what it unpacked removed again, when it did not finish; finish() does the same for a
+// job the quit stopped).
 //
-// Where the files go: a BSP to <game dir>/maps/, because that is where the engine's `map` command looks
-// (host_cmd.c's Cmd_Map_f builds "maps/%s.bsp"); everything else at the game dir's root, where the engine's search
-// paths reach it. The index's install.extract is read for its maps/ part only: the engine does not add a package's own
-// subdirectory to the search paths, so a file placed in one would not be found.
+// Where the files go inside the package's folder: a BSP to maps/ (host_cmd.c's Cmd_Map_f builds "maps/%s.bsp"); the
+// rest where the index's install.extract puts the zip's root, its game folder dropped (extractLayout). The folder is
+// on the search path only while the package is played (mountActive, from vr_gamedir.cpp).
 
 #include "vr_mapinstall.hpp"
+#include "vr_cvars.hpp" // vr_maps_cache_mb: the download cache's cap
 #include "vr_engine.hpp"
 #include "vr_api.h" // VR_FileCacheForget: the engine's directory listings, told that files appeared
 #include "vr_files.hpp"
 #include "vr_mem.hpp"
+#include "vr_sha256.hpp"
 #include "vr_zancle.hpp"
 
 #include "Zancle/Algorithm/Sort.hpp"
@@ -61,10 +64,12 @@ struct Registry
 };
 mem::Cache<Registry> registry{"map install registry", mem::Never};
 bool registryLoaded = false;
+// The mapindex::generation() the packages' titles were read from: the registry is read at start-up, before any index
+// has arrived, and its titles (the sha's start until then) are read again when one does (poll()).
+za::U32 titlesGeneration = 0;
 
 // The paths, set at start() (com_basedirs' last: the user's game dir, as vr_mapindex.cpp's cache path).
-za::String gameDirName;
-za::String mapsDirName;
+za::String gameDirName; // com_gamedir when first asked: where the old layout (registryMagicMerged) put the files
 za::String cacheDirName;
 za::String registryPath;
 // The same as a reference (addonsRoot), built on first use once the base dirs are known: file scope, not hidden in
@@ -92,6 +97,10 @@ za::String addonsRootName;
 // asked for (its `map` command keeps it whatever the stock game has of the same name).
 za::String activeSha;
 za::String playPending;
+// Why the last Play could not start its package (the page shows it under the package; "" : it started).
+za::String playProblemSha;
+za::String playProblemText;
+const za::String noPlayProblem;
 bool baseOnly = false; // VR_SkipSearchPath: the packages' folders skipped (the stock game asked alone)
 
 // The handoff (vr_mapindex.cpp's shape): the thread fills `pending`, poll() takes it.
@@ -154,6 +163,7 @@ struct Request
     za::String root;             // the package's own folder the files go to (addonDir)
     za::U64 zipBytes{0};
     bool install{true};
+    bool wasInstalled{false}; // the registry names it already (otherwise its folder holds nothing of ours yet)
 };
 Request request;
 
@@ -167,6 +177,7 @@ Request request;
 bool writeRegistry();
 void rebuildPackages();
 void migrateMerged();
+bool safePath(const char* name, za::String& out);
 
 void loadRegistry()
 {
@@ -208,7 +219,9 @@ void loadRegistry()
         f.sha = za::String{l.substrByPosLen(0, a)};
         f.bytes = static_cast<za::U64>(strtoull(za::String{l.substrByPosLen(a + 1, b - a - 1)}.cStr(), nullptr, 10));
         f.path = za::String{l.substrByPosLen(b + 1, l.size() - b - 1)};
-        if(f.sha.size() && f.path.size())
+        // (a line edited by hand, or damaged, is dropped: the sha names a folder uninstall removes, the path a file)
+        za::String checked;
+        if(mapindex::validSha(f.sha) && safePath(f.path.cStr(), checked) && checked == f.path)
         {
             registry.files.pushBack(ZA_MOVE(f));
         }
@@ -256,6 +269,7 @@ void migrateMerged()
 
 void rebuildPackages()
 {
+    titlesGeneration = mapindex::generation();
     registry.packages.clear();
     for(const InstalledFile& f : registry.files)
     {
@@ -320,6 +334,39 @@ bool endsFolded(const za::String& s, const char* suffix)
     return s.size() >= n && !q_strcasecmp(s.cStr() + (s.size() - n), suffix);
 }
 
+// A path segment every file system writes as named: no separator, drive colon or character Windows refuses
+// (<>:"|?*, a control character), no trailing dot or space (Windows drops them: "maps/.. /x" made a folder ".. " that
+// Explorer cannot remove, "x. " was written as "x" and recorded as "x. "), and no device name (CON, NUL, AUX.txt, COM1:
+// a file Windows does not write, or one that cannot be removed again).
+[[nodiscard]] bool portableSegment(const za::String& part)
+{
+    for(const char c : part)
+    {
+        if(static_cast<unsigned char>(c) < ' ' || strchr("<>:\"|?*\\", c))
+        {
+            return false;
+        }
+    }
+    const char last = part.back();
+    if(last == '.' || last == ' ')
+    {
+        return false;
+    }
+    const za::SizeT dot = part.findFirstOf('.');
+    const za::String stem = dot == za::StringView::nPos ? part : za::String{part.substrByPosLen(0, dot)};
+    static constexpr const char* devices[] = {"con", "prn", "aux", "nul", "conin$", "conout$"};
+    for(const char* d : devices)
+    {
+        if(!q_strcasecmp(stem.cStr(), d))
+        {
+            return false;
+        }
+    }
+    const bool numbered = stem.size() == 4 && (!q_strncasecmp(stem.cStr(), "com", 3) || !q_strncasecmp(stem.cStr(), "lpt", 3)) &&
+                          stem[3] >= '0' && stem[3] <= '9';
+    return !numbered;
+}
+
 // A zip entry's name as a path inside the game dir (false: it does not belong here). `..`, an absolute path, a drive
 // letter, a Windows separator and an empty segment are all refused, so that nothing written here can leave the game dir.
 bool safePath(const char* name, za::String& out)
@@ -344,7 +391,7 @@ bool safePath(const char* name, za::String& out)
             j++;
         }
         const za::String part{name + i, j - i};
-        if(part.empty() || part == "." || part == ".." || part.findFirstOf(":\\") != za::StringView::nPos)
+        if(part.empty() || part == "." || part == ".." || !portableSegment(part))
         {
             return false;
         }
@@ -494,6 +541,9 @@ bool bspVersionOk(const char* data, za::SizeT n, za::String& what)
 
 // ---------------------------------------------------------------- the download
 
+// The download passed maxZipBytes (the job thread's own: writeChunk runs on it, inside Download).
+bool downloadTooBig = false;
+
 size_t writeChunk(void* buffer, size_t size, size_t nmemb, void* stream)
 {
     if(SDL_AtomicGet(&cancelJob))
@@ -502,6 +552,11 @@ size_t writeChunk(void* buffer, size_t size, size_t nmemb, void* stream)
     }
     za::Vector<char>& body = *static_cast<za::Vector<char>*>(stream);
     const za::SizeT n = size * nmemb;
+    if(static_cast<za::U64>(body.size()) + n > maxZipBytes)
+    {
+        downloadTooBig = true; // (the index's size is checked before; a server that sends more is stopped here)
+        return 0;
+    }
     body.reserveMore(n);
     body.unsafeEmplaceBackRange(static_cast<const char*>(buffer), n);
     SDL_AtomicSet(&liveBytes, static_cast<int>(za::min(static_cast<za::U64>(body.size()), static_cast<za::U64>(0x7fffffff))));
@@ -561,11 +616,18 @@ bool downloadZip(za::Vector<char>& body, za::String& why)
         dl.write_fn = writeChunk;
         dl.write_data = &body;
         dl.abort = &cancelJob;
-        const za::U32 t0 = SDL_GetTicks();
+        downloadTooBig = false;
         const bool ok = Download(url.cStr(), &dl);
         if(SDL_AtomicGet(&cancelJob))
         {
             why = cancelText();
+            return false;
+        }
+        if(downloadTooBig)
+        {
+            body.clear();
+            why = za::String{"the download passed "} + za::toString(maxZipBytes / 1024 / 1024) + " MB (the index says " +
+                  formatBytes(request.zipBytes) + "): stopped";
             return false;
         }
         za::String failed;
@@ -580,8 +642,19 @@ bool downloadZip(za::Vector<char>& body, za::String& why)
         }
         else
         {
-            (void)t0;
-            return true;
+            // The zip against the index's sha256 (the hash of the zip's bytes, the package's identifier): a corrupted
+            // download, or a file changed on the server, is neither kept nor unpacked; the next mirror is tried.
+            const sha256::Digest got = sha256::of(body.data(), body.size());
+            if(sha256::matches(got, request.sha.cStr()))
+            {
+                return true;
+            }
+            char hex[65];
+            sha256::toHex(got, hex);
+            body.clear();
+            failed = za::String{"its sha256 is "} + za::String{hex, 16} + "..., not the index's " +
+                     za::String{request.sha.cStr(), za::min(request.sha.size(), za::SizeT{16})} +
+                     "... (a corrupted download or a changed file): not unpacked";
         }
         if(tried.size())
         {
@@ -965,7 +1038,7 @@ bool extractZip(const za::Vector<char>& body, Job& job, za::String& why)
         // here is invisible to it until the listings are forgotten - vr_fscache.cpp)
     }
 
-    if(written == 0)
+    if(written == 0 && skipped == 0) // (every file there already - a package installed again - is an install that worked)
     {
         why = notes.size() ? notes : za::String{"the zip holds no file this engine can use"};
         return false;
@@ -982,6 +1055,164 @@ bool extractZip(const za::Vector<char>& body, Job& job, za::String& why)
     }
     why = notes;
     return true;
+}
+
+// ---------------------------------------------------------------- the download cache
+
+// <base>/cache/maps/<sha256>.zip: each package's zip as it was downloaded, kept up to vr_maps_cache_mb, the oldest (by
+// its last write) removed first: before a download (room made for it), when a job is taken, on the first frame (the
+// config read by then: a cache over the cap at start-up is trimmed) and when the cap changes. Only the names this
+// module gives its zips (64 hex digits and ".zip") are ever counted or removed: anything else in the folder is left
+// alone. The running job's zip is never removed (its thread writes it once the download is done).
+
+struct CachedZip
+{
+    za::String sha;
+    za::U64 bytes{0};
+    za::I64 stamp{0}; // its last write (files::lastWriteTime)
+};
+
+// What a trim did (its console line).
+struct CacheTrim
+{
+    int removed{0};
+    za::U64 freed{0};
+    za::U64 left{0}; // the zips' bytes after it
+};
+
+// The vr_maps_cache_mb the cache was last trimmed to (poll(): the first frame, then a change trims at once).
+float trimmedCapMb = -1.f;
+
+// A name this module gives a zip, its sha out: 64 hex digits and ".zip" (zipPath), nothing else.
+[[nodiscard]] bool cachedZipName(const char* name, za::String& sha)
+{
+    constexpr za::SizeT shaLength = 64;
+    if(strlen(name) != shaLength + 4 || strcmp(name + shaLength, ".zip") != 0)
+    {
+        return false;
+    }
+    for(za::SizeT i = 0; i < shaLength; i++)
+    {
+        if(!isxdigit(static_cast<unsigned char>(name[i])))
+        {
+            return false;
+        }
+    }
+    sha = za::String{name, shaLength};
+    return true;
+}
+
+// The cache's zips, oldest first; `others`: the entries in the folder that are not (left alone).
+void listCache(za::Vector<CachedZip>& out, int* others)
+{
+    out.clear();
+    if(cacheDirName.empty() || !files::isDirectory(cacheDirName.cStr()))
+    {
+        return;
+    }
+    files::forEachEntry(cacheDirName.cStr(),
+        [&](const char* name, bool isDirectory)
+        {
+            za::String sha;
+            if(isDirectory || !cachedZipName(name, sha))
+            {
+                if(others)
+                {
+                    (*others)++;
+                }
+                return;
+            }
+            const za::String path = zipPath(sha);
+            out.pushBack(CachedZip{sha, files::fileSize(path.cStr()), files::lastWriteTime(path.cStr())});
+        });
+    za::quickSort(out.begin(), out.end(),
+        [](const CachedZip& a, const CachedZip& b)
+        { return a.stamp != b.stamp ? a.stamp < b.stamp : strcmp(a.sha.cStr(), b.sha.cStr()) < 0; });
+}
+
+[[nodiscard]] za::U64 cacheCapBytes()
+{
+    const double mb = static_cast<double>(vr_maps_cache_mb.value);
+    return mb > 0.0 ? static_cast<za::U64>(mb * 1024.0 * 1024.0) : 0;
+}
+
+// The oldest zips removed until the rest fit in `budget` bytes. Never `keep` (a sha, or "") nor the running job's.
+CacheTrim trimCache(za::U64 budget, const za::String& keep)
+{
+    CacheTrim t;
+    za::Vector<CachedZip> zips;
+    listCache(zips, nullptr);
+    za::U64 total = 0;
+    for(const CachedZip& z : zips)
+    {
+        total += z.bytes;
+    }
+    const za::String running = jobRunning.loadSeqCst() ? request.sha : za::String{};
+    for(const CachedZip& z : zips)
+    {
+        if(total <= budget)
+        {
+            break;
+        }
+        if(z.sha == keep || z.sha == running)
+        {
+            continue;
+        }
+        if(files::remove(zipPath(z.sha).cStr()))
+        {
+            total -= z.bytes;
+            t.removed++;
+            t.freed += z.bytes;
+        }
+    }
+    t.left = total;
+    return t;
+}
+
+void reportTrim(const CacheTrim& t, const char* when)
+{
+    if(t.removed)
+    {
+        Con_SafePrintf("maps: download cache (%s): %d old zip(s) removed, %s freed, %s kept (vr_maps_cache_mb %g)\n",
+            when, t.removed, formatBytes(t.freed).cStr(), formatBytes(t.left).cStr(), vr_maps_cache_mb.value);
+    }
+}
+
+// poll(): the first frame (the config read by then) and a changed cap trim the cache to it.
+void trimCacheIfCapChanged()
+{
+    if(cacheDirName.empty() || vr_maps_cache_mb.value == trimmedCapMb)
+    {
+        return;
+    }
+    const bool first = trimmedCapMb < 0.f;
+    trimmedCapMb = vr_maps_cache_mb.value;
+    reportTrim(trimCache(cacheCapBytes(), za::String{}), first ? "start-up" : "its size changed");
+}
+
+// begin(): room made for the zip about to be downloaded (its own sha's left: the same file, written over).
+void trimCacheForDownload(const za::String& sha, za::U64 zipBytes)
+{
+    const za::U64 cap = cacheCapBytes();
+    reportTrim(trimCache(cap > zipBytes ? cap - zipBytes : 0, sha), "room for the download");
+}
+
+// takeFinished(): a job that failed keeps no zip (a broken or partly written download, or one whose unpacking failed);
+// one that finished leaves the cache to the cap (installed with a cap of 0: its zip goes too). maps_get's zip is that
+// job's whole result: kept until the next trim.
+void settleCacheAfterJob(const Job& j)
+{
+    trimmedCapMb = vr_maps_cache_mb.value;
+    if(j.phase != Phase::Done)
+    {
+        const za::String zp = zipPath(j.sha);
+        if(files::isFile(zp.cStr()) && files::remove(zp.cStr()))
+        {
+            Con_SafePrintf("maps: %s - its zip was not kept (the job did not finish)\n", j.title.cStr());
+        }
+        return;
+    }
+    reportTrim(trimCache(cacheCapBytes(), j.install ? za::String{} : j.sha), "after the job");
 }
 
 // ---------------------------------------------------------------- the job
@@ -1016,16 +1247,20 @@ int run()
     {
         files::createDirectories(cacheDirName.cStr());
         const za::String zp = zipPath(job->sha);
-        if(!files::writeBytes(zp.cStr(), body.data(), body.size()))
-        {
-            Con_DPrintf("map install: could not write %s\n", zp.cStr());
-        }
+        // (said in the job's message, not printed: this is the job's thread, and the console is the main thread's)
+        const bool zipWritten = files::writeBytes(zp.cStr(), body.data(), body.size());
         if(request.install)
         {
             job->phase = Phase::Extract;
             SDL_AtomicSet(&livePhase, static_cast<int>(Phase::Extract));
             SDL_AtomicSet(&progress, downloadShare);
             const za::U32 e0 = SDL_GetTicks();
+            if(!request.wasInstalled)
+            {
+                // Whatever an unpacking that never finished left (the game killed in the middle of one): the folder is
+                // this package's own, and the registry names nothing in it, so it starts empty.
+                files::removeAll(request.root.cStr());
+            }
             za::String note;
             const bool extracted = extractZip(body, *job, note);
             job->extractMs = static_cast<int>(SDL_GetTicks() - e0);
@@ -1047,11 +1282,20 @@ int run()
                 {
                     job->message += "; " + note;
                 }
+                if(!zipWritten)
+                {
+                    job->message += "; its zip could not be kept in " + zp;
+                }
             }
+        }
+        else if(zipWritten)
+        {
+            job->message = za::String{"the zip is in "} + zp;
         }
         else
         {
-            job->message = za::String{"the zip is in "} + zipPath(job->sha);
+            ok = false; // (maps_get: the zip was the whole job)
+            why = za::String{"could not write "} + zp;
         }
     }
 
@@ -1081,11 +1325,9 @@ void ensureStarted()
     {
         return; // (already set, or the game dirs are not known yet)
     }
-    // The game dir the engine searches (COM_AddGameDirectory makes <basedir>/quakevr one): its maps/ is where the
-    // engine's `map` command finds a BSP. The cache and the installed list stay with the map index's cache, in the
-    // base dir, which does not change when the game dir does.
+    // The cache and the installed list stay with the map index's cache, in the user's base dir (as qvr_addons/ does),
+    // which does not change when the game dir does. The game dir is only where the old layout's files are moved from.
     gameDirName = com_gamedir;
-    mapsDirName = gameDirName + "/maps";
     cacheDirName = za::String{com_basedirs[com_numbasedirs - 1]} + "/cache/maps";
     registryPath = za::String{com_basedirs[com_numbasedirs - 1]} + "/cache/maps_installed.txt";
     loadRegistry();
@@ -1095,28 +1337,26 @@ void ensureStarted()
 
 // ---------------------------------------------------------------- public
 
-const za::String& gameDir()
-{
-    ensureStarted();
-    return gameDirName;
-}
-
-za::String mapsDir()
-{
-    ensureStarted();
-    return mapsDirName;
-}
-
 void start()
 {
     ensureStarted();
 }
 
+namespace
+{
+void takeFinished();
+} // namespace
+
 void finish()
 {
     // Quitting never waits on the network: the job is cancelled (a download stops within a second, an unpacking before
     // its next file) and given 3 s; one still running then (a blocking lookup inside curl) is let go, not joined, so
-    // the process ends anyway.
+    // the process ends anyway. Host_Shutdown calls this (VR_StopDownloads) before NET_Shutdown's curl_global_cleanup,
+    // and VR_Shutdown again.
+    if(!worker.joinable())
+    {
+        return; // (no job started, or it was joined or let go already)
+    }
     requestCancel(CancelQuit);
     const za::U32 t0 = SDL_GetTicks();
     while(jobRunning.loadSeqCst() && SDL_GetTicks() - t0 < 3000)
@@ -1128,11 +1368,16 @@ void finish()
         if(jobRunning.loadSeqCst())
         {
             Sys_Printf("maps: the download did not stop in 3 s; quitting without it\n");
+            Download_KeepGlobalState(); // (its transfer still reads libcurl's global state: not freed under it)
             worker.detach();
         }
         else
         {
             worker.join();
+            if(pendingReady.loadSeqCst())
+            {
+                takeFinished(); // (a job that stopped as the game quit: its unpacked files removed, or recorded)
+            }
         }
     }
     jobRunning.storeSeqCst(false);
@@ -1140,6 +1385,11 @@ void finish()
 
 void poll()
 {
+    trimCacheIfCapChanged(); // (the download cache: the first frame, and a changed cap)
+    if(registryLoaded && titlesGeneration != mapindex::generation())
+    {
+        rebuildPackages(); // (the index arrived, or changed: the installed packages' titles from it)
+    }
     if(!pendingReady.loadSeqCst())
     {
         // The running job, as its thread last said (the page shows `current` live), and the watchdog.
@@ -1163,6 +1413,17 @@ void poll()
         }
         return;
     }
+    takeFinished();
+}
+
+namespace
+{
+
+// The job its thread handed off: its console line, and what it wrote recorded (Done) or removed again (anything else).
+// poll(), and finish(): a job that stopped because the game quit is rolled back too (poll() never runs again), so no
+// unpacking leaves files the registry does not name.
+void takeFinished()
+{
     za::UniquePtr<Job> taken;
     {
         za::LockGuard lock{handoff};
@@ -1176,14 +1437,24 @@ void poll()
     static_cast<Job&>(current) = ZA_MOVE(*taken); // (the registered job holds the live one: vr_memstats)
     const Job& j = current;
     Con_SafePrintf("maps: %s - %s\n", j.title.cStr(), j.message.cStr());
-    // A job that did not finish is rolled back: the files its unpacking wrote (new files only: one already on disk is
-    // never overwritten) are removed, so no half-installed package is left offering Play.
+    settleCacheAfterJob(j); // (the download cache: a failed job's zip dropped, the rest kept to the cap)
+    // A job that did not finish is rolled back: the files its unpacking wrote are removed, so no half-installed package
+    // is left offering Play. Not one the registry names (the package installed before: a pak's file is written over
+    // its own copy, and stays its installed one).
     if(j.phase != Phase::Done)
     {
         int removed = 0;
         for(const InstalledFile& f : j.wrote)
         {
-            removed += files::remove((addonDir(j.sha) + "/" + f.path).cStr()) ? 1 : 0;
+            bool recorded = false;
+            for(const InstalledFile& r : registry.files)
+            {
+                recorded = recorded || (r.sha == f.sha && r.path == f.path);
+            }
+            if(!recorded)
+            {
+                removed += files::remove((addonDir(j.sha) + "/" + f.path).cStr()) ? 1 : 0;
+            }
         }
         if(!installed(j.sha))
         {
@@ -1225,6 +1496,8 @@ void poll()
         // maps_play, the page's Play button), so a package can be got ready without leaving the current map.
     }
 }
+
+} // namespace
 
 const Job& job()
 {
@@ -1268,6 +1541,12 @@ bool begin(const mapindex::Entry* entry, bool install, za::String* why)
     {
         worker.join(); // (a job that finished; its handle was never joined)
     }
+    if(pendingReady.loadSeqCst())
+    {
+        // The last job finished after this frame's poll(): taken now, before this one replaces `current` (and before
+        // its own handoff could replace it, its files never recorded).
+        takeFinished();
+    }
     request.sha = za::String{mapindex::index().field(entry->sha256)};
     request.title = za::String{mapindex::index().field(entry->title)};
     request.urls = za::String{mapindex::index().field(entry->urls)};
@@ -1275,6 +1554,8 @@ bool begin(const mapindex::Entry* entry, bool install, za::String* why)
     request.root = addonDir(request.sha);
     request.zipBytes = entry->bytes;
     request.install = install;
+    request.wasInstalled = installed(request.sha);
+    trimCacheForDownload(request.sha, request.zipBytes); // (the download cache: room made under the cap)
     SDL_AtomicSet(&cancelJob, 0);
     SDL_AtomicSet(&cancelReason, CancelNone);
     SDL_AtomicSet(&progress, 0);
@@ -1370,12 +1651,6 @@ za::String statusLine()
     return za::String{line};
 }
 
-bool cached(const za::String& sha, za::String& out)
-{
-    out = zipPath(sha);
-    return files::exists(out.cStr());
-}
-
 bool installed(const za::String& sha)
 {
     ensureStarted();
@@ -1421,6 +1696,12 @@ bool uninstall(const za::String& sha)
     {
         return false;
     }
+    if(busy(sha))
+    {
+        // (its thread is writing into the folder this would remove, and would record files that are gone)
+        Con_Printf("maps: %s is being installed again; cancel that first (maps_cancel).\n", sha.cStr());
+        return false;
+    }
     if(activeSha == sha)
     {
         activate(za::String{}); // (its folder off the search path before it goes)
@@ -1448,36 +1729,189 @@ bool uninstall(const za::String& sha)
 }
 
 // The package's startmap, started now: the page's Play action, and maps_play. Never part of installing.
-bool play(const za::String& sha)
+namespace
+{
+
+[[nodiscard]] za::String lowered(za::String s)
+{
+    for(za::SizeT i = 0; i < s.size(); i++)
+    {
+        s[i] = static_cast<char>(tolower(static_cast<unsigned char>(s[i])));
+    }
+    return s;
+}
+
+[[nodiscard]] bool packageHas(const za::String& sha, const char* map);
+
+// Play's failure, said in the console and kept for the page.
+bool playFailed(const za::String& sha, const za::String& text)
+{
+    Con_Printf("maps: %s\n", text.cStr());
+    playProblemSha = sha;
+    playProblemText = text;
+    return false;
+}
+
+} // namespace
+
+za::String packageFolder(const za::String& sha)
+{
+    return addonDir(sha);
+}
+
+void packageMaps(const za::String& sha, za::Vector<za::String>& out)
+{
+    out.clear();
+    if(!registryLoaded)
+    {
+        loadRegistry();
+    }
+    for(const InstalledFile& f : registry.files)
+    {
+        // "maps/<name>.bsp" (a subfolder's too: `map sub/name` loads it), as installed (lower case).
+        if(f.sha == sha && f.path.size() > 9 && !q_strncasecmp(f.path.cStr(), "maps/", 5) && endsFolded(f.path, ".bsp"))
+        {
+            out.pushBack(lowered(za::String{f.path.substrByPosLen(5, f.path.size() - 9)}));
+        }
+    }
+    za::quickSort(out.begin(), out.end(), [](const za::String& a, const za::String& b) { return strcmp(a.cStr(), b.cStr()) < 0; });
+}
+
+za::String startMap(const za::String& sha, za::String* why, int* mapCount)
+{
+    ensureStarted();
+    za::Vector<za::String> maps;
+    packageMaps(sha, maps);
+    if(mapCount)
+    {
+        *mapCount = static_cast<int>(maps.size());
+    }
+    // The index's startmap first: a list for many packages ("start e1m1 e1m2 ..." for an episode, every map of a
+    // speedmap pack), "start" preferred, else its first map the package holds.
+    za::String pick;
+    if(const mapindex::Entry* e = mapindex::find(sha))
+    {
+        mapindex::forParts(mapindex::index().field(e->startmap), [&](const za::String& part) {
+            const za::String name = lowered(part);
+            if((pick.empty() || name == "start") && pick != "start" && packageHas(sha, name.cStr()))
+            {
+                pick = name;
+            }
+        });
+    }
+    // None given (about half of the index's packages), or none of them installed: its own maps, "start" if one is,
+    // else the first by name.
+    for(za::SizeT i = 0; pick.empty() && i < maps.size(); i++)
+    {
+        pick = maps[i] == "start" ? maps[i] : za::String{};
+    }
+    if(pick.empty() && !maps.empty())
+    {
+        pick = maps[0];
+    }
+    if(pick.empty() && why)
+    {
+        *why = "its files hold no map (no BSP under maps/): it may be a mod or a texture pack, not a map";
+    }
+    return pick;
+}
+
+const za::String& playProblem(const za::String& sha)
+{
+    return sha == playProblemSha ? playProblemText : noPlayProblem;
+}
+
+za::String madeFor(const mapindex::Entry& e)
+{
+    // install.extract's game folder ("{base}/ad/"), else a mod's tag (a package laid out from the base dir).
+    const char* extract = mapindex::index().field(e.extract);
+    if(!q_strncasecmp(extract, "{base}", 6))
+    {
+        extract += 6;
+    }
+    while(*extract == '/' || *extract == '\\')
+    {
+        extract++;
+    }
+    za::String folder;
+    while(*extract && *extract != '/' && *extract != '\\')
+    {
+        folder += static_cast<char>(tolower(static_cast<unsigned char>(*extract++)));
+    }
+    if(!*extract)
+    {
+        folder = za::String{}; // ("{base}/maps": no game folder named)
+    }
+    bool adTag = false, quothTag = false;
+    mapindex::forParts(mapindex::index().field(e.themes), [&](const za::String& tag) {
+        adTag = adTag || tag == "arcane_dimensions";
+        quothTag = quothTag || tag == "quoth";
+    });
+    // The stock game's and the mission packs' (Quake VR runs those), and no folder at all, need nothing else.
+    if(folder.empty() || assetFolder(folder) || folder == "id1" || folder == "hipnotic" || folder == "rogue" || folder == "quakevr")
+    {
+        folder = adTag ? za::String{"ad"} : quothTag ? za::String{"quoth"} : za::String{};
+    }
+    if(folder == "ad")
+    {
+        return za::String{"Arcane Dimensions"};
+    }
+    if(folder == "quoth")
+    {
+        return za::String{"Quoth"};
+    }
+    if(folder == "copper")
+    {
+        return za::String{"Copper"};
+    }
+    return folder;
+}
+
+bool play(const za::String& sha, const char* map)
 {
     ensureStarted();
     const mapindex::Entry* e = mapindex::find(sha);
     if(!e)
     {
-        Con_Printf("maps: the index no longer has that package.\n");
-        return false;
+        return playFailed(sha, za::String{"the index no longer has that package."});
     }
-    za::String name = mapindex::index().field(e->startmap);
-    if(!name.size())
-    {
-        Con_Printf("maps: %s does not say which map to start.\n", mapindex::index().field(e->title));
-        return false;
-    }
+    const za::String title{mapindex::index().field(e->title)};
     if(!installed(sha))
     {
-        Con_Printf("maps: %s is not installed.\n", mapindex::index().field(e->title));
-        return false;
+        return playFailed(sha, title + " is not installed.");
     }
-    for(za::SizeT i = 0; i < name.size(); i++)
+    za::String name;
+    if(map && *map)
     {
-        name[i] = static_cast<char>(tolower(static_cast<unsigned char>(name[i]))); // (its BSP's name, as installed)
+        name = lowered(za::String{map});
+        if(!packageHas(sha, name.cStr()))
+        {
+            return playFailed(sha, title + " has no map " + name + ".");
+        }
+    }
+    else
+    {
+        za::String why;
+        int count = 0;
+        name = startMap(sha, &why, &count);
+        if(name.empty())
+        {
+            return playFailed(sha, title + ": " + why + ".");
+        }
+        if(count > 1)
+        {
+            Con_Printf("maps: %s holds %d maps; starting %s (maps_play %.8s <map> for another)\n", title.cStr(), count,
+                name.cStr(), sha.cStr());
+        }
     }
     // Its folder on the search path (under Quake VR's own), then its map: the `map` command keeps this package for
     // it, whatever the stock game has of the same name (an episode's start).
     if(!activate(sha))
     {
-        return false;
+        return playFailed(sha, za::String{"the package's folder could not be mounted (see the console)."});
     }
+    playProblemSha = za::String{};
+    playProblemText = za::String{};
     playPending = sha;
     // Cbuf_InsertText, not AddText: this runs next. AddText would put it after the commands already queued (a test
     // script's `screenshot; quit` would be run first, and the map never started).
@@ -1678,6 +2112,49 @@ void install_f()
     }
 }
 
+// maps_cache [trim]: the download cache (cache/maps/): its zips oldest first (the first removed when it is over
+// vr_maps_cache_mb), what they hold, and `trim`: trimmed to the cap now.
+void cache_f()
+{
+    ensureStarted();
+    if(Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "trim"))
+    {
+        trimmedCapMb = vr_maps_cache_mb.value;
+        const CacheTrim t = trimCache(cacheCapBytes(), za::String{});
+        Con_Printf("maps: download cache trimmed to %g MB: %d zip(s) removed, %s freed\n", vr_maps_cache_mb.value,
+            t.removed, formatBytes(t.freed).cStr());
+    }
+    za::Vector<CachedZip> zips;
+    int others = 0;
+    listCache(zips, &others);
+    za::U64 total = 0;
+    for(const CachedZip& z : zips)
+    {
+        total += z.bytes;
+    }
+    Con_Printf("maps: download cache %s: %d zip(s), %s of %g MB (vr_maps_cache_mb; 0: none kept once installed)\n",
+        cacheDirName.cStr(), static_cast<int>(zips.size()), formatBytes(total).cStr(), vr_maps_cache_mb.value);
+    if(others)
+    {
+        Con_Printf("maps: %d other entr%s in it, never counted nor removed\n", others, others == 1 ? "y" : "ies");
+    }
+    const za::String running = jobRunning.loadSeqCst() ? request.sha : za::String{};
+    constexpr int maxShown = 40;
+    int shown = 0;
+    for(const CachedZip& z : zips)
+    {
+        if(shown == maxShown)
+        {
+            Con_Printf("  ... and %d more\n", static_cast<int>(zips.size()) - maxShown);
+            break;
+        }
+        const mapindex::Entry* e = mapindex::find(z.sha);
+        Con_Printf("  %2d. %.16s %9s  %s%s%s\n", ++shown, z.sha.cStr(), formatBytes(z.bytes).cStr(),
+            e ? mapindex::index().field(e->title) : "(not in the index)", installed(z.sha) ? "  [installed]" : "",
+            z.sha == running ? "  [its job is running: kept]" : "");
+    }
+}
+
 void installed_f()
 {
     const za::Vector<Installed>& list = installedList();
@@ -1692,15 +2169,44 @@ void installed_f()
     {
         Con_SafePrintf("  %s  %8s  %d file(s)  %s\n", p.title.cStr(), formatBytes(p.bytes).cStr(),
                        p.files, p.sha.cStr());
+        // What Play starts (and its other maps), and the mod it was made for: as the Map Library's detail says.
+        za::String why;
+        int count = 0;
+        const za::String start = startMap(p.sha, &why, &count);
+        const mapindex::Entry* e = mapindex::find(p.sha);
+        const za::String mod = e ? madeFor(*e) : za::String{};
+        Con_SafePrintf("    %s%s%s%s%s\n", start.size() ? "starts " : "cannot be played: ",
+            start.size() ? start.cStr() : why.cStr(), count > 1 ? (za::String{" (of "} + za::toString(count) + " maps)").cStr() : "",
+            mod.size() ? "; made for " : "", mod.cStr());
     }
 }
 
 void uninstall_f()
 {
-    const mapindex::Entry* e = argEntry("maps_uninstall", Cmd_Argv(1));
-    if(e)
+    // An installed package by its sha's start, whether the index has it or not (it may have dropped it, or not have
+    // arrived yet); otherwise the index's (argEntry says what is wrong).
+    const char* arg = Cmd_Argv(1);
+    za::String sha;
+    int matches = 0;
+    for(const Installed& p : installedList())
     {
-        uninstall(za::String{mapindex::index().field(e->sha256)});
+        if(arg[0] && !q_strncasecmp(p.sha.cStr(), arg, strlen(arg)))
+        {
+            sha = p.sha;
+            matches++;
+        }
+    }
+    if(matches == 1)
+    {
+        uninstall(sha);
+        return;
+    }
+    if(const mapindex::Entry* e = argEntry("maps_uninstall", arg))
+    {
+        if(!uninstall(za::String{mapindex::index().field(e->sha256)}))
+        {
+            Con_Printf("maps_uninstall: %s is not installed.\n", mapindex::index().field(e->title));
+        }
     }
 }
 
@@ -1709,7 +2215,7 @@ void play_f()
     const mapindex::Entry* e = argEntry("maps_play", Cmd_Argv(1));
     if(e)
     {
-        play(za::String{mapindex::index().field(e->sha256)});
+        (void)play(za::String{mapindex::index().field(e->sha256)}, Cmd_Argc() >= 3 ? Cmd_Argv(2) : nullptr);
     }
 }
 
@@ -1722,6 +2228,8 @@ void registerCommands()
     Cmd_AddCommand("maps_play", play_f);
     Cmd_AddCommand("maps_installed", installed_f);
     Cmd_AddCommand("maps_uninstall", uninstall_f);
+    Cmd_AddCommand("maps_cache", cache_f);
+    Cmd_AddCommand("vr_sha256_test", sha256::selfTest_f);
 }
 
 za::String packageFor(const char* map)
@@ -1784,6 +2292,24 @@ extern "C" void VR_AddonForSave(const char* savepath, const char* map)
         sha = mapinstall::packageFor(map);
     }
     mapinstall::activate(sha);
+}
+
+// A map spawned: the crash report's context (vr_crash.cpp), so that a crash in a map package's map names it.
+extern "C" void VR_NoteMapSpawn(const char* map)
+{
+    const za::String& sha = mapinstall::active();
+    za::String line = za::String{"map "} + (map ? map : "?");
+    if(sha.size())
+    {
+        const mapindex::Entry* e = mapindex::find(sha);
+        line += za::String{", map package "} + (e ? mapindex::index().field(e->title) : "?") + " (" +
+                za::String{za::StringView{sha}.substrByPosLen(0, za::min(sha.size(), za::SizeT{16}))} + ")";
+    }
+    else
+    {
+        line += ", no map package";
+    }
+    VR_SetCrashContext(line.cStr());
 }
 
 // `save`: the package mounted now, noted beside the save (removed when there is none).

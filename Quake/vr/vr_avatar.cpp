@@ -432,11 +432,16 @@ ArmCostTrace costTrace;
 // (reaching up, or across the body) swings as before. Each costs 1 (as a 45 degree swing) 0.4 of the upper arm (10 cm)
 // past it, times `lift`; the torso four times that. An elbow the pole spreads out to the side (`spread`, 0 .. 1:
 // solveArm) also costs for rising past where the pole puts it, across the chest or not.
+// A tucked arm (`tuck`, 0 .. 1: elbowTuck) keeps its elbow where the pole puts it (down and back): the wrist's strain
+// counts for less (down to 0.15 of it) and the swing for more (up to 7 times), so that the elbow swings out or across
+// only a little for a hand turned past a wrist's reach by the face, and never round to the neck.
 [[nodiscard]] float easeWrist(const glm::vec3& shoulder, const glm::vec3& wrist, const glm::vec3& elbow,
     const glm::vec3& bend, const glm::mat3& handRot, int side, float limits, float last, const glm::vec3& up,
     const glm::vec3& outward, const glm::vec3& forward, float upperArm, float lift, float elbowRadius,
-    float spread)
+    float spread, float tuck)
 {
+    const float strainWeight = 1.f - 0.85f * tuck;
+    const float swingWeight = 1.f + 6.f * tuck;
     const glm::vec3 axis = safeNormalize(wrist - shoulder);
     const glm::vec3 centre = shoulder + axis * glm::dot(elbow - shoulder, axis);
     const float most = glm::radians(150.f);
@@ -449,7 +454,7 @@ ArmCostTrace costTrace;
         const glm::vec3 swung = centre + q * (elbow - centre);
         const glm::vec3 foreDir = safeNormalize(wrist - swung, axis);
         const float s = swivel / glm::radians(45.f);
-        float c = wristStrain(wristTurn(foreDir, q * bend, handRot, side), limits) + s * s;
+        float c = strainWeight * wristStrain(wristTurn(foreDir, q * bend, handRot, side), limits) + swingWeight * s * s;
         if(lift > 0.f)
         {
             const glm::vec3 e = swung - shoulder;
@@ -517,7 +522,8 @@ bool easeWrists = true;
 // vr_debug_arm: a drawn arm's IK, in the body's axes (forward, left, up; cm from the chest) and in the tracking
 // space's (metres from the head: right, up, back; to set up vr_mock_hand poses): the shoulder, the elbow (and where
 // the pole alone put it), the wrist, the elbow's angle and swing, the hand's axes, and the wrist's turn against the
-// solved forearm (and against the pole's), with its strain. 1: printed once; 2: every frame into arm_trace.txt (the
+// solved forearm (and against the pole's), with its strain, how tucked the elbow is (elbowTuck) and its swing out of
+// the torso (degrees). 1: printed once; 2: every frame into arm_trace.txt (the
 // game directory), whether a take plays (vr_motion_play) and the client's time.
 glm::vec3 debugHead{0.f}; // the head this frame
 
@@ -530,7 +536,8 @@ struct Traces
 Traces traces;
 
 void traceArm(const Body& b, int side, const glm::vec3& shoulder, const glm::vec3& poleElbow, const glm::vec3& poleBend,
-    const glm::vec3& elbow, const glm::vec3& bend, const glm::vec3& wrist, const glm::mat3& handRot, float swivel)
+    const glm::vec3& elbow, const glm::vec3& bend, const glm::vec3& wrist, const glm::mat3& handRot, float swivel,
+    float tuck, float out)
 {
     const glm::vec3 o = b.bones[Chest].pos;
     const auto dir = [&](const glm::vec3& v) { return glm::vec3{glm::dot(v, b.fwd), glm::dot(v, b.left), glm::dot(v, UP)}; };
@@ -550,11 +557,11 @@ void traceArm(const Body& b, int side, const glm::vec3& shoulder, const glm::vec
                     hu = dir(-handRot[2]);
     const char* line = va("%s S %.1f %.1f %.1f E %.1f %.1f %.1f E0 %.1f %.1f %.1f W %.1f %.1f %.1f elbow %.1f swivel %.1f "
                           "hand f %.3f %.3f %.3f u %.3f %.3f %.3f wrist flex %.1f dev %.1f twist %.1f strain %.3f "
-                          "pole flex %.1f dev %.1f twist %.1f strain %.3f",
+                          "pole flex %.1f dev %.1f twist %.1f strain %.3f tuck %.2f torso %.1f",
         side == 0 ? "L" : "R", S.x, S.y, S.z, E.x, E.y, E.z, E0.x, E0.y, E0.z, W.x, W.y, W.z, angle,
         glm::degrees(swivel), hf.x, hf.y, hf.z, hu.x, hu.y, hu.z, glm::degrees(t.flexion), glm::degrees(t.deviation),
         glm::degrees(t.twist), wristStrain(t, limits), glm::degrees(t0.flexion), glm::degrees(t0.deviation),
-        glm::degrees(t0.twist), wristStrain(t0, limits));
+        glm::degrees(t0.twist), wristStrain(t0, limits), tuck, glm::degrees(out));
     if(vr_debug_arm.value >= 2.f)
     {
         FILE*& file = traces.arm;
@@ -622,6 +629,33 @@ struct ArmLengths
     const glm::quat swing =
         glm::angleAxis(glm::radians(forwardDegrees * swingAmount), safeNormalize(glm::cross(lateral, cFwd), cUp));
     return glm::mat3_cast(raise * swing);
+}
+
+// How tucked a folded arm's elbow is (0 .. 1, vr_body_elbow_tuck): the wrist within vr_body_elbow_tuck_near of the arm's
+// length `armLen` from the shoulder (the hand at the face or the chest) fully, fading out by vr_body_elbow_tuck_far
+// (the arm out in front). Only with the hand in front of the shoulder (fading in over its first 0.15 of the arm's
+// length) and not raised to the forehead or over it (fading out from 0.15 of the arm's length above the shoulder to
+// 0.32): a hand there, or behind the head, lifts the elbow up and out, as a person's does. `up` and `forward` are the
+// chest's.
+[[nodiscard]] float elbowTuck(const glm::vec3& shoulder, const glm::vec3& wrist, float armLen, const glm::vec3& up,
+    const glm::vec3& forward)
+{
+    const float strength = CLAMP(0.f, vr_body_elbow_tuck.value, 1.f);
+    if(strength <= 0.f || armLen <= 0.f)
+    {
+        return 0.f;
+    }
+    const auto smooth = [](float from, float to, float x) {
+        const float t = CLAMP(0.f, (x - from) / (to - from), 1.f);
+        return t * t * (3.f - 2.f * t);
+    };
+    const glm::vec3 r = (wrist - shoulder) / armLen;
+    const float fullAt = CLAMP(0.1f, vr_body_elbow_tuck_near.value, 1.5f);
+    const float noneAt = za::max(fullAt + 0.05f, vr_body_elbow_tuck_far.value);
+    const float folded = 1.f - smooth(fullAt, noneAt, glm::length(r));
+    const float ahead = smooth(0.f, 0.15f, glm::dot(r, forward));
+    const float below = 1.f - smooth(0.15f, 0.32f, glm::dot(r, up));
+    return strength * folded * ahead * below;
 }
 
 // The arms' easing from one frame to the next, per side (solveArm: the main thread's frame).
@@ -712,6 +746,21 @@ void solveArm(Body& b, int side, const HandPose& handPose)
     glm::vec3 pole = bodyPole - thumbAcross * vr_body_elbow_hand.value;
     float spreadBy = 0.f; // (easeWrist)
 
+    // A folded arm (the hand at the face or the chest) tucks its elbow down and back by the ribs, as a person aiming
+    // down the sights or holding an axe up by the face does (vr_body_elbow_tuck: elbowTuck): the pole turns down and
+    // back (vr_body_elbow_tuck_back per down, which can take the elbow behind the chest), half as far out as the
+    // rest's (the elbow under the shoulder, not out to the side, with the hand up by the face) and not turned by the
+    // hand's roll (which would take it in across the chest, or out). The wrist's ease swings it out or across only a
+    // little (easeWrist), and by the face the hand palm down spreads it less (below).
+    // (The drawn arms only, as the wrist's ease: the body-off forearm that carries the wrist gadget stays as it was.)
+    const float tuck = easeWrists ? elbowTuck(u.pos, wrist, a + l, cUp, cFwd) : 0.f;
+    if(tuck > 0.f)
+    {
+        const glm::vec3 tucked =
+            -cUp + lateral * (0.5f * vr_body_elbow_out.value) - cFwd * za::max(0.f, vr_body_elbow_tuck_back.value);
+        pole = glm::mix(pole, tucked * (glm::length(pole) / za::max(1e-4f, glm::length(tucked))), tuck);
+    }
+
     // A folded arm (the hand at the face or the chest) with the palm to the floor spreads the elbow out to the side,
     // level with the forearm, as a person's does (wings), instead of standing the forearm up in front of the chest with
     // the wrist bent back 70-80 degrees (within its reach, so nothing else moved it): the pole turns out, by
@@ -725,7 +774,13 @@ void solveArm(Body& b, int side, const HandPose& handPose)
         const glm::vec3 palm = side == 0 ? glm::cross(handPose.forward, handUp) : glm::cross(handUp, handPose.forward);
         const float palmDown = CLAMP(0.f, (-glm::dot(safeNormalize(palm), UP) - 0.3f) / 0.4f, 1.f);
         const glm::vec3 wings = (lateral - cUp * 0.35f) * glm::length(pole);
-        spreadBy = za::min(1.f, folded * palmDown * spread);
+        // By the face (the wrist from 0.15 of the arm's length below the shoulder up) or with the hand pointing up
+        // (from 15 degrees over level to 30), a tucked elbow doesn't spread: a palm down there is a gun canted or an axe
+        // raised, not the forearm held level before the chest (a look at the wrist), which still spreads.
+        const float rise = glm::dot(wrist - u.pos, cUp) / (a + l);
+        const float byFace = CLAMP(0.f, (rise + 0.15f) / 0.15f, 1.f);
+        const float pointsUp = CLAMP(0.f, (glm::dot(safeNormalize(handPose.forward), cUp) - 0.25f) / 0.25f, 1.f);
+        spreadBy = za::min(1.f, folded * palmDown * spread) * (1.f - tuck * za::max(byFace, pointsUp));
         pole = glm::mix(pole, wings, spreadBy);
     }
     glm::vec3 elbow = twoBone(u.pos, wrist, a, l, pole, lateral, bend);
@@ -748,7 +803,7 @@ void solveArm(Body& b, int side, const HandPose& handPose)
     {
         const glm::vec3 axis = safeNormalize(wrist - u.pos);
         const float best = easeWrist(u.pos, wrist, elbow, bend, handRot, side, limits, lastSwivel[side], cUp, lateral, cFwd,
-            a, za::max(0.f, vr_body_elbow_lift.value), 0.03f * b.m2w, spreadBy);
+            a, za::max(0.f, vr_body_elbow_lift.value), 0.03f * b.m2w, spreadBy, tuck);
         const double now = vr_gametime;
         const double since = lastSwivelTime[side] >= 0.0 ? CLAMP(0.0, now - lastSwivelTime[side], 0.1) : -1.0;
         swivel = since < 0.0 ? best
@@ -787,7 +842,7 @@ void solveArm(Body& b, int side, const HandPose& handPose)
 
     if(easeWrists && vr_debug_arm.value != 0.f)
     {
-        traceArm(b, side, u.pos, poleElbow, poleBend, elbow, bend, wrist, handRot, swivel);
+        traceArm(b, side, u.pos, poleElbow, poleBend, elbow, bend, wrist, handRot, swivel, tuck, lastOut[side]);
     }
 
     u.rot = basis(elbow - u.pos, bend);
@@ -1345,6 +1400,10 @@ struct Posed
     const entity_t* ent{nullptr};
     float scale{0.f};
     za::Array<float, JointCount * 12> skin{};
+    za::Array<float, JointCount * 12> shadowSkin{}; // skin with the neck and head drawn (the shadow maps': shadowLight)
+    glm::vec3 eyes{0.f};                            // the head this frame (world)
+    float m2w{0.f};                                 // world units per metre
+    bool shadowHead{false};                         // the light being drawn casts the head's shadow (shadowLight)
     glm::vec3 wrist[2]{glm::vec3{0.f}, glm::vec3{0.f}};   // per hand
     glm::vec3 forearm[2]{glm::vec3{0.f}, glm::vec3{0.f}};
     Shoulder shoulders[2];                                // per side
@@ -1690,16 +1749,10 @@ glm::vec3 pose(const hands::State& s, qmodel_t* model, const entity_t* ent, cons
     }
     const za::Array<int, JointCount>& boneOf = modelInfo->boneOf;
 
-    for(int j = 0; j < JointCount; j++)
-    {
-        const Bone& bone = b.bones[j];
-        const glm::mat3 r = bone.rot * bone.shape * glm::mat3{glm::vec3{bone.stretch * bone.size, 0.f, 0.f},
-                                           glm::vec3{0.f, bone.size, 0.f}, glm::vec3{0.f, 0.f, bone.size}};
+    const auto skinBone = [&](const Bone& bone, float size, const float* inv, float* out) {
+        const glm::mat3 r = bone.rot * bone.shape * glm::mat3{glm::vec3{bone.stretch * size, 0.f, 0.f},
+                                           glm::vec3{0.f, size, 0.f}, glm::vec3{0.f, 0.f, size}};
         const glm::vec3 t = (bone.pos - origin) / k;
-
-        const int i = boneOf[j];
-        const float* inv = bones[i].inverse.mat;
-        float* out = &posed.skin[i * 12];
         for(int row = 0; row < 3; row++)
         {
             for(int col = 0; col < 4; col++)
@@ -1712,7 +1765,26 @@ glm::vec3 pose(const hands::State& s, qmodel_t* model, const entity_t* ent, cons
                 out[row * 4 + col] = v;
             }
         }
+    };
+    for(int j = 0; j < JointCount; j++)
+    {
+        const Bone& bone = b.bones[j];
+        const int i = boneOf[j];
+        const float* inv = bones[i].inverse.mat;
+        skinBone(bone, bone.size, inv, &posed.skin[i * 12]);
+        // The shadow maps': the neck and head as the model has them (the eye views collapse them, solveTorso).
+        float* shadow = &posed.shadowSkin[i * 12];
+        if(j == Neck || j == Head)
+        {
+            skinBone(bone, 1.f, inv, shadow);
+        }
+        else
+        {
+            memcpy(shadow, &posed.skin[i * 12], 12 * sizeof(float));
+        }
     }
+    posed.eyes = s.head;
+    posed.m2w = b.m2w;
 
     posed.ent = ent;
     posed.scale = k;
@@ -1838,6 +1910,27 @@ float modelScale(const entity_t* e)
 }
 
 } // namespace qvr::avatar
+
+namespace qvr::avatar
+{
+void shadowLight(const glm::vec3& light)
+{
+    // Out to a light 30 cm from the eyes: the head (10 cm round them) and the head-mounted flashlight (9 cm out).
+    posed.shadowHead = vr_shadow_head.value != 0.f && glm::distance(light, posed.eyes) > 0.3f * posed.m2w;
+}
+} // namespace qvr::avatar
+
+// The shadow maps' (r_alias.c, R_DrawAliasModelsDepth): the body with its head (shadowLight).
+extern "C" int VR_AliasShadowBonePoses(const entity_t* e, const float** matrices)
+{
+    using namespace qvr::avatar;
+    const int count = VR_AliasBonePoses(e, matrices);
+    if(count && matrices && e && e == posed.ent && posed.shadowHead)
+    {
+        *matrices = posed.shadowSkin.data();
+    }
+    return count;
+}
 
 extern "C" int VR_AliasBonePoses(const entity_t* e, const float** matrices)
 {

@@ -116,8 +116,6 @@ bool cancel();
 // mirror, the seconds, how long nothing arrived), unpacking it, stopping it, or idle with how the last job ended.
 [[nodiscard]] za::String statusLine();
 
-// The zip is in the cache (its path in `out`).
-[[nodiscard]] bool cached(const za::String& sha, za::String& out);
 // The package is installed (its files are in the game dir).
 [[nodiscard]] bool installed(const za::String& sha);
 // What is installed, one entry per package.
@@ -126,9 +124,24 @@ bool cancel();
 [[nodiscard]] za::U64 installedBytes(const za::String& sha);
 // Remove an installed package's files (the ones no other package wrote too), and the record.
 bool uninstall(const za::String& sha);
-// The package's startmap, started now: the page's Play action, and maps_play. Never part of installing. Cbuf_InsertText,
-// so that it runs next rather than after the commands already queued (a script's `screenshot;quit` would come first).
-bool play(const za::String& sha);
+// The package's start map (startMap), or `map` when given, started now: the page's Play action, and maps_play. Never
+// part of installing. Cbuf_InsertText, so that it runs next rather than after the commands already queued (a script's
+// `screenshot;quit` would come first). False: it could not start (playProblem says why; the console too).
+bool play(const za::String& sha, const char* map = nullptr);
+// What Play starts for an installed package: the index's startmap ("start" first when it lists several) when the
+// package holds it, else its own maps' "start", else its first map by name. "" : it holds no map (`why` says so).
+// `mapCount`: the maps (BSPs) its files hold.
+[[nodiscard]] za::String startMap(const za::String& sha, za::String* why = nullptr, int* mapCount = nullptr);
+// The maps an installed package holds, by name ("plaw01", "sub/x"), sorted.
+void packageMaps(const za::String& sha, za::Vector<za::String>& out);
+// The package's own folder (<base>/qvr_addons/<id>/, laid out as a game dir), installed or not: where its maps are
+// (the in-game relighting's batches, vr_relight_maps.cpp).
+[[nodiscard]] za::String packageFolder(const za::String& sha);
+// Why the last Play of this package did not start it ("" : it did, or none was tried).
+[[nodiscard]] const za::String& playProblem(const za::String& sha);
+// The mod a package was made for that Quake VR does not run (its own progs: "Arcane Dimensions", "Quoth", "Copper",
+// else the folder the index unpacks it into, e.g. "drake"); "" : the stock game's (id1, the mission packs).
+[[nodiscard]] za::String madeFor(const mapindex::Entry& e);
 
 // The map packages' folders (each package in its own: <base>/qvr_addons/<id>/). One at a time is on the search path,
 // under quakevr and over the stock game: the active one, mounted by Play, by a `map` whose BSP only a package has, or
@@ -148,9 +161,5 @@ void mountActive();
 
 // A byte count as the console and the page show it ("5.1 MB").
 [[nodiscard]] za::String formatBytes(za::U64 bytes);
-
-// The game dir the files go to (com_basedirs' last: the user's quakevr), and its maps dir.
-[[nodiscard]] const za::String& gameDir();
-[[nodiscard]] za::String mapsDir();
 
 } // namespace qvr::mapinstall

@@ -27,9 +27,11 @@
 #include "vr_posing.hpp"
 #include "vr_rope.hpp"
 #include "vr_protocol.hpp"
+#include "vr_serverrules.hpp"
 #include "vr_shells.hpp"
 #include "vr_explosiondebris.hpp"
 #include "vr_shock.hpp"
+#include "vr_smoulder.hpp"
 #include "vr_teleport.hpp"
 #include "vr_tips.hpp"
 #include "vr_throw.hpp"
@@ -207,6 +209,13 @@ VrMove unposed;
     }
 
     move.headAngles = hs.headAngles;
+    if(!vrActive())
+    {
+        // Flat screen: the server walks by these (VR_MoveAngles), so they are the view's as it is sent, as Quake's
+        // .v_angle: the hands' state was taken at the frame's start, before this frame's mouse turned the view (the
+        // first move after a turn went the old way, and the walk lined up with the view 80 ms late: vr_inputlag_test turn).
+        move.headAngles = {cl.viewangles[0], cl.viewangles[1], cl.viewangles[2]};
+    }
     move.vrYaw = hands::playSpaceYaw();
     move.origin = hs.playerOrigin;
     move.headPos = hs.head;
@@ -573,9 +582,11 @@ void init()
     Cmd_AddCommand("vr_particle_test", particleTest_f);
     shells::registerCommands();
     explosiondebris::registerCommands();
+    serverrules::registerCommands();
     fireparticles::registerCommands();
     Cmd_AddCommand("vr_walltorch_tilt_test", walltorch::tiltTest);
     shock::registerCommands();
+    smoulder::registerCommands();
     weaponfx::registerCommands();
     Cmd_AddCommand("+offhandattack", OffhandAttackDown_f);
     Cmd_AddCommand("-offhandattack", OffhandAttackUp_f);
@@ -648,6 +659,7 @@ extern "C" void VR_WriteDemoState(sizebuf_t* msg)
     if(vrProtocol())
     {
         worldtext::clientWriteAll(msg);
+        tips::clientWriteAll(msg);
     }
 }
 
@@ -659,6 +671,7 @@ extern "C" void VR_OnClientClearState()
     decals::clear();
     worldtext::clientReset();
     tips::clientReset();
+    serverrules::clientReset();
     throwing::reset();
     thrownValid[0] = thrownValid[1] = false;
     twohand::reset();
@@ -671,6 +684,7 @@ extern "C" void VR_OnClientClearState()
     explosiondebris::clear();
     fireparticles::clear();
     shock::clear();
+    smoulder::clear();
     weaponfx::clear();
     wounds::clear();
     rope::forget();
@@ -706,6 +720,7 @@ extern "C" void VR_ParseEntityUpdate(int num, int bits)
     data.scaleOrigin = (bits & U_QVR_SCALEORIGIN) ? readCoords3() : glm::vec3{0.f};
     data.offset = (bits & U_QVR_OFFSET) ? readCoords3() : glm::vec3{0.f};
     data.noRotate = (bits & U_QVR_NOROTATE) != 0;
+    data.spin = (bits & U_QVR_SPIN) != 0;
     data.weaponUid = (bits & U_QVR_WEAPONUID) ? MSG_ReadLong() : 0;
 }
 
@@ -744,6 +759,11 @@ extern "C" void VR_DebugDrawnBoxes(void)
 extern "C" int VR_SuppressModelRotate(int num)
 {
     return vrProtocol() && num >= 0 && num < static_cast<int>(entityData.size()) && entityData[num].noRotate;
+}
+
+extern "C" int VR_ModelSpins(int num)
+{
+    return vrProtocol() && num >= 0 && num < static_cast<int>(entityData.size()) && entityData[num].spin;
 }
 
 extern "C" int VR_ParseServerMessage(int cmd)
@@ -786,6 +806,7 @@ extern "C" int VR_ParseServerMessage(int cmd)
         case QVR_SVC_SHOCK: shock::parse(); break;
         case QVR_SVC_FIRED: weaponfx::parseFired(); break;
         case QVR_SVC_TRACER: weaponfx::parseTracer(); break;
+        case QVR_SVC_RULES: serverrules::clientParse(); break;
         default: Host_Error("svc_quakevr: unknown command %d", subcmd);
     }
 

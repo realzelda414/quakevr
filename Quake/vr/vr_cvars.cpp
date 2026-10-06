@@ -6,6 +6,7 @@
 #include "vr_engine.hpp"
 #include "vr_hands.hpp"
 #include "vr_props.hpp"
+#include "vr_retro.hpp"
 #include "vr_weapons.hpp"
 
 #include "Zancle/Base/Strncmp.hpp"
@@ -398,8 +399,35 @@ const DefaultChange defaultChanges[] = {
     {87, &vr_walltorch_inv_size, "1.25"}, // legacy three-flame size
     {87, &vr_ragdoll_grab, "2"}, // ragdolls are taken by hand only
     {88, &vr_particle_retro_halfres_pixels, "64"}, // 0: all particles in their order (the split drew small over large)
+    // 89: the author's tuned parallax (2026-10-06): further, no grazing fade, its depth written
+    {89, &vr_parallax_distance, "512"},     // 1024
+    {89, &vr_parallax_grazing, "86"},       // 90
+    {89, &vr_parallax_depth_write, "0"},    // 1
+    // 89: the author's combat tweaks (2026-10-06): the hands' knock from hits, burning, struggling knockdowns
+    {89, &vr_pain_knock_strength, "0.75"},  // 0.6
+    {89, &vr_pain_knock_max, "10"},         // 8.5
+    {89, &vr_pain_knock_time, "0.35"},      // 0.3
+    {89, &vr_burn_flames_max, "7"},         // 12
+    {89, &vr_burn_self, "0"},               // 1
+    {89, &vr_burn_drop, "0"},               // 1
+    {89, &vr_knockdown_wiggle, "0.7"},      // 1
+    {89, &vr_knockdown_wiggle_frequency, "1.2"}, // 2.2
+    {89, &vr_knockdown_wiggle_pause, "1"},  // 0
+    {89, &vr_parry_stagger, "0.35"},        // 0.75
+    {89, &vr_counter_damage, "1.2"},        // 1.5 (vr_defaults.cfg's 1.2 dropped: the compiled default again)
+    // 90: the training dummy dies (Combat > Gore > Dummy Dies; the author, 2026-10-06: "make gib mode the default")
+    {91, &vr_dummy_gib, "0"},               // 1
+    // 92: the author's decisions (2026-10-06; ROUND21.md, "The author's combat decisions"): thrown axes stick in
+    // explosive boxes as in every other prop.
+    {92, &vr_axestick_metal, "0"},          // 1
+    // 92: thrown gibs almost always stick to walls (the author, 2026-10-06): Thrown Gibs Stick his 0.75 to 1
+    // (vr_defaults.cfg; VR_Gib_Think2 also tells a lobbed gib's hit on a wall now).
+    {92, &vr_gore_stick_thrown, "0.75"},    // 1
+    // 93: Relighting's Light Textures 1.2 (the author relit hip1m1 so, 2026-10-06: "Maybe those should be the new
+    // defaults"); relight_maps.py's --light-texture-strength too.
+    {93, &vr_relight_strength, "1"},        // 1.2
 };
-constexpr int configVersion = 88;
+constexpr int configVersion = 93;
 
 // Two settings' values the same (as numbers when both are).
 [[nodiscard]] bool sameValue(const char* a, const char* b)
@@ -661,12 +689,25 @@ void migrateConfig()
             Cvar_SetQuick(var, var->default_string);
         }
     }
+    // 89: the author's retro textures (vr_retro.cpp shippedLook): every kind's settings still at the old defaults.
+    if(from < 89)
+    {
+        retro::migrateShippedLook();
+    }
     // 81: a config pointing vr_extmaps_dir at a downloaded Quetoo folder (quetoo-data/.../textures/quake) takes the
     // shipped copy (relative, in every install).
     if(from < 81 && quetooFolder(vr_extmaps_dir.string))
     {
         Con_DPrintf("VR: vr_extmaps_dir: %s (was %s)\n", vr_extmaps_dir.default_string, vr_extmaps_dir.string);
         Cvar_SetQuick(&vr_extmaps_dir, vr_extmaps_dir.default_string);
+    }
+    // 90: the flashlight's cord is the low-poly chain or none (the author, 2026-10-06: ROUND21.md, "Flashlight cord:
+    // the low-poly chain only"). The coiled cord (1), the plain cable (2), the chain (3) and the low-poly chain (4) are
+    // all the low-poly chain, now 1; none (0) stays.
+    if(from < 90 && vr_flashlight_cord.value != 0.f && vr_flashlight_cord.value != 1.f)
+    {
+        Con_DPrintf("VR: vr_flashlight_cord: 1, the low-poly chain (was %s)\n", vr_flashlight_cord.string);
+        Cvar_SetQuick(&vr_flashlight_cord, "1");
     }
     Cvar_SetValueQuick(&vr_cfg_version, static_cast<float>(configVersion));
 }
@@ -726,7 +767,8 @@ const CompiledDefault compiledDefaults[] = {
         || var == &vr_body_forearm_twist || var == &vr_body_wrist_limits || var == &vr_body_elbow_lift
         || var == &vr_body_elbow_spread
         || var == &vr_body_elbow_out
-        || var == &vr_body_elbow_back || var == &vr_body_elbow_hand;
+        || var == &vr_body_elbow_back || var == &vr_body_elbow_hand || var == &vr_body_elbow_tuck
+        || var == &vr_body_elbow_tuck_back || var == &vr_body_elbow_tuck_near || var == &vr_body_elbow_tuck_far;
 }
 
 // "vr_savedefaults": writes the archived Quake VR settings that differ from the compiled-in

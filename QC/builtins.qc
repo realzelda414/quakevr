@@ -175,6 +175,10 @@ void(float kind, vector org, float radius, float duration) watershock = #0;
 float QVR_SHOCK_SELF = 0;
 float QVR_SHOCK_SURFACE = 1;
 float QVR_SHOCK_BURST = 2;
+// `player` struck by lightning (a shambler's bolt, another's lightning gun, a trap's, the water's shock spreading) for
+// `damage` at `at`: its client draws Quad's arcs over its arms, hands and body a while (vr_shock_self_time, by the damage;
+// engine vr_shock.cpp KindSelfHit). Nothing else.
+void(entity player, float damage, vector at) playershock = #0;
 vector(entity e, vector handangles, float grab) carryangles = #0; // a held object's angles: at the grip (grab 1) its turn in the hand is kept; after, it turns with the hand
 // Round 21: hotspot `index` (0..3) of the weapon in `hand`: where (a grip's point, a blade grip's middle; '0 0 0' if
 // none), and its type (what 0: 0 none, 1 grip, 2 blade), bias (1, units) or a blade's share of the way from the hand
@@ -280,7 +284,23 @@ vector(entity e, float bone, vector p, float toWorld) ragdollpoint = #0;
 // is on e's ragdoll's head (0 not or
 // headless, -1 not a ragdoll).
 float(entity e, vector blade, ...) ragdolldecap = #0; // [float settle]: its parts' motion times this at its next step (a head pop's)
-vector(entity e, float what) ragdollcut = #0;
+vector(entity e, float what, ...) ragdollcut = #0; // [float bone]: 4 and 5 the stump of that limb (-1 the head)
+// Limb gore (vr_limbs.qc; the engine's vr_box3d.cpp "Limb gore"): e's limb at joint `bone` (-1 the head) cut off as
+// ragdolldecap's head ([float settle]); ragdolllimb the joint a hit at p would cut (the head's bone for the head; -1 the
+// torso, -2 no rig); ragdolllimbs: 0 its limb joints not cut (bits, not the head's), 1 its head's bones, 2 its bones cut
+// off, 3 its head bone (-1 none), 4 what a cut at [bone] takes now, 5 [bone]'s parent; limbmodel the limb's model ("":
+// none; just cut: the piece cut); limbplace where a limb not cut is now: 0 its model's origin, 1 its angles, 2 its
+// velocity, 3 a point on its own bone's surface (the tests' hit).
+float(entity e, float bone, vector blade, ...) ragdollcutlimb = #0;
+float(entity e, vector p) ragdolllimb = #0;
+float(entity e, float what, ...) ragdolllimbs = #0;
+string(entity e, float bone) limbmodel = #0;
+vector(entity e, float bone, float what) limbplace = #0;
+// The piece a cut at `bone` (-1 the head) takes (just cut: the piece cut; a body gibbed whole: the limb as it is): what 0
+// {kg it weighs (its share of e's ragdoll's mass by the kind of limb: a hand a little, a thigh a lot), the ragdoll's
+// mass, that share}; 1 its
+// cut end (the joint) in its model's space (units, unscaled: modelpoint turns it). '0 0 0': none.
+vector(entity e, float bone, float what) limbpiece = #0;
 float(entity e, vector p, ...) ragdollhead = #0; // [float neck]: units from the neck that count (at least 4)
 // A shot's push: the first loose prop between `start` and `end` (a health box, a gib, a weapon lying about: traces pass
 // through them) pushed as physicspush where the shot goes in. That prop, or world.
@@ -307,6 +327,11 @@ void(entity e, entity player, float hand) carry2hkeep = #0; // held in both hand
 float(entity e, vector point, float hand) carryreach = #0; // whether self's hand can take hold of it: its fist touches its drawn surface (vr_carry_grab_bias; point: the hand's, unused)
 void(vector ang) makeforward = #0; // sets v_forward
 vector(entity e, float max) modelbounds = #0; // the model's mins (max 0) or maxs, in model space
+// The drawn box of e's model (as drawn: a weapon model's own scale and offset, its model_scale and model_offset), not
+// turned, about its origin: its mins (max 0) or maxs. modelbounds is the model's raw box, not where a weapon model is drawn.
+vector(entity e, float max) drawnbounds = #0;
+// The model_offset putting the middle of e's drawn box (its model_scale as now, its model_offset ignored) at `at`.
+vector(entity e, vector at) modeloffsetto = #0;
 vector(entity e) modelcentre = #0; // the middle of the drawn model (turned with it, scaled and offset as drawn), in the world
 // findradius's chain (the same order) less what has no model or whose modelcentre is out of the cone from org along dir
 // (a unit vector) whose cosine is mincos (a little wider: test each again), or within a unit of org.
@@ -423,6 +448,8 @@ float QVR_SPLASH_SHOT = 1;   // a small plip
 float QVR_SPLASH_THING = 2;  // a splash, small or big by strength
 
 void(entity target, float duration) bodyshock = #0;
+void(entity target, float left) bodysmoulder = #0; // a burning body's fire goes out in `left` s (0: just out; below 0: doused): it smokes while it burns and a while after (vr_burning.qc)
+void(entity target, float duration) bodyshockdeath = #0; // lightning's lasting shock on a body it killed or struck: arcs crawling over it, fading (vr_shock.qc)
 void(entity box, entity player, float hand, float begin) portal_carry = #0;
 
 float(entity observer, entity target, vector from, vector point, float gate) portal_ai_sight = #0;

@@ -337,7 +337,13 @@ void() scourge_die =
 {
     // check for gib
    // stop sound
-   remove(self.lastvictim);
+   // QVR: its trigger (scourge_think's) only if it has one: one killed before its first think (a test's corpse,
+   // killed as it spawns) has none, and remove(world) freed the world: every monster and gib after it fell through the
+   // floor.
+   if(self.lastvictim != world)
+   {
+      remove(self.lastvictim);
+   }
    self.spawnsilent = 0;
    scourge_think();
    if(self.health < -35)
@@ -419,7 +425,7 @@ void() ScourgeTriggerTouch =
 */
 void() monster_scourge =
 {
-    if(!VR_Pack_RequireSpawn(VR_Pack_Hipnotic(), "Hipnotic")) { return; }
+    if(!VR_Pack_RequireSpawn(VR_Has4("progs/h_scourg.mdl", "progs/laser.mdl", "progs/s_light.mdl", "progs/scor.mdl") && VR_Has4("sound/misc/null.wav", "sound/scourge/idle.wav", "sound/scourge/pain.wav", "sound/scourge/pain2.wav") && VR_Has4("sound/scourge/sight.wav", "sound/scourge/tailswng.wav", "sound/scourge/walk.wav", "sound/shambler/smack.wav") && VR_Has4("sound/weapons/rocket1i.wav", "", "", ""), "Hipnotic")) { return; }
 
     if(deathmatch)
     {

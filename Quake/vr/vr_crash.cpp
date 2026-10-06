@@ -6,9 +6,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 // vr_zancle.cpp: Zancle's failed asserts (ZA_ASSERT) reported as a Quake error (za::setAssertHandler).
 extern "C" void VR_InstallZancleAssertHandler (void);
+
+// The build's version: qvr_buildver.h, written by every Visual Studio build in its intermediate folder
+// (Windows/VisualStudio/quakevr.props, QvrBuildVersion: the last commit's date and short hash, "-dirty" with
+// uncommitted changes to tracked files). Builds without it (the Makefile's) say "unknown build".
+#if defined(__has_include)
+#if __has_include("qvr_buildver.h")
+#include "qvr_buildver.h"
+#endif
+#endif
+#ifndef QVR_BUILD_VERSION
+#define QVR_BUILD_VERSION "unknown build"
+#endif
+
+extern "C" const char *VR_BuildVersion (void)
+{
+	return QVR_BUILD_VERSION;
+}
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -22,9 +40,11 @@ extern "C" void VR_InstallZancleAssertHandler (void);
 #include <crtdbg.h>
 #endif
 
-/* A crash in an automated test run (QVR_NO_ERROR_DIALOG) writes qvr_crash.txt (the exception and the crashing
- * thread's stack, with symbols from the build's .pdb) and qvr_crash.dmp (a minidump for a debugger) in the working
- * directory; run.ps1 prints the stack. DbgHelp is loaded only then (no link dependency). */
+/* A crash writes qvr_crash.txt (the exception, the build and the map being played (VR_SetCrashContext), and the
+ * crashing thread's stack, with symbols from the build's .pdb) and qvr_crash.dmp (a minidump for a debugger) in the
+ * working directory: in an automated test run (QVR_NO_ERROR_DIALOG; run.ps1 prints the stack) and in a player's run
+ * alike (only the exception filter there: the crash then ends as before). DbgHelp is loaded only then (no link
+ * dependency). */
 
 typedef BOOL (WINAPI *qvr_SymInitialize_t) (HANDLE, PCSTR, BOOL);
 typedef DWORD (WINAPI *qvr_SymSetOptions_t) (DWORD);
@@ -37,6 +57,8 @@ typedef BOOL (WINAPI *qvr_MiniDumpWriteDump_t) (HANDLE, DWORD, HANDLE, MINIDUMP_
 
 static volatile LONG crashEntered = 0; // PL_CrashReport: a report under way (any thread)
 static bool crashHandlerInstalled = false; // VR_InstallCrashHandler: once
+// VR_SetCrashContext: what the game was doing (the map asked for, the map package mounted): the report's second line.
+static char crashContext[512];
 
 static void PL_CrashReport (EXCEPTION_POINTERS *ep, const char *what)
 {
@@ -57,6 +79,17 @@ static void PL_CrashReport (EXCEPTION_POINTERS *ep, const char *what)
 			fprintf (f, " (%s 0x%llx)", er->ExceptionInformation[0] == 0 ? "reading" : er->ExceptionInformation[0] == 1 ? "writing" : "executing",
 				(unsigned long long)er->ExceptionInformation[1]);
 		fprintf (f, ", thread %lu\n", (unsigned long)GetCurrentThreadId ());
+		{
+			// The exe's link time (its PE header): which build crashed, whichever file was compiled last.
+			const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)GetModuleHandleA (NULL);
+			const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)((const char *)dos + dos->e_lfanew);
+			time_t linked = (time_t)nt->FileHeader.TimeDateStamp;
+			char when[32] = "?";
+			struct tm *tm = localtime (&linked);
+			if (tm)
+				strftime (when, sizeof (when), "%Y-%m-%d %H:%M", tm);
+			fprintf (f, "Quake VR %s, exe linked %s; %s\n", QVR_BUILD_VERSION, when, crashContext[0] ? crashContext : "no map spawned yet");
+		}
 		fflush (f);
 	}
 	if (dbg)
@@ -76,7 +109,20 @@ static void PL_CrashReport (EXCEPTION_POINTERS *ep, const char *what)
 			int i;
 			if (pSymSetOptions)
 				pSymSetOptions (SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
-			pSymInitialize (proc, NULL, TRUE);
+			{
+				// The .pdb beside the exe (a player's install; the working directory is the caller's), else the working
+				// directory. The path the linker wrote in the exe is tried first (a developer's build).
+				char symPath[MAX_PATH + 4] = ".";
+				char exePath[MAX_PATH];
+				DWORD n = GetModuleFileNameA (NULL, exePath, MAX_PATH);
+				char *slash = n > 0 && n < MAX_PATH ? strrchr (exePath, '\\') : NULL;
+				if (slash)
+				{
+					*slash = 0;
+					snprintf (symPath, sizeof (symPath), "%s;.", exePath);
+				}
+				pSymInitialize (proc, symPath, TRUE);
+			}
 			memset (&sf, 0, sizeof (sf));
 #ifdef _M_X64
 			sf.AddrPC.Offset = ctx.Rip; sf.AddrFrame.Offset = ctx.Rbp; sf.AddrStack.Offset = ctx.Rsp;
@@ -206,10 +252,23 @@ static int __cdecl PL_CrtReportHook (int type, char *message, int *returnValue)
 }
 #endif
 
+extern "C" void VR_SetCrashContext (const char *what)
+{
+	snprintf (crashContext, sizeof (crashContext), "%s", what ? what : "");
+}
+
 extern "C" void VR_InstallCrashHandler (void)
 {
 	VR_InstallZancleAssertHandler ();
 	bool &installed = crashHandlerInstalled;
+	if (!installed && !getenv ("QVR_NO_ERROR_DIALOG"))
+	{
+		// A player's run: a crash writes the same report (the stack, the map and package, the dump) in the working
+		// directory, then ends as it always did (Windows' own report; a debugger attached sees it first). Nothing else
+		// changes: no dialog suppressed, and the last report kept until the next crash (it is the evidence).
+		installed = true;
+		SetUnhandledExceptionFilter (PL_CrashFilter);
+	}
 	if (!installed && getenv ("QVR_NO_ERROR_DIALOG"))
 	{
 		installed = true;
@@ -276,6 +335,11 @@ extern "C" void VR_InstallCrashHandler (void)
 }
 
 extern "C" void VR_FatalReport (const char *what)
+{
+	(void) what;
+}
+
+extern "C" void VR_SetCrashContext (const char *what)
 {
 	(void) what;
 }

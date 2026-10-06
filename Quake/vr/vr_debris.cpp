@@ -561,31 +561,31 @@ void obstaclesOf(za::Vector<Obstacle>& out, float extra)
     }
 }
 
-// A number the worldspawn sets for Quake VR ("_vr_debris", "_vr_crates": 1 if it has none): 0 none in this map,
+// A number the worldspawn sets for Quake VR ("_vr_debris", "_vr_crates": `absent` if it has none): 0 none in this map,
 // another number times the chance.
-[[nodiscard]] float worldspawnKey(const char* wanted)
+[[nodiscard]] float worldspawnKey(const char* wanted, float absent)
 {
     if(!sv.worldmodel || !sv.worldmodel->entities)
     {
-        return 1.f;
+        return absent;
     }
     const char* data = COM_Parse(sv.worldmodel->entities);
     if(!data || com_token[0] != '{')
     {
-        return 1.f;
+        return absent;
     }
     while(true)
     {
         data = COM_Parse(data);
         if(!data || com_token[0] == '}')
         {
-            return 1.f;
+            return absent;
         }
         const za::String key = com_token;
         data = COM_Parse(data);
         if(!data)
         {
-            return 1.f;
+            return absent;
         }
         if(key == wanted)
         {
@@ -852,9 +852,9 @@ void gatherObstacles(za::Vector<Obstacle>& out, float extra)
     obstaclesOf(out, extra);
 }
 
-float worldspawnValue(const char* key)
+float worldspawnValue(const char* key, float absent)
 {
-    return worldspawnKey(key);
+    return worldspawnKey(key, absent);
 }
 
 bool inList(const char* list, const char* name)
@@ -909,7 +909,8 @@ const char* materialName(Material m)
 
 bool enabledHere()
 {
-    return vr_debris.value != 0.f && sv.active && sv.worldmodel && svs.maxclients == 1 && !inList(vr_debris_exclude.string, sv.name) &&
+    return vr_debris.value != 0.f && sv.active && sv.worldmodel && (svs.maxclients == 1 || vr_debris_mp_max.value > 0.f) &&
+           !inList(vr_debris_exclude.string, sv.name) &&
            worldspawnValue("_vr_debris") > 0.f;
 }
 
@@ -930,7 +931,7 @@ int plan()
     {
         if(vr_debug_debris.value && sv.active)
         {
-            const char* why = vr_debris.value == 0.f ? "vr_debris 0" : svs.maxclients != 1 ? "multiplayer" :
+            const char* why = vr_debris.value == 0.f ? "vr_debris 0" : svs.maxclients != 1 ? "multiplayer, vr_debris_mp_max 0" :
                               inList(vr_debris_exclude.string, sv.name) ? "in vr_debris_exclude" : "its worldspawn's _vr_debris is 0";
             Con_Printf("debris: %s: none (%s)\n", sv.name, why);
         }
@@ -1063,7 +1064,11 @@ int plan()
     }
 
     const int freeEdicts = qcvm->max_edicts - qcvm->num_edicts - static_cast<int>(za::max(vr_debris_edicts_left.value, 0.f));
-    const int most = za::min(static_cast<int>(za::max(vr_debris_max.value, 0.f)), za::max(freeEdicts, 0));
+    int most = za::min(static_cast<int>(za::max(vr_debris_max.value, 0.f)), za::max(freeEdicts, 0));
+    if(svs.maxclients != 1)
+    {
+        most = za::min(most, static_cast<int>(za::max(vr_debris_mp_max.value, 0.f))); // (each in sight costs every client)
+    }
     const float areaSize = za::max(vr_debris_area_size.value, 32.f);
     const int areaMax = static_cast<int>(za::max(vr_debris_area_max.value, 1.f));
     const float spacing = za::max(vr_debris_spacing.value, 0.f);

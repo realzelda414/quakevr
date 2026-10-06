@@ -45,6 +45,7 @@
 #include "vr_menuui.hpp"
 #include "vr_menupaint.hpp"
 #include "vr_panel.hpp"
+#include "vr_stereo.hpp"
 #include "vr_units.hpp"
 #include "vr_window.hpp"
 
@@ -60,6 +61,8 @@
 
 extern "C" {
 extern float m_mousex, m_mousey; // menu.c: the menus' mouse, in menu coordinates
+extern cvar_t ui_mouse;           // menu.c: the desktop mouse in the menus
+int Key_StringToKeynum(const char* str); // keys.c: a key's number from its name (vr_mock_key)
 extern m_state_e m_skill_prevmenu, m_quit_prevstate; // menu.c: where the skill and quit menus came from
 
 // menu.c: its menus' openers, and its lists for the VR controllers (M_ScrollList: // QVR).
@@ -337,29 +340,37 @@ void appendStrip(za::Vector<gfx::Vertex>& v, const glm::vec3& a, const glm::vec3
 }
 
 // ----------------------------------------------------------------------------
-// The corner's buttons: Back to game, Search, Console, Advanced VR, Levels, Checklist
+// The corner's buttons: Back to game, Search, Console, VR Settings, Advanced VR, Levels, Map Library, Relighting,
+// Checklist
 // ----------------------------------------------------------------------------
 
-// A column at the panel's top left, over every menu: "Back to game" (closes the menu, which reopens
-// where it was), "Search" and "Console" (Quake's console with a keyboard: commands typed in the headset), "Advanced
-// VR" (the Advanced VR Options page), "Levels" (Ironwail's level list) and
-// "Checklist" (the playtest checklist, its open items counted on it; vr_checklist.hpp), from any page. The laser clicks them; the sticks reach them too (focus): a click of either stick
+// A column at the panel's top left, over every menu: "Back to game" (closes the menu, which reopens where it was),
+// "Search" and "Console" (Quake's console with a keyboard: commands typed in the headset), "VR Settings" (the VR
+// Settings page), "Advanced VR" (the Advanced VR Options page), "Levels" (Ironwail's level list), "Map Library",
+// "Relighting" (Graphics > Relighting) and "Checklist" (the playtest checklist, its open items counted on it;
+// vr_checklist.hpp), from any page. The laser clicks them; the sticks reach them too (focus): a click of either stick
 // on any menu, or on a VR page up from its first setting (down from its last).
 enum Tool
 {
     ToolBack,
     ToolSearch, // the VR menus' Search page (vr_menu_search.inc)
     ToolConsole, // Quake's console with a keyboard (vr_menu_console.inc)
+    ToolSettings, // the VR Settings page
     ToolAdvanced,
     ToolLevels,
     ToolMaps, // the map browser: the external map index, installed and played from here (vr_menu_maps.inc)
-    ToolChecklist,
+    ToolRelighting, // Graphics > Relighting (the map's lights baked again: vr_relight)
+    ToolChecklist, // (the last: shown at Menu Detail: Developer only)
     ToolCount
 };
 
 // (The checklist's count after its label: "Checklist 99" at most, as wide as "Back to game".)
-constexpr const char* toolLabels[ToolCount]{"Back to game", "Search", "Console", "Advanced VR", "Levels", "Map Library",
-    "Checklist 99"};
+constexpr const char* toolLabels[ToolCount]{"Back to game", "Search", "Console", "VR Settings", "Advanced VR", "Levels",
+    "Map Library", "Relighting", "Checklist 99"};
+
+// Their names for the tests' commands (vr_mock_laser, vr_mock_mouse).
+constexpr const char* toolNames[ToolCount]{"back", "search", "console", "settings", "advanced", "levels", "maps", "relighting",
+    "checklist"};
 
 // The buttons shown: the Checklist (the last) only at Menu Detail: Developer (the playtest checklist is the author's).
 [[nodiscard]] int toolsShown()
@@ -369,30 +380,54 @@ constexpr const char* toolLabels[ToolCount]{"Back to game", "Search", "Console",
 
 // Where the column goes: across, menu pixels; up and down, from the canvas's top in true pixels
 // (menu pixels as wide as they are across: `k` menu rows' pixels each, the canvas's row spacing).
+// On a flat screen a row of icons along the canvas's top edge instead: the desktop's menu canvas has no room
+// above or beside the menus for the column (its pages and lists reach its left edge), only that strip above them.
 struct ToolbarLayout
 {
-    static constexpr float corner = 4.f; // true pixels from the panel's edges
-    static constexpr float half = 7.f;   // half a button's height
-    static constexpr float gap = 2.f;    // between two buttons
-    static constexpr float icon = 9.f;   // an icon's width
+    static constexpr float corner = 4.f;    // true pixels from the panel's edges
+    static constexpr float rowCorner = 1.f; // the row's from the canvas's top edge (the lists' titles 14 below it at least)
+    static constexpr float half = 7.f;      // half a button's height
+    static constexpr float rowHalf = 6.f;   // the row's
+    static constexpr float gap = 2.f;       // between two buttons
+    static constexpr float icon = 9.f;      // an icon's width
+    static constexpr float iconButton = 4.f + icon + 4.f; // a button without its label
+    static constexpr float columnRight = -8.f;  // the labelled column's right edge (menu x): 16 clear of the menus' x 8
+    static constexpr float columnNearest = 8.f; // ... and on a narrow panel, the nearest the menus it goes
 
     float left{0.f}, top{0.f}; // the canvas's corner
     float bottom{0.f};         // the canvas's bottom edge (menu y)
     float k{1.f};
-    float x0{0.f}, x1{0.f};
+    float x0{0.f}, x1{0.f};    // the column's edges (the row: its first button's)
     bool labels{false};
+    bool row{false};           // the flat screen's row of icons
 
-    // A button's middle (menu y).
-    [[nodiscard]] float yc(int tool) const { return top + (corner + half + tool * (2.f * half + gap)) / k; }
+    // Half a button's height (true pixels), and a button's middle (menu y).
+    [[nodiscard]] float bh() const { return row ? rowHalf : half; }
+    [[nodiscard]] float yc(int tool) const
+    {
+        return row ? top + (rowCorner + rowHalf) / k : top + (corner + half + tool * (2.f * half + gap)) / k;
+    }
 
-    // The last button's bottom edge (menu y).
-    [[nodiscard]] float buttonsBottom() const { return yc(toolsShown() - 1) + half / k; }
+    // A button's left and right edges.
+    [[nodiscard]] float bx0(int tool) const { return row ? x0 + tool * (iconButton + gap) : x0; }
+    [[nodiscard]] float bx1(int tool) const { return row ? bx0(tool) + iconButton : x1; }
+
+    // The last button's bottom edge (menu y), and the buttons' right edge.
+    [[nodiscard]] float buttonsBottom() const { return yc(toolsShown() - 1) + bh() / k; }
+    [[nodiscard]] float right() const { return bx1(toolsShown() - 1); }
 
     // What a click on `tool` takes: as far as the panel's edges, split halfway between buttons.
     [[nodiscard]] bool hit(int tool, float x, float y) const
     {
+        const bool last = tool == toolsShown() - 1;
+        if(row)
+        {
+            const float rx0 = tool == 0 ? left : bx0(tool) - gap * 0.5f;
+            const float rx1 = bx1(tool) + (last ? 2.f : gap * 0.5f);
+            return x >= rx0 && x <= rx1 && y >= top && y <= yc(tool) + (rowHalf + 2.f) / k;
+        }
         const float y0 = tool == 0 ? top : yc(tool) - (half + gap * 0.5f) / k;
-        const float y1 = yc(tool) + (half + (tool == toolsShown() - 1 ? 2.f : gap * 0.5f)) / k;
+        const float y1 = yc(tool) + (half + (last ? 2.f : gap * 0.5f)) / k;
         return x >= left && x <= x1 + 2.f && y >= y0 && y <= y1;
     }
 };
@@ -407,22 +442,30 @@ struct ToolbarLayout
     Draw_GetTransformBounds(&t, &l.left, &l.top, &right, &l.bottom);
     l.k = za::fmax(1.f, -t.scale[1] * vid.guiheight / (t.scale[0] * vid.guiwidth)); // as Painter's
 
-    // All as wide as the widest label, their right edges a character left of Quake's plaque (x 16): on
-    // a wide panel near the menu rather than out at its corner. Where the labels do not fit, only
-    // the icons, in the corner.
+    // All as wide as the widest label, their right edges at columnRight (clear of the menus: Quake's plaque at x 16,
+    // the VR pages' rows from x 8, the Search and Map Library pages from 12): on a wide panel near the menu rather than
+    // out at its corner. On a narrower one as far left as the panel goes (no nearer the menu than x 8); where the
+    // labels do not fit even so, only the icons, in the corner.
     float widest = 0.f;
     for(const char* label : toolLabels)
     {
         widest = za::fmax(widest, 8.f * static_cast<float>(strlen(label)));
     }
     const float width = 4.f + ToolbarLayout::icon + 4.f + widest + 5.f;
-    l.x1 = 16.f - 8.f;
+    l.x1 = ToolbarLayout::columnRight;
     l.x0 = l.x1 - width;
-    l.labels = l.x0 >= l.left + ToolbarLayout::corner;
-    if(!l.labels)
+    if(l.x0 < l.left + ToolbarLayout::corner)
     {
         l.x0 = l.left + ToolbarLayout::corner;
-        l.x1 = l.x0 + 4.f + ToolbarLayout::icon + 4.f;
+        l.x1 = l.x0 + width;
+    }
+    l.labels = l.x1 <= ToolbarLayout::columnNearest;
+    l.row = !qvr::menuui::active(); // (a flat screen)
+    if(!l.labels || l.row)
+    {
+        l.labels = false;
+        l.x0 = l.left + ToolbarLayout::corner;
+        l.x1 = l.x0 + ToolbarLayout::iconButton;
     }
     return l;
 }
@@ -432,10 +475,21 @@ struct Toolbar
     int menu{m_none};  // the menu it was last drawn over (m_none: not drawn)
     int hovered{-1};   // the button under the laser
     int focused{-1};   // the button the sticks selected (-1: the menu has the selection)
+    bool bannerHovered{false}; // the spectator camera's switch under the laser
     int focusMenu{m_none};
     glm::vec2 focusMouse{0.f}; // the laser's spot when they did: moving it on gives the selection back
 };
 Toolbar toolbar;
+
+// On a flat screen the desktop mouse lights a button up only once it has moved over the menus (until then the menus'
+// mouse is where it was last, or where the laser left it).
+struct FlatMouse
+{
+    glm::vec2 seen{0.f};
+    int frame{-10}; // the frame the buttons were last drawn in (host_framecount)
+    bool moved{false};
+};
+FlatMouse flatMouse;
 
 // The button at a spot of the menu (-1: none).
 [[nodiscard]] int toolAt(float x, float y)
@@ -511,6 +565,152 @@ void haptic(int hand, float seconds, float amplitude)
     }
 }
 
+// The spectator camera's switch, in the bottom left corner of every menu in the headset (the VR menu style): whether
+// the window shows the spectator camera (a whole extra render of the scene: so that it is not left on after
+// recording), a click switches it (Graphics > Recording > Window View, and the desktop mirror on if it was off).
+[[nodiscard]] bool spectatorOn()
+{
+    return vr_mirror.value > 0.f && static_cast<int>(vr_window_view.value) == 2;
+}
+
+struct BannerLayout
+{
+    float x0{0.f}, x1{0.f}, yc{0.f};
+    const char* text{""};
+};
+
+// Its right edge as the buttons' (left of the menu and its help, as far as the panel lets them), the long text where
+// it fits, else the short; else the short in the corner.
+[[nodiscard]] BannerLayout bannerLayout(const ToolbarLayout& l)
+{
+    const bool on = spectatorOn();
+    const char* const texts[2]{on ? "Spectator camera: On" : "Spectator camera: Off", on ? "Spectator: On" : "Spectator: Off"};
+    BannerLayout b;
+    b.yc = l.bottom - (ToolbarLayout::corner + ToolbarLayout::half) / l.k;
+    float width = 0.f;
+    for(const char* text : texts)
+    {
+        b.text = text;
+        width = 4.f + 6.f + 4.f + 8.f * static_cast<float>(strlen(text)) + 5.f;
+        b.x1 = ToolbarLayout::columnRight;
+        b.x0 = b.x1 - width;
+        if(b.x0 < l.left + ToolbarLayout::corner)
+        {
+            b.x0 = l.left + ToolbarLayout::corner; // (as far left as the panel goes, as the column)
+            b.x1 = b.x0 + width;
+        }
+        if(b.x1 <= ToolbarLayout::columnNearest)
+        {
+            return b;
+        }
+    }
+    b.x0 = l.left + ToolbarLayout::corner;
+    b.x1 = b.x0 + width;
+    return b;
+}
+
+// Whether a spot of the menu is on the switch (as far as the panel's edges; drawn over this menu: the VR style's).
+[[nodiscard]] bool bannerAt(float x, float y)
+{
+    if(toolbar.menu != m_state || !qvr::menuui::active())
+    {
+        return false;
+    }
+    const ToolbarLayout l = toolbarLayout();
+    const BannerLayout b = bannerLayout(l);
+    return x >= l.left && x <= b.x1 + 2.f && y >= b.yc - (ToolbarLayout::half + 2.f) / l.k && y <= l.bottom;
+}
+
+// The spectator camera's preview (vr_spectator_preview), while it is on: above its switch, as wide as the switch (within
+// the column left of Quake's plaque), the window's shape; smaller where the corner's buttons leave less room, none
+// where too small to make out. Placed by the 2D pass in the canvas (u0, v0, u1, v1), drawn by the eyes over the panel
+// (drawPreview): not into the canvas, which the camera sees in the world (it would show itself, a frame late, over
+// and over).
+struct PreviewPlace
+{
+    glm::vec4 image{0.f};
+    glm::vec4 frame{0.f};
+    int placed{-10}; // host_framecount when placed
+};
+PreviewPlace previewPlace;
+
+void placePreview(const ToolbarLayout& l, const BannerLayout& b)
+{
+    constexpr float border = 1.5f; // the frame round it (true pixels)
+    constexpr float smallest = 48.f;
+    if(!vr_spectator_preview.value || !spectatorOn() || vid.width <= 0 || vid.height <= 0)
+    {
+        return;
+    }
+    const float aspect = static_cast<float>(vid.height) / static_cast<float>(vid.width); // the camera's: the window's
+    const float x0 = za::fmax(b.x0, l.left + ToolbarLayout::corner);
+    float x1 = za::fmin(b.x1, ToolbarLayout::columnNearest);
+    const float bottom = b.yc - (ToolbarLayout::half + 2.f * ToolbarLayout::gap) / l.k;
+    const float room = (bottom - (l.buttonsBottom() + 2.f * ToolbarLayout::gap / l.k)) * l.k; // true pixels
+    float height = (x1 - x0 - 2.f * border) * aspect + 2.f * border;
+    if(height > room)
+    {
+        height = room;
+        x1 = x0 + (room - 2.f * border) / aspect + 2.f * border;
+    }
+    if(x1 - x0 < smallest)
+    {
+        return;
+    }
+    const float top = bottom - height / l.k;
+    const drawtransform_t& t = glcanvas.transform;
+    const auto uv = [&](float ax, float ay, float bx, float by) {
+        const float u0 = (ax * t.scale[0] + t.offset[0] + 1.f) * 0.5f, u1 = (bx * t.scale[0] + t.offset[0] + 1.f) * 0.5f;
+        const float v0 = (ay * t.scale[1] + t.offset[1] + 1.f) * 0.5f, v1 = (by * t.scale[1] + t.offset[1] + 1.f) * 0.5f;
+        return glm::vec4{za::fmin(u0, u1), za::fmin(v0, v1), za::fmax(u0, u1), za::fmax(v0, v1)};
+    };
+    previewPlace.frame = uv(x0, top, x1, bottom);
+    previewPlace.image = uv(x0 + border, top + border / l.k, x1 - border, bottom - border / l.k);
+    previewPlace.placed = host_framecount;
+}
+
+[[nodiscard]] bool previewPlaced()
+{
+    return vr_spectator_preview.value && host_framecount - previewPlace.placed <= 2;
+}
+
+// What the switch changed, to put back when it is switched off: the window's view before, and the desktop mirror's
+// setting when it was off (-1: it was on).
+struct SpectatorSwitch
+{
+    float view{0.f};
+    float mirror{-1.f};
+};
+SpectatorSwitch spectatorSwitch;
+
+void toggleSpectator(int hand)
+{
+    SpectatorSwitch& s = spectatorSwitch;
+    if(spectatorOn())
+    {
+        Cvar_SetValueQuick(&vr_window_view, s.view);
+        if(s.mirror >= 0.f)
+        {
+            Cvar_SetValueQuick(&vr_mirror, s.mirror);
+        }
+        s = {};
+    }
+    else
+    {
+        s.view = static_cast<int>(vr_window_view.value) == 2 ? 0.f : vr_window_view.value;
+        s.mirror = vr_mirror.value > 0.f ? -1.f : vr_mirror.value;
+        Cvar_SetValueQuick(&vr_window_view, 2.f);
+        if(vr_mirror.value <= 0.f)
+        {
+            Cvar_SetValueQuick(&vr_mirror, 1.f);
+        }
+    }
+    Con_DPrintf("spectator camera switched %s (vr_window_view %g, vr_mirror %g)\n", spectatorOn() ? "on" : "off",
+        vr_window_view.value, vr_mirror.value);
+    S_LocalSound("misc/menu3.wav");
+    haptic(hand, 0.02f, 0.3f);
+}
+
 // ----------------------------------------------------------------------------
 // Scrolling with the stick
 // ----------------------------------------------------------------------------
@@ -521,14 +721,44 @@ void haptic(int hand, float seconds, float amplitude)
     return m_state == m_vr ? menu::scroll(rows) : M_ScrollList(rows) != 0;
 }
 
-// The laser's strips, each eye (the main thread).
+// The laser's strips and the spectator camera's preview, each eye (the main thread).
 struct MenuUiScratch
 {
     za::Vector<gfx::Vertex> laser;
+    za::Vector<gfx::Vertex> preview;
     za::Vector<za::String> status;
-    auto members() { return qvr::mem::list(laser, status); }
+    auto members() { return qvr::mem::list(laser, preview, status); }
 };
 mem::Scratch<MenuUiScratch> scratch{"menu laser"};
+
+// The preview in the eye being rendered, over the panel: its frame, then the camera's image (not in the camera's own
+// view; nothing until vr_stereo.cpp has made it from an image).
+void drawPreview(const hands::State& s)
+{
+    float aspect = 0.f;
+    const unsigned texture = previewPlaced() && !stereo::isSpectator() ? stereo::spectatorPreview(aspect) : 0;
+    glm::vec3 corner, xAxis, yAxis;
+    if(!texture || !panel::menuQuad(s, corner, xAxis, yAxis))
+    {
+        return;
+    }
+    za::Vector<gfx::Vertex>& v = scratch.preview;
+    const auto quad = [&](const glm::vec4& r, const glm::vec4& color) {
+        v.clear();
+        const glm::vec2 c[4]{{r.x, r.y}, {r.z, r.y}, {r.z, r.w}, {r.x, r.w}};
+        const glm::vec2 st[4]{{0.f, 0.f}, {1.f, 0.f}, {1.f, 1.f}, {0.f, 1.f}};
+        for(const int i : {0, 1, 2, 0, 2, 3})
+        {
+            v.pushBack({corner + xAxis * c[i].x + yAxis * c[i].y, st[i], color});
+        }
+    };
+    const gfx::State state{.shade = gfx::Shade::Color, .blend = gfx::Blend::Alpha, .depthTest = false, .depthWrite = false};
+    quad(previewPlace.frame, colors::boxBorder);
+    gfx::draw(v, gfx::sceneViewProjection(), state);
+    quad(previewPlace.image, glm::vec4{1.f});
+    gfx::draw(v, gfx::sceneViewProjection(),
+        {.shade = gfx::Shade::Texture, .blend = gfx::Blend::Opaque, .depthTest = false, .depthWrite = false}, texture);
+}
 
 } // namespace
 
@@ -538,6 +768,16 @@ namespace qvr::menuui
 bool active()
 {
     return vr_menu_vr_style.value && vrActive() && key_dest == key_menu && m_state != m_none;
+}
+
+bool toolbarShown()
+{
+    if(active())
+    {
+        return true;
+    }
+    // On a flat screen (VR off; not the headset's flat-style menus, which have no laser): for the desktop mouse.
+    return vr_menu_flat_shortcuts.value && !vrActive() && key_dest == key_menu && m_state != m_none;
 }
 
 float panelHeight()
@@ -578,10 +818,18 @@ void update(const hands::State& s)
     }
     toolbar.hovered = hovered;
 
+    // And the spectator camera's switch.
+    const bool bannerHovered = on && hits[pointingHand].valid && bannerAt(m_mousex, m_mousey);
+    if(bannerHovered && !toolbar.bannerHovered)
+    {
+        haptic(pointingHand, 0.01f, 0.15f);
+    }
+    toolbar.bannerHovered = bannerHovered;
+
     // The sticks' selection on them lasts while the menu stays and the laser is not moved on (a
     // hand's tremor aside).
     if(toolbar.focused >= 0 &&
-        (!active() || m_state != toolbar.focusMenu || M_WaitingForKeyBinding() ||
+        (!toolbarShown() || m_state != toolbar.focusMenu || M_WaitingForKeyBinding() ||
             (on && hits[pointingHand].valid && glm::distance(glm::vec2{m_mousex, m_mousey}, toolbar.focusMouse) > 12.f)))
     {
         toolbar.focused = -1;
@@ -595,15 +843,21 @@ void mockLaser_f()
         mockLaser.on = false;
         return;
     }
+    if(Cmd_Argc() == 2 && !q_strcasecmp(Cmd_Argv(1), "spectator"))
+    {
+        const BannerLayout b = bannerLayout(toolbarLayout());
+        mockLaser = {true, {(b.x0 + b.x1) * 0.5f, b.yc}};
+        pointingHand = HAND_MAIN;
+        return;
+    }
     if(Cmd_Argc() == 2)
     {
         for(int t = 0; t < ToolCount; t++)
         {
-            static constexpr const char* names[ToolCount]{"back", "search", "advanced", "levels", "checklist"};
-            if(!q_strcasecmp(Cmd_Argv(1), names[t]))
+            if(!q_strcasecmp(Cmd_Argv(1), toolNames[t]))
             {
                 const ToolbarLayout l = toolbarLayout();
-                mockLaser = {true, {(l.x0 + l.x1) * 0.5f, l.yc(t)}};
+                mockLaser = {true, {(l.bx0(t) + l.bx1(t)) * 0.5f, l.yc(t)}};
                 pointingHand = HAND_MAIN;
                 return;
             }
@@ -615,7 +869,68 @@ void mockLaser_f()
         pointingHand = HAND_MAIN;
         return;
     }
-    Con_Printf("vr_mock_laser <x> <y> | back | search | advanced | levels | checklist | off: the main hand's laser on that spot of the menu\n");
+    Con_Printf("vr_mock_laser <x> <y> | back | search | console | settings | advanced | levels | maps | relighting | "
+               "checklist | spectator | off: the main hand's laser on that spot of the menu\n");
+}
+
+void mockMouse_f()
+{
+    glm::vec2 spot{0.f};
+    int next = 0;
+    if(Cmd_Argc() >= 3 && (Cmd_Argv(1)[0] == '-' || (Cmd_Argv(1)[0] >= '0' && Cmd_Argv(1)[0] <= '9')))
+    {
+        spot = {Q_atof(Cmd_Argv(1)), Q_atof(Cmd_Argv(2))};
+        next = 3;
+    }
+    else if(Cmd_Argc() >= 2)
+    {
+        const ToolbarLayout l = toolbarLayout();
+        for(int t = 0; t < ToolCount; t++)
+        {
+            if(!q_strcasecmp(Cmd_Argv(1), toolNames[t]))
+            {
+                spot = {(l.bx0(t) + l.bx1(t)) * 0.5f, l.yc(t)};
+                next = 2;
+            }
+        }
+    }
+    if(next == 0)
+    {
+        Con_Printf("vr_mock_mouse <x> <y> | back | search | console | settings | advanced | levels | maps | relighting | "
+                   "checklist [click]: the desktop mouse on that spot of the menu, clicked with click\n");
+        return;
+    }
+
+    // The window position M_Mousemove takes back to that spot (its sums the other way round).
+    drawtransform_t t;
+    Draw_GetCanvasTransform(CANVAS_MENU, &t);
+    const float nx = spot.x * t.scale[0] + t.offset[0];
+    const float ny = spot.y * t.scale[1] + t.offset[1];
+    M_Mousemove(glx + static_cast<int>(za::lround((nx + 1.f) * 0.5f * static_cast<float>(glwidth))),
+        gly + static_cast<int>(za::lround((1.f - ny) * 0.5f * static_cast<float>(glheight))));
+    Con_Printf("vr_mock_mouse: at %.1f %.1f, menu %d\n", m_mousex, m_mousey, m_state);
+    if(Cmd_Argc() > next && !q_strcasecmp(Cmd_Argv(next), "click"))
+    {
+        Key_Event(K_MOUSE1, true);
+        Key_Event(K_MOUSE1, false);
+        Con_Printf("vr_mock_mouse: clicked, menu %d%s\n", m_state, key_dest == key_menu ? "" : " (closed)");
+    }
+}
+
+void mockKey_f()
+{
+    const int key = Cmd_Argc() == 2 ? Key_StringToKeynum(Cmd_Argv(1)) : -1;
+    if(key < 0)
+    {
+        Con_Printf("vr_mock_key <key>: that key pressed and released (a key's name as bind takes it: uparrow, enter...)\n");
+        return;
+    }
+    char name[32];
+    q_strlcpy(name, Cmd_Argv(1), sizeof(name)); // (a key's action may tokenize another command: Levels)
+    Key_Event(key, true);
+    Key_Event(key, false);
+    Con_Printf("vr_mock_key: %s, menu %d, corner button %d%s\n", name, m_state, toolbarFocused() ? toolbar.focused : -1,
+        key_dest == key_menu ? "" : " (menu closed)");
 }
 
 void printLaser()
@@ -633,22 +948,27 @@ void printLaser()
 
 float toolbarBottom()
 {
-    return active() ? toolbarLayout().buttonsBottom() : -1e9f;
+    return toolbarShown() ? toolbarLayout().buttonsBottom() : -1e9f;
 }
 
 float toolbarRight()
 {
-    return active() ? toolbarLayout().x1 : -1e9f;
+    return toolbarShown() ? toolbarLayout().right() : -1e9f;
+}
+
+bool toolbarRow()
+{
+    return toolbarShown() && toolbarLayout().row;
 }
 
 bool toolbarFocused()
 {
-    return active() && toolbar.focused >= 0 && toolbar.focusMenu == m_state;
+    return toolbarShown() && toolbar.focused >= 0 && toolbar.focusMenu == m_state;
 }
 
 void focusToolbar(int dir)
 {
-    focusTool(dir > 0 ? ToolBack : toolsShown() - 1);
+    focusTool(dir > 0 || toolbarRow() ? ToolBack : toolsShown() - 1); // (the row: its first, from either end of a page)
     S_LocalSound("misc/menu1.wav");
 }
 
@@ -689,6 +1009,7 @@ void useTool(int tool, int hand)
         case ToolBack: backToGame(hand); break;
         case ToolSearch: menu::openSearch(); break;
         case ToolConsole: menu::openConsole(); break;
+        case ToolSettings: menu::jumpToSettings(); break;
         case ToolAdvanced: menu::jumpToAdvanced(); break;
         case ToolLevels:
             if(m_state == m_maps)
@@ -701,6 +1022,7 @@ void useTool(int tool, int hand)
             break;
         case ToolChecklist: menu::jumpToChecklist(); break;
         case ToolMaps: menu::openMaps(); break;
+        case ToolRelighting: menu::jumpToRelighting(); break;
         default: break;
     }
 }
@@ -786,12 +1108,18 @@ int triggerKey(int hand, bool down, int key)
     return K_MOUSE1;
 }
 
+bool spectatorPreviewWanted()
+{
+    return active() && previewPlaced();
+}
+
 void drawInEye(const hands::State& s)
 {
     if(!active() || !s.valid)
     {
         return;
     }
+    drawPreview(s);
 
     // At the pose the eyes are drawn with.
     const int h = pointingHand;
@@ -886,6 +1214,24 @@ bool qvr::menuui::drawSlider(int x, int y, float range, int past, const char* de
     return true;
 }
 
+bool qvr::menuui::drawProgress(int x0, int x1, int y, float fraction)
+{
+    if(!styled())
+    {
+        return false;
+    }
+    const Painter p;
+    const float yc = y + 4.f;
+    p.rounded(static_cast<float>(x0), static_cast<float>(x1), yc, 3.f, 3.f, colors::track);
+    if(fraction > 0.f)
+    {
+        // (at least its rounded ends: a sliver shows that it started)
+        const float end = x0 + q_max(6.f, (x1 - x0) * CLAMP(0.f, fraction, 1.f));
+        p.rounded(static_cast<float>(x0), end, yc, 3.f, 3.f, colors::fill);
+    }
+    return true;
+}
+
 extern "C" int VR_MenuDrawSlider(int x, int y, float range, float marker, const char* desc)
 {
     if(!styled())
@@ -946,13 +1292,13 @@ extern "C" int VR_MenuDrawTextBox(int x, int y, int width, int lines)
 // at all (the sticks' selection is on the corner's buttons).
 extern "C" int VR_MenuDrawHighlight(int cx, int cy)
 {
-    if(!styled())
-    {
-        return 0;
-    }
     if(menuui::toolbarFocused())
     {
         return 1;
+    }
+    if(!styled())
+    {
+        return 0;
     }
 
     drawnHighlight = {m_state, cy};
@@ -982,9 +1328,14 @@ extern "C" int VR_MenuHidesPlaque()
 }
 
 // The menus that lay out from the canvas's bounds (Ironwail's lists: levels, mods, options, key
-// bindings) start below the corner's buttons.
+// bindings) start below the corner's buttons; not under a flat screen's row of icons, which stays above their tops
+// (their bounds 10 below the canvas's top at least, their titles 4 more).
 extern "C" void VR_MenuBounds(int* top, int* height)
 {
+    if(menuui::toolbarRow())
+    {
+        return;
+    }
     const float bottom = menuui::toolbarBottom();
     const int below = static_cast<int>(za::ceil(bottom)) + 4;
     if(below <= *top)
@@ -999,8 +1350,9 @@ extern "C" void VR_MenuBounds(int* top, int* height)
 namespace
 {
 
-// A button's icon, `x` its left, `yc` its middle: Back to game's arrow, Advanced VR's sliders, the
-// levels' flag, the checklist's lines.
+// A button's icon, `x` its left, `yc` its middle: Back to game's arrow, Search's magnifying glass, the console's
+// prompt, VR Settings' headset, Advanced VR's sliders, the levels' flag, the Map Library's map, Relighting's sun, the
+// checklist's lines.
 void drawToolIcon(const Painter& p, int tool, float x, float yc, const glm::vec4& ink)
 {
     const float w = ToolbarLayout::icon;
@@ -1024,6 +1376,27 @@ void drawToolIcon(const Painter& p, int tool, float x, float yc, const glm::vec4
             // A prompt: ">" and "_".
             p.arrowHeadRight(x + 4.f, 4.f, yc - 1.f / p.k, 3.f, ink);
             p.rect(x + 5.f, x + w, yc + 3.f / p.k, 0.8f, ink);
+            break;
+        case ToolSettings:
+            // A headset: its visor (two lenses in it, a notch for the nose under them), a strap over it.
+            p.rect(x + 1.5f, x + w - 1.5f, yc - 3.6f / p.k, 0.6f, ink);
+            p.rounded(x, x + w, yc + 0.5f / p.k, 2.8f, 1.5f, ink);
+            p.disc(x + 2.6f, yc + 0.2f / p.k, 1.25f, colors::boxFill);
+            p.disc(x + w - 2.6f, yc + 0.2f / p.k, 1.25f, colors::boxFill);
+            p.band(x + 3.9f, x + w - 3.9f, yc, 2.f, 3.4f, colors::boxFill);
+            break;
+        case ToolRelighting:
+            // A sun: a disc, its rays round it.
+            p.disc(x + 4.5f, yc, 2.f, ink);
+            p.rect(x, x + 1.4f, yc, 0.6f, ink);
+            p.rect(x + w - 1.4f, x + w, yc, 0.6f, ink);
+            p.band(x + 3.9f, x + 5.1f, yc, -4.8f, -3.3f, ink);
+            p.band(x + 3.9f, x + 5.1f, yc, 3.3f, 4.8f, ink);
+            for(int i = 0; i < 4; i++)
+            {
+                const float dx = i & 1 ? 3.2f : -3.2f, dy = i & 2 ? 3.2f : -3.2f;
+                p.disc(x + 4.5f + dx, yc + dy / p.k, 0.75f, ink);
+            }
             break;
         case ToolAdvanced:
             // Three sliders, their knobs set apart.
@@ -1096,38 +1469,59 @@ extern "C" void VR_MenuDrawStatus()
     {
         widest = line.size() > widest ? line.size() : widest;
     }
+    // Measured in true pixels down (the box, the rows' tops), as the Painter draws: on a page whose rows are spaced
+    // out (vr_menu_spacing, the canvas's y scaled by k) the characters keep their size (Draw_KeepMenuGlyphSize), so
+    // the rows are placed in true pixels too, and the box fits them on every page.
     const float width = size * static_cast<float>(widest) + 2.f * pad;
     const float x1 = right - ToolbarLayout::corner;
     const float x0 = x1 - width;
     const float height = step * static_cast<float>(lines.size()) + 2.f * pad - (step - size);
     const float y0 = l.top + ToolbarLayout::corner / l.k;
-    const float yc = y0 + height * 0.5f;
+    const float yc = y0 + height * 0.5f / p.k;
     p.rounded(x0, x1, yc, height * 0.5f, 3.f, colors::boxBorder);
     p.rounded(x0 + 1.f, x1 - 1.f, yc, height * 0.5f - 1.f, 2.f, colors::boxFill);
-    float y = y0 + pad;
-    for(za::SizeT i = 0; i < lines.size(); i++, y += step)
+    for(za::SizeT i = 0; i < lines.size(); i++)
     {
+        // A row's middle (menu y), where its characters are centred at their own size.
+        const float ym = y0 + (pad + step * static_cast<float>(i) + size * 0.5f) / p.k;
         float x = x0 + pad;
         for(const char* c = lines[i].cStr(); *c; c++, x += size)
         {
             // The first line (the mode) white, the rest in the menus' tan.
-            Draw_CharacterEx(x, y, size, size, i == 0 ? *c : (*c | 128));
+            Draw_CharacterEx(x, ym - size * 0.5f, size, size, i == 0 ? *c : (*c | 128));
         }
     }
 }
 
 // The corner's buttons (over every menu, not while a key is being bound): their labels where they fit
-// left of Quake's plaque (x 16), else only their icons.
+// left of Quake's plaque (x 16), else only their icons. In the headset with the VR menu style, and on a flat screen
+// (vr_menu_flat_shortcuts), where the desktop mouse lights them up.
 extern "C" void VR_MenuDrawOverlay()
 {
     toolbar.menu = m_none;
-    if(!styled() || M_WaitingForKeyBinding())
+    if(!menuui::toolbarShown() || glcanvas.type != CANVAS_MENU || M_WaitingForKeyBinding())
     {
         return;
     }
 
     const Painter p;
     const ToolbarLayout l = toolbarLayout();
+    if(!menuui::active())
+    {
+        const glm::vec2 mouse{m_mousex, m_mousey};
+        FlatMouse& fm = flatMouse;
+        fm.moved = fm.frame >= host_framecount - 1 && (fm.moved || mouse != fm.seen); // (afresh when the menu opens)
+        fm.seen = mouse;
+        fm.frame = host_framecount;
+        toolbar.hovered = -1;
+        for(int t = 0; fm.moved && ui_mouse.value && t < toolsShown(); t++)
+        {
+            if(l.hit(t, m_mousex, m_mousey))
+            {
+                toolbar.hovered = t;
+            }
+        }
+    }
     checklist::refresh(); // (the file looked at once a second)
     char checklistLabel[16];
     const int open = checklist::openCount();
@@ -1143,11 +1537,12 @@ extern "C" void VR_MenuDrawOverlay()
     {
         const bool hot = toolbar.hovered == t || (menuui::toolbarFocused() && toolbar.focused == t);
         const float yc = l.yc(t);
-        p.rounded(l.x0, l.x1, yc, ToolbarLayout::half, 3.f, hot ? colors::highlightEdge : colors::boxBorder);
-        p.rounded(l.x0 + 1.f, l.x1 - 1.f, yc, ToolbarLayout::half - 1.f, 2.f, hot ? colors::buttonHover : colors::boxFill);
+        const float x0 = l.bx0(t), x1 = l.bx1(t);
+        p.rounded(x0, x1, yc, l.bh(), 3.f, hot ? colors::highlightEdge : colors::boxBorder);
+        p.rounded(x0 + 1.f, x1 - 1.f, yc, l.bh() - 1.f, 2.f, hot ? colors::buttonHover : colors::boxFill);
 
         const glm::vec4& ink = hot ? colors::thumb : colors::fill;
-        const float ix = l.x0 + 4.f;
+        const float ix = x0 + 4.f;
         drawToolIcon(p, t, ix, yc, ink);
 
         if(l.labels)
@@ -1159,31 +1554,42 @@ extern "C" void VR_MenuDrawOverlay()
             }
         }
     }
+
+    // The row's icons have no labels: the one under the mouse (or selected) names itself in a box under it.
+    const int named = toolbar.hovered >= 0 ? toolbar.hovered : menuui::toolbarFocused() ? toolbar.focused : -1;
+    if(l.row && named >= 0 && named < toolsShown())
+    {
+        const char* label = named == ToolChecklist ? checklistLabel : toolLabels[named];
+        const float x0 = l.bx0(named);
+        const float x1 = x0 + 4.f + 8.f * static_cast<float>(strlen(label)) + 4.f;
+        const float yc = l.buttonsBottom() + 2.f + ToolbarLayout::rowHalf;
+        p.rounded(x0, x1, yc, ToolbarLayout::rowHalf, 3.f, colors::highlightEdge);
+        p.rounded(x0 + 1.f, x1 - 1.f, yc, ToolbarLayout::rowHalf - 1.f, 2.f, colors::boxFill);
+        float x = x0 + 4.f;
+        for(const char* c = label; *c; c++, x += 8.f)
+        {
+            Draw_CharacterEx(x, yc - 4.f, 8.f, 8.f, *c);
+        }
+    }
     toolbar.menu = m_state;
 
-    // While the window shows the spectator camera (a whole extra render of the scene): a reminder in the bottom left
-    // corner, so it is not left on after recording. Its right edge as the buttons' (left of the menu and its help) where
-    // it fits, else in the corner.
-    if(window::view() == window::View::Spectator)
+    // The spectator camera's switch (the headset's menus: the window's view is the headset's mirror), bottom left.
+    if(menuui::active())
     {
-        constexpr const char* text = "Spectator camera on";
-        const float width = 4.f + 6.f + 4.f + 8.f * static_cast<float>(strlen(text)) + 5.f;
-        const float yc = l.bottom - (ToolbarLayout::corner + ToolbarLayout::half) / l.k;
-        float x1 = 16.f - 8.f;
-        float x0 = x1 - width;
-        if(x0 < l.left + ToolbarLayout::corner)
+        const BannerLayout b = bannerLayout(l);
+        const bool hot = toolbar.bannerHovered;
+        const bool on = spectatorOn();
+        p.rounded(b.x0, b.x1, b.yc, ToolbarLayout::half, 3.f, hot ? colors::highlightEdge : colors::boxBorder);
+        p.rounded(b.x0 + 1.f, b.x1 - 1.f, b.yc, ToolbarLayout::half - 1.f, 2.f, hot ? colors::buttonHover : colors::boxFill);
+        p.disc(b.x0 + 7.f, b.yc, 2.5f, on ? colors::recording : colors::boxBorder); // as a camera's recording light
+        float x = b.x0 + 4.f + 6.f + 4.f;
+        const char* state = strchr(b.text, ':');
+        for(const char* c = b.text; *c; c++, x += 8.f)
         {
-            x0 = l.left + ToolbarLayout::corner;
-            x1 = x0 + width;
+            // The label in the menus' tan, On or Off white (all white under the laser).
+            Draw_CharacterEx(x, b.yc - 4.f, 8.f, 8.f, hot || (state && c > state) ? *c : (*c | 128));
         }
-        p.rounded(x0, x1, yc, ToolbarLayout::half, 3.f, colors::boxBorder);
-        p.rounded(x0 + 1.f, x1 - 1.f, yc, ToolbarLayout::half - 1.f, 2.f, colors::boxFill);
-        p.disc(x0 + 7.f, yc, 2.5f, colors::recording); // as a camera's recording light
-        float x = x0 + 4.f + 6.f + 4.f;
-        for(const char* c = text; *c; c++, x += 8.f)
-        {
-            Draw_CharacterEx(x, yc - 4.f, 8.f, 8.f, *c | 128);
-        }
+        placePreview(l, b);
     }
 
     // On the runtime's panel (no world to draw the laser in), where the laser points: a dot in its hue.
@@ -1199,12 +1605,18 @@ extern "C" void VR_MenuDrawOverlay()
 // other end), A or Enter presses, B gives it back; a click of either stick takes it (or gives it back).
 extern "C" int VR_MenuKey(int key, int repeat)
 {
-    if(!menuui::active() || M_WaitingForKeyBinding())
+    if(!menuui::toolbarShown() || M_WaitingForKeyBinding())
     {
         toolbar.focused = -1;
         return 0;
     }
 
+    if(key == K_MOUSE1 && bannerAt(m_mousex, m_mousey))
+    {
+        toolbar.focused = -1;
+        toggleSpectator(pointingHand);
+        return 1;
+    }
     if(key == K_MOUSE1)
     {
         const int t = toolAt(m_mousex, m_mousey);
@@ -1239,6 +1651,32 @@ extern "C" int VR_MenuKey(int key, int repeat)
     {
         toolbar.focused = -1;
         return 0;
+    }
+
+    if(toolbarLayout().row)
+    {
+        // The row: left and right along it (stopping at its ends), down back to the menu (a VR page: its first setting).
+        switch(key)
+        {
+            case K_LEFTARROW:
+            case K_RIGHTARROW:
+                if(const int next = toolbar.focused + (key == K_RIGHTARROW ? 1 : -1); next >= 0 && next < toolsShown())
+                {
+                    toolbar.focused = next;
+                    S_LocalSound("misc/menu1.wav");
+                }
+                return 1;
+            case K_DOWNARROW:
+                toolbar.focused = -1;
+                if(m_state == m_vr)
+                {
+                    menu::selectEnd(1);
+                }
+                S_LocalSound("misc/menu1.wav");
+                return 1;
+            case K_UPARROW: return 1; // (nothing above it)
+            default: break;
+        }
     }
 
     switch(key)

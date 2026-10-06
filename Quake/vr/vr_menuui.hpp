@@ -29,27 +29,47 @@ void update(const hands::State& s);
 // menu (and for the release of such a press). A press also makes that hand the pointing one.
 [[nodiscard]] int triggerKey(int hand, bool down, int key);
 
-// Draws the laser and its spot on the panel, in the eye being rendered (after the panel).
+// Draws the laser and its spot on the panel, in the eye being rendered (after the panel), and the spectator camera's
+// preview (vr_spectator_preview) under it (not in the camera's own view).
 void drawInEye(const hands::State& s);
+
+// Whether a menu in the headset shows the spectator camera's preview (vr_spectator_preview, while the camera is on;
+// placed by the last 2D pass): vr_stereo.cpp then makes it from the camera's image.
+[[nodiscard]] bool spectatorPreviewWanted();
 
 // "Back to game": closes the menu from whatever page it is on, remembering that page for the next
 // time it opens (vr_menu_remember), with a pulse in `hand`. The panel's top-left button, or the
 // menu button held.
 void backToGame(int hand);
 
+// Whether the corner's buttons are over the menu: with the VR menu style in the headset, and on a flat screen (VR off)
+// with vr_menu_flat_shortcuts (the desktop mouse clicks them).
+[[nodiscard]] bool toolbarShown();
+
 // The corner's buttons under "Back to game" ("Advanced VR", "Levels", "Checklist"; vr_menuui.cpp): the column's
-// bottom (menu y; far above the menu when the style is off), where the menus' rows start at the
+// bottom (menu y; far above the menu when they are not shown), where the menus' rows start at the
 // latest; whether the sticks' selection is on them (the menu's own cursor then hidden); and the
 // selection moved onto them from a VR page's end (dir 1: down, onto the top one; -1: up, onto the
 // bottom one).
 [[nodiscard]] float toolbarBottom();
-[[nodiscard]] float toolbarRight(); // the column's right edge (menu x; far left when the style is off)
+[[nodiscard]] float toolbarRight(); // the buttons' right edge (menu x; far left when they are not shown)
 [[nodiscard]] bool toolbarFocused();
+[[nodiscard]] bool toolbarRow(); // on a flat screen: a row of icons along the canvas's top
 void focusToolbar(int dir);
 
-// vr_mock_laser <x> <y> | back | advanced | levels | checklist | off (tests): the main hand's laser on a spot of
-// the menu, or on one of the corner's buttons, whatever the hand's pose.
+// vr_mock_laser <x> <y> | back | search | console | advanced | levels | maps | checklist | spectator | off (tests): the
+// main hand's laser on a spot of the menu, on one of the corner's buttons or on the spectator camera's switch (bottom
+// left), whatever the hand's pose.
 void mockLaser_f();
+
+// vr_mock_mouse <x> <y> | <button> [click] (tests, flat screen): the desktop mouse moved to a spot of the menu (menu
+// coordinates) or onto one of the corner's buttons (as vr_mock_laser names them), as the window's mouse motion moves
+// it (M_Mousemove), and with `click` a left click there (K_MOUSE1 pressed and released).
+void mockMouse_f();
+
+// vr_mock_key <key> (tests): that key pressed and released (as Key_Event; its name as bind takes it), then the menu and
+// the corner button the keys selected (-1: none).
+void mockKey_f();
 
 // menu_vr pos: where the pointing hand's laser meets the menu (on which panel, its uv).
 void printLaser();
@@ -64,6 +84,10 @@ bool scrollStick(float y);
 // that end, a lighter colour, an arrow outside it pointing on). False (nothing drawn) without the
 // style: Quake's slider is drawn instead.
 bool drawSlider(int x, int y, float range, int past, const char* desc);
+
+// A progress bar on the row at y, from x0 to x1, filled to `fraction` (0..1): a track and its fill, as the sliders'.
+// False (nothing drawn) without the style: the menu draws Quake's (vr_menu.cpp, progressBar).
+bool drawProgress(int x0, int x1, int y, float fraction);
 
 // An open drop-down list's highlighted choice (vr_menu.cpp): a bar from x0 to x1 on the row at y, in either menu style.
 void drawListHighlight(float x0, float x1, int y);

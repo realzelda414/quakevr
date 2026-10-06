@@ -15,6 +15,7 @@
 #include "vr_detail.hpp"
 #include "vr_emissive.hpp"
 #include "vr_engine.hpp"
+#include "vr_files.hpp"
 #include "vr_walltorch.hpp"
 #include "vr_gfx.hpp"
 #include "vr_mapinstall.hpp"
@@ -36,6 +37,7 @@
 #include <sys/stat.h>
 extern "C" {
 #include "steam.h"
+#include "json.h" // (the engine's C header: Epic's install manifests)
 }
 
 
@@ -204,18 +206,21 @@ int inspectPack(const char* game, const char* const* resources, size_t count, co
 {
     za::Vector<unsigned char>& found = packScratch.found;
     found.assign(count, 0);
-    bool directory = false;
+    // Whether any of the pack's own data is there (a pak, or one of its listed files): a folder holding only what a
+    // texture or music pack extracted into it (textures/, music/) is no installation, so it reads as missing, not
+    // incomplete.
+    bool gameData = false;
     for(int base = 0; base < (onlyRoot ? 1 : com_numbasedirs); ++base)
     {
         char folder[MAX_OSPATH];
         q_snprintf(folder, sizeof(folder), "%s/%s", onlyRoot ? onlyRoot : com_basedirs[base], game);
-        directory |= Sys_FileType(folder) == FS_ENT_DIRECTORY;
         for(int pak = 0;; ++pak)
         {
             char path[MAX_OSPATH];
             q_snprintf(path, sizeof(path), "%s/pak%d.pak", folder, pak);
             FILE* file = fopen(path, "rb");
             if(!file) { break; }
+            gameData = true;
             fseek(file, 0, SEEK_END);
             const long size = ftell(file);
             rewind(file);
@@ -274,6 +279,7 @@ int inspectPack(const char* game, const char* const* resources, size_t count, co
                 fclose(file);
                 if(!valid) { return 2; }
                 found[i] = true;
+                gameData = true;
             }
         }
     }
@@ -281,12 +287,12 @@ int inspectPack(const char* game, const char* const* resources, size_t count, co
     {
         if(!found[i])
         {
-            if(directory)
+            if(gameData)
             {
                 Con_Printf("VR: %s: incomplete installation (missing %s); restore your owned mission-pack data.\n",
                     game, resources[i]);
             }
-            return directory ? 2 : 0;
+            return gameData ? 2 : 0;
         }
     }
     return 1;
@@ -383,6 +389,57 @@ int campaignIndex(const char* name)
     return -1;
 }
 
+// The Epic Games Store's Quake (the 2021 release): the launcher's install manifests (<ProgramData>/Epic/
+// EpicGamesLauncher/Data/Manifests/*.item, JSON; or the folder after -epicmanifests, for tests), each with its
+// DisplayName and InstallLocation. A manifest counts when its name says Quake and its folder holds the rerelease's
+// id1/pak0.pak, in rerelease/ (Steam's layout) or at its root (GOG's): that folder is the root. -noepic: none.
+void addEpicRoots(za::Vector<za::String>& roots)
+{
+    za::String dir;
+    if(const int arg = COM_CheckParm("-epicmanifests"); arg && arg + 1 < com_argc)
+    {
+        dir = com_argv[arg + 1];
+    }
+    else
+    {
+#ifdef _WIN32
+        const char* programData = getenv("PROGRAMDATA");
+        if(!programData || !*programData) { return; }
+        dir = za::String{programData} + "/Epic/EpicGamesLauncher/Data/Manifests";
+#else
+        return;
+#endif
+    }
+    if(!qvr::files::isDirectory(dir.cStr())) { return; }
+    qvr::files::forEachEntry(dir.cStr(), [&](const char* name, bool isDirectory)
+    {
+        const za::SizeT n = strlen(name);
+        if(isDirectory || n < 5 || q_strcasecmp(name + n - 5, ".item")) { return; }
+        za::String text;
+        if(!qvr::files::readText(qvr::files::join(dir.cStr(), name).cStr(), text)) { return; }
+        json_t* json = JSON_Parse(text.cStr());
+        if(!json) { return; }
+        const char* title = json->root ? JSON_FindString(json->root, "DisplayName") : nullptr;
+        const char* location = json->root ? JSON_FindString(json->root, "InstallLocation") : nullptr;
+        if(title && location && *location && q_strcasestr(title, "quake"))
+        {
+            char path[MAX_OSPATH];
+            q_snprintf(path, sizeof(path), "%s/rerelease/id1/pak0.pak", location);
+            if(Sys_FileType(path) == FS_ENT_FILE)
+            {
+                q_snprintf(path, sizeof(path), "%s/rerelease", location);
+                roots.pushBack(za::String{path});
+            }
+            else
+            {
+                q_snprintf(path, sizeof(path), "%s/id1/pak0.pak", location);
+                if(Sys_FileType(path) == FS_ENT_FILE) { roots.pushBack(za::String{location}); }
+            }
+        }
+        JSON_Free(json);
+    });
+}
+
 za::Vector<za::String> ownedRoots()
 {
     // Explicit bases win, last base highest. Never add store roots to com_basedirs:
@@ -403,6 +460,10 @@ za::Vector<za::String> ownedRoots()
         char install[MAX_OSPATH];
         if(Sys_GetGOGQuakeEnhancedDir(install, sizeof(install)))
         { addRoot(install); }
+    }
+    if(!COM_CheckParm("-noepic"))
+    {
+        addEpicRoots(roots);
     }
     for(int i = 0; i < com_numbasedirs; ++i)
     {
@@ -431,6 +492,7 @@ void discoverCampaigns()
             q_snprintf(folder, sizeof(folder), "%s/%s", roots[r].cStr(), c.folder);
             if(Sys_FileType(folder) != FS_ENT_DIRECTORY) { continue; }
             c.status = inspectPack(c.folder, c.resources, c.resourceCount, roots[r].cStr());
+            if(c.status == 0) { continue; } // none of its data (a texture pack's folder): the next root's copy counts
             q_strlcpy(c.root, roots[r].cStr(), sizeof(c.root));
             // A damaged higher-priority owned copy is explicit, never masked by another release.
             break;
@@ -565,13 +627,30 @@ void gameFolderName(const char* path, char* out, size_t size)
 
 } // namespace
 
+// VR_LoadOwnedLocalization's store/rerelease roots, found once (they do not change while the game runs).
+static za::Vector<za::String> ownedLocalizationRoots;
+static bool ownedLocalizationRootsKnown = false;
+
 // The filesystem asks for roots here without changing its writable basedirs.
 // Language tables are borrowed individually; this never mounts their maps/models or
 // changes com_basedirs (and therefore cannot redirect saves/configs to a store).
 extern "C" char* VR_LoadOwnedLocalization(const char* name)
 {
     if(strncmp(name, "localization/loc_", 17) || strchr(name, ':') || strstr(name, "..")) { return nullptr; }
-    const auto roots = ownedRoots();
+    // The store and rerelease roots only, found once (Steam's, GOG's and Epic's lookups are not free, and the roots do
+    // not change while the game runs): a base dir itself is on the search path already, its table read by
+    // LOC_ReadFile, and reading it here too parsed and kept every entry twice.
+    za::Vector<za::String>& roots = ownedLocalizationRoots;
+    if(!ownedLocalizationRootsKnown)
+    {
+        ownedLocalizationRootsKnown = true;
+        for(const za::String& r : ownedRoots())
+        {
+            bool base = false;
+            for(int i = 0; i < com_numbasedirs && !base; ++i) { base = !q_strcasecmp(r.cStr(), com_basedirs[i]); }
+            if(!base) { roots.pushBack(r); }
+        }
+    }
     char* result = nullptr;
     size_t used = 0;
     const auto append = [&](FILE* file, long offset, long length, const char* source)
@@ -727,7 +806,7 @@ bool selectCampaign(int selected, bool developer, bool start)
     { Con_Printf("VR: developer native launch of %s: support in progress, gameplay/progression incomplete.\n", c.folder); }
     const bool changed = activeCampaign != selected;
     activeCampaign = selected;
-    developerNative = developer;
+    developerNative = developer && selected >= 3; // (only the native campaigns have gates it opens)
     publishCampaign(true);
     if(changed || !gameDirAlreadyAdded(vrGameDir))
     {
@@ -767,9 +846,13 @@ void campaignSelectCommand()
     selectCampaign(i, !q_strcasecmp(Cmd_Argv(0), "vr_campaign_native"), true);
 }
 
+// vr_campaign_hub [vrstart|vrtutorial|vrfiringrange]: Quake's campaign, then that VR map (the hub by default). A command
+// of its own: a changelevel there from another campaign cannot rebuild the game folders mid-spawn.
 void campaignHubCommand()
 {
-    if(selectCampaign(0, false, false)) { Cbuf_InsertText("map vrstart\n"); }
+    const char* map = Cmd_Argc() > 1 ? Cmd_Argv(1) : "vrstart";
+    if(strcmp(map, "vrstart") && strcmp(map, "vrtutorial") && strcmp(map, "vrfiringrange")) { map = "vrstart"; }
+    if(selectCampaign(0, false, false)) { Cbuf_InsertText(va("map %s\n", map)); }
 }
 } // namespace
 
@@ -871,9 +954,12 @@ extern "C" int VR_SkipSearchPath(const char* filename, const char* path)
         return 0;
     }
 
+    // The maps more than one campaign has under the same name: start for Quake and its mission packs (they have no end,
+    // hub or dm1 of their own: isolating those would hide Quake's while one of them is active); start, end, hub and
+    // dm1 while one of the newer campaigns is active (theirs in place of Quake's).
     const bool start = strncmp(filename, "maps/start.", 11) == 0 ||
-        strncmp(filename, "maps/end.", 9) == 0 || strncmp(filename, "maps/hub.", 9) == 0 ||
-        strncmp(filename, "maps/dm1.", 9) == 0;
+        (activeCampaign >= 3 && (strncmp(filename, "maps/end.", 9) == 0 || strncmp(filename, "maps/hub.", 9) == 0 ||
+                                    strncmp(filename, "maps/dm1.", 9) == 0));
     char name[MAX_OSPATH];
     gameFolderName(path, name, sizeof(name));
     const int i = campaignIndex(name);
@@ -903,7 +989,8 @@ extern "C" int VR_SkipSearchPath(const char* filename, const char* path)
 
 // Relit maps (Misc/quakevr/relight_maps.py, vr_relit_maps): relit/<game>/maps/<map>.bsp, found
 // in any game folder (the script writes into quakevr), replaces maps/<map>.bsp when that comes
-// from <game>; its .lit sits next to it. Per game, since id1, hipnotic and rogue all have a
+// from <game>; its .lit sits next to it. A map relit in the game (vr_relight.cpp, vr_relight_use) is in
+// relit_custom/<game>/maps/ instead, and wins. Per game, since id1, hipnotic and rogue all have a
 // start.bsp and an end.bsp; a mod's own version of a map is left alone.
 namespace
 {
@@ -928,8 +1015,26 @@ extern "C" const char* VR_ModelFile(const char* name)
     char game[MAX_OSPATH];
     gameFolderName(folder, game, sizeof(game));
     char(&relit)[MAX_QPATH * 2] = relitPath;
+    // Relit in the game (vr_relight.cpp: relit_custom/<game>/maps/), over relight_maps.py's.
+    q_snprintf(relit, sizeof(relit), "relit_custom/%s/%s", game, name);
+    if(qvr::vr_relight_use.value && COM_FileExists(relit, nullptr))
+    {
+        return relit;
+    }
     q_snprintf(relit, sizeof(relit), "relit/%s/%s", game, name);
     return COM_FileExists(relit, nullptr) ? relit : name;
+}
+
+// The game folder a file comes from, as relit/ names it ("maps/e1m1.bsp": id1; a map package's folder name): false
+// if there is no such file (vr_relight.cpp).
+extern "C" int VR_MapGameFolder(const char* name, char* out, size_t size)
+{
+    if(!COM_FileExists(name, nullptr) || !com_filesource[0])
+    {
+        return 0;
+    }
+    gameFolderName(com_filesource, out, size);
+    return out[0] != 0;
 }
 
 // COM_SwitchGame, after Mod_ResetAll and the renderer's reload: the caches that hold models' pointers (their slots are
@@ -1019,6 +1124,44 @@ extern "C" int VR_CanLoadCampaignMap(const char* map)
     return 1;
 }
 
+// SV_SpawnServer (every spawn: map, changelevel, restart, load): the map against the campaign already chosen, never a
+// switch. A switch rebuilds the game folders and shuts the server down, which cannot happen inside a spawn (the
+// server's progs are switched in: PR_SwitchQCVM's "already active"); map and load choose the campaign before they
+// disconnect (VR_CanLoadCampaignMap), changelevel within the campaigns that share their folders (VR_CanChangeCampaignMap).
+// Quake, Scourge of Armagon and Dissolution of Eternity share theirs, so a mismatch among them is only bookkeeping;
+// any other is refused with a Host_Error (a spawn skipped silently would leave the old server running, its player
+// dead or stuck).
+extern "C" void VR_CheckSpawnCampaignMap(const char* map)
+{
+    if(!gameDirAlreadyAdded(vrGameDir)) { return; }
+    int requested = campaignForMap(map, activeCampaign);
+    if(!strcmp(map, "start") && activeCampaign <= 2)
+    {
+        const int legacy = static_cast<int>(qvr::vr_activestartpaknameidx.value);
+        requested = legacy >= 0 && legacy <= 2 ? legacy : activeCampaign;
+    }
+    if(!strcmp(map, "vrstart") || !strcmp(map, "vrtutorial") || !strcmp(map, "vrfiringrange")) { requested = 0; }
+    if(requested != activeCampaign)
+    {
+        if(requested <= 2 && activeCampaign <= 2 && campaigns[requested].status == 1)
+        {
+            activeCampaign = requested;
+            publishCampaign(true);
+        }
+        else
+        {
+            Host_Error("VR: %s belongs to %s, not the campaign now running (%s); choose it in Official Campaigns",
+                map, campaigns[requested].title, campaigns[activeCampaign].title);
+        }
+    }
+    if(activeCampaign == 3 && !developerNative && campaignMultiplayerRequested())
+    { Host_Error("VR: Dimension of the Past is single-player only; set coop 0, deathmatch 0 and maxplayers 1"); }
+    char source[MAX_OSPATH] = {};
+    if(COM_FileExists(va("maps/%s.bsp", map), nullptr))
+    { gameFolderName(com_filesource, source, sizeof(source)); }
+    Cvar_SetROM("vr_honey_context", !q_strcasecmp(source, "honey") ? "1" : "0");
+}
+
 // Entity model indices in a save refer to the original map's precache order. Refuse a
 // different installation before disconnecting, instead of restoring wrong/missing models.
 extern "C" int VR_CanLoadCampaignSave(const char* text)
@@ -1049,7 +1192,9 @@ extern "C" int VR_CanLoadCampaignSave(const char* text)
         // Keep unfinished developer-save behavior for the campaigns still being ported.
         if(savedCampaign >= 3 && campaigns[savedCampaign].nativeReady)
         { if(!selectCampaign(savedCampaign, false, false)) { return 0; } }
-        else if(savedCampaign != activeCampaign && !selectCampaign(savedCampaign, true, false)) { return 0; }
+        else if(savedCampaign != activeCampaign &&
+                !selectCampaign(savedCampaign, savedCampaign >= 3 && !campaigns[savedCampaign].nativeReady, false))
+        { return 0; }
     }
     return 1;
 }
@@ -1076,8 +1221,8 @@ extern "C" int VR_ShouldMountCampaignDirectory(const char* dir)
 extern "C" int VR_CanChangeCampaignMap(const char* map)
 {
     if(!gameDirAlreadyAdded(vrGameDir)) { return 1; }
-    if(!strcmp(map, "vrstart") && activeCampaign != 0)
-    { Cbuf_InsertText("vr_campaign_hub\n"); return 0; }
+    if((!strcmp(map, "vrstart") || !strcmp(map, "vrtutorial") || !strcmp(map, "vrfiringrange")) && activeCampaign != 0)
+    { Cbuf_InsertText(va("vr_campaign_hub %s\n", map)); return 0; }
     int requested = activeCampaign;
     if(!strcmp(map, "start") && activeCampaign <= 2)
     { requested = static_cast<int>(qvr::vr_activestartpaknameidx.value); }
@@ -1113,4 +1258,30 @@ extern "C" int VR_CampaignDataAvailable(const char* dir)
 {
     const int i = campaignIndex(dir);
     return i >= 3 && campaigns[i].status == 1;
+}
+
+// Read-in-place sources for vr_music.cpp. The active campaign's folder while the quakevr folder is mounted (its music
+// is chosen per campaign, though Quake's and the two mission packs' folders are mounted together), else null.
+extern "C" const char* VR_ActiveCampaignFolder()
+{
+    return gameDirAlreadyAdded(vrGameDir) ? campaigns[activeCampaign].folder : nullptr;
+}
+
+// The owned store/rerelease roots that are not base dirs (a base dir's folders are on the search path already),
+// lowest priority first as ownedRoots lists them, found once (Steam's and GOG's lookups are not free); null past the end.
+static za::Vector<za::String> ownedReadRoots;
+static bool ownedReadRootsKnown = false;
+extern "C" const char* VR_OwnedReadRoot(int index)
+{
+    if(!ownedReadRootsKnown)
+    {
+        ownedReadRootsKnown = true;
+        for(const za::String& r : ownedRoots())
+        {
+            bool base = false;
+            for(int i = 0; i < com_numbasedirs && !base; ++i) { base = !q_strcasecmp(r.cStr(), com_basedirs[i]); }
+            if(!base) { ownedReadRoots.pushBack(r); }
+        }
+    }
+    return index >= 0 && index < int(ownedReadRoots.size()) ? ownedReadRoots[index].cStr() : nullptr;
 }

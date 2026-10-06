@@ -766,6 +766,11 @@ void(string gibname, float dm) ThrowGib =
 {
     entity new;
 
+    if(!VR_Limb_GibsWanted())
+    {
+        return; // VR: its own limbs thrown instead (vr_gib_limbs 2; vr_limbs.qc)
+    }
+
     new = spawn();
     new.origin = self.origin;
     setmodel(new, gibname);
@@ -813,6 +818,7 @@ void(string gibname, float dm) ThrowHead =
     dprint(sprintf("gibbed: %s (gib speed x%.2f)\n", self.classname, vr_gib_speed > 0 ? vr_gib_speed : 1));
     VR_Gore_Gibbed(); // VR: blood all round (vr_gore, vr_carry.qc)
     VR_SmallGib_Gibbed(dm); // VR: and small gibs (vr_smallgibs.qc)
+    VR_Limb_GibAll(dm); // VR: and its own limbs (vr_gib_limbs; vr_limbs.qc)
     setmodel(self, gibname);
     self.frame = 0;
 //   self.nextthink = -1;
@@ -869,6 +875,7 @@ void() GibPlayer =
 
 void() PlayerDie =
 {
+    if(MGH_Active()) self.MGH_killspree=0;
     float i;
 
     VR_ItemUtil_EntDelItem(self, IID_INVISIBILITY);
@@ -894,7 +901,7 @@ void() PlayerDie =
 
     VR_ItemUtil_EntDelItem(self, IID_EMPATHY_SHIELDS);
 
-    if(deathmatch || coop)
+    if((deathmatch || coop) && !MGH_Active())
     {
         DropBackpack();
 

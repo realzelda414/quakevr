@@ -25,8 +25,9 @@ entity(entity tip) VR_Tip_FollowTarget =
     return e;
 }
 
-// A tip whose target is placed after it in the map is made again once the map is up (its record is already sent: the
-// engine updates the client's copy).
+// A tip whose target is placed after it in the map looks for it again in the map's first frame (its record is already
+// sent: the engine updates the client's copy). The first frame, not later: a saved game is loaded over a freshly spawned
+// map after its two first frames, so a later retry would never run there (its think is not in the save's edict).
 void() VR_Tip_Retry =
 {
     entity e = VR_Tip_FollowTarget(self);
@@ -63,8 +64,7 @@ void() func_vr_tip =
         flags = flags + QVR_TIP_HOLOGRAM;
     if(self.spawnflags & 4)
         flags = flags + QVR_TIP_ANYANGLE;
-    if(world._vr_tips_repeat != 0) // the whole map's tips repeat (a tutorial map)
-        flags = flags | QVR_TIP_REPEAT;
+    // (The worldspawn's _vr_tips_repeat, every tip in the map repeating, is the engine's: QC never sees '_' keys.)
 
     float h = vr_tip_make();
     self.tiphandle = h;
@@ -89,7 +89,7 @@ void() func_vr_tip =
         vr_tip_setentity(h, e);
     else if(self.target != NULLSTR || self.targetname != NULLSTR)
     {
-        self.nextthink = time + 0.5;
+        self.nextthink = time + 0.1;
         self.think = VR_Tip_Retry;
     }
 };

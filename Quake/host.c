@@ -281,6 +281,7 @@ void Host_Version_f (void)
 	Con_Printf ("Quake      %1.2f\n", VERSION);
 	Con_Printf ("QuakeSpasm " QUAKESPASM_VER_STRING "\n");
 	Con_Printf ("Ironwail   " IRONWAIL_VER_STRING "\n");
+	Con_Printf ("Quake VR   %s\n", VR_BuildVersion ()); // QVR
 	Con_Printf ("Exe        " __TIME__ " " __DATE__ "\n");
 	Con_Printf ("SDL        " Q_SDL_COMPILED_VERSION_STRING " (compiled)\n");
 	Con_Printf ("           %d.%d.%d (linked)\n", sdl_linked.major, sdl_linked.minor, sdl_linked.patch);
@@ -1603,6 +1604,7 @@ void Host_Shutdown(void)
 
 // stop downloads before shutting down networking
 	Modlist_ShutDown ();
+	VR_StopDownloads (); // QVR: the map index's fetch and a map install, cancelled and joined before libcurl goes
 
 	NET_Shutdown ();
 

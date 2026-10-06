@@ -698,6 +698,7 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 {
 	int		e, i, j, numents;
 	int		bits;
+	int		startsize = msg->cursize; // QVR: vr_net_stats
 	byte	*pvs;
 	vec3_t	org, forward, right, up;
 	float	miss, dist, size;
@@ -970,6 +971,7 @@ stats:
 	dev_stats.packetsize = msg->cursize;
 	dev_peakstats.packetsize = q_max(msg->cursize, dev_peakstats.packetsize);
 	//johnfitz
+	VR_NetStatsEntities (clent, j, numents, msg->cursize - startsize, msg->maxsize); // QVR
 }
 
 /*
@@ -1927,8 +1929,8 @@ static void SV_SpawnServerRun (const char *server);
 // QVR: a map's load, a scope of its own for the profiler (its hitch log).
 void SV_SpawnServer (const char *server)
 {
-	if (!VR_CanLoadCampaignMap(server))
-		return;
+	VR_CheckSpawnCampaignMap (server); // QVR: never a campaign switch here (map and load chose it before they disconnected)
+	VR_NoteMapSpawn (server); // QVR: the map (and its map package) a crash report names
 	VR_ProfileBegin ("map spawn");
 	SV_SpawnServerRun (server);
 	VR_ProfileEnd ();

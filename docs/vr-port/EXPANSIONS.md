@@ -683,3 +683,206 @@ this acceptance. Private fixtures/logs are retained in `trigger-tests/`; the fir
 beam/recursive-endpoint diagnostic failures informed the fixes above. An initial kit
 quit timeout ended after a passing menu check; an explicit console-state test-driver
 correction exits normally and does not claim a runtime hang fix.
+
+## Native Machine hub/runes and electrode puzzle (mghub, 2026-10-06)
+
+Audit step8 is implemented in `QC/vr_mg_hub.qc` from upstream MG1
+`map_specific/hub.qc`, `items_runes.qc`, `map_specific/mge2m2.qc` and the narrow
+client progression rules. The upstream GPL notice is retained. All behavior is scoped
+to campaign4; MG1/MG3 native readiness remains false. Horde, remaining shared
+monster changes, cooperative checkpoint/equipment restoration and network campaign
+synchronization are separate acceptance work. This stage does not claim a complete
+campaign playthrough or multiplayer support.
+
+The first five runes retain source bits1/2/4/8/16. Source last-pickup bits6..10 choose
+`info_player_start_hub` names start_1..start_5, then only those last-pickup bits clear.
+The final `hub_trigger_changelevel` exists only with all five bits (31). Six authored
+rune models/indicators remain: five translucent before collection, each collected
+indicator activates its source targets and seals its completed episode; the sixth is
+source-forced active. Native rune collection fires targets once, including through
+the existing VR item wrapper. The wrong legacy four-rune finale is replaced by the
+source MG1 five-rune text. The actual mgend -> start ending opens the native completion
+menu with the Machine title and existing campaign/main-menu controls/credits.
+
+Official hub worldtype3 resets equipment both on entry and when starting an episode.
+That deliberately creates fresh hand/holster records; ordinary/secret transitions
+retain both held weapons and all six holsters' clips, persistent flags and instance IDs through
+existing extended parms17..50. No spawn-parm ABI changes or migration bumps were made.
+Machine Nightmare starts/caps ordinary health at50 and carries within25..50; other
+Machine modes retain50..100 carry bounds. Other campaign health policies are preserved.
+
+All four `mge2m2_*` entities retain actual electrode/egg behavior. Every physical
+button route (hand, muzzle, held prop/weapon and body/thrown actor paths) reaches the
+once-only electrode effect, removing only matched endpoints after0.1 seconds. The
+real delayed counter disables electrode effects and unlocks controls. The authored
+shell opener adapts to VR's existing door classname, moves each panel by its `dest2`
+offset at500 speed and keeps existing collision/target behavior. The fixer locks
+runes after the authored0.8 seconds and unlocks on activation; it also guards VR
+object grab/carry/pickup callbacks and survives save/load. No gameplay-class aliases
+or placeholder puzzle handlers were used; the electrode target is a source-authored
+lookup endpoint with no autonomous think callback.
+
+Debug > Tests exposes `vr_mg_hub_test` (default0, not archived):1 hub/rune acceptance,
+2 actual mge2m2 puzzle,3 progression/equipment report and20 independent equipment
+carry setup. Tests are destructive; reload afterward. Hold both grips for seeded
+held-gun tests. `vr_mg_hub_stage` defaults0 and is an unarchived private transition
+continuation index. The test driver skips level traversal/combat and defeats source
+monsters before measuring eight egg-panel displacements; an otherwise living
+shalrath legitimately blocked one panel during the first diagnostic. Gameplay's
+source door collision/crushing policy was retained.
+
+Hidden owned-original-id1 fixtures plus complete MG1 PAK/read-only updated locale
+acceptance: hub/rune semantics20/0; actual electrode/egg route15/0, also15/0 after
+saving/loading its pending manager/locked rune/delayed targets. The five actual rune
+pickups/return exits and next-episode hub gates produce flags1/3/7/15/31, correct
+return spawn names, active indicators2/3/4/5/6 and no final gate until31. The real
+final gate reaches mgend and its authored readable finale/credits. Completed hub
+saves preserve31 and its gate; new campaign clears flags and restores five ghosts.
+Nightmare real secret mge1m1 -> mge1m3 -> mge1m2 and completed saves retain shells42,
+hand clips3/7 with distinct IDs7/8, six holster clips1..6 with distinct IDs10..15.
+Health73 carries50/max50; health1 carries25/max50. Normal skill carries73/max100.
+Stock VRHub/e1m1 and Honey h/saint smoke exit0; menu paths14 found/0 missing.
+Machine ordinary health pickup40 -> 50/max50 and ordinary supported Dopa shared
+trigger acceptance34/0 also pass. The Machine completion menu was visually checked.
+QC0 warnings, Release/style/precedence and FGD287 checks pass. No commercial data
+or private fixtures/saves/logs are committed. Runs disable map index/addons.
+
+The first immediate save+load diagnostic raced the existing background save thread
+and reported EOF; loading the completed same file succeeds, and final scripts wait
+for saves before loading. A first chained route used an unsupported `set` command
+and therefore never queued its continuation/quit; the registered private stage fixes
+the test driver. Neither diagnostic is an attribution/fix for earlier coordinator
+rapid-transition findings. Private `hub-tests/`, configs and saves are retained.
+Human VR QA: all five return positions, rune grip/holster collection, electrode
+buttons and blocked/unblocked shell movement, fresh episode equipment and the
+Machine ending/menu. Default map-index startup remains outside this acceptance. A single-job melee
+canary attempt cannot start: `no_hit_reloading_2026-09-29_23-08-51.csv` is absent; no
+replacement or tuning was used. Horde Hunger-rune timers still belong to the separate
+Horde manager port.
+
+### Native MG1 Horde implementation and acceptance (2026-10-06)
+
+The native port now uses the approved `quakec_mg1/horde.qc` gameplay source:
+manager countdowns, difficulty/player-scaled normal/ranged/flying/boss squads,
+source spawn toggles/cooldowns and blockage checks, three-wave boss/key gates,
+shared silver/gold currency, keyed buttons/doors, ammo and random item rewards,
+quad/pent drops, kill streaks, team wipe and wave-boundary revival. Authored
+monster starts call native VR monster constructors and retain VR damage,
+knockdown and interaction behavior. Deferred authored monsters join the same
+live accounting after activation. The source's duplicated Y overlap comparison
+is corrected to Z so vertically separate starts do not block each other.
+
+All seven arenas in the owned contemporary MG1 PAK are supported. Arena exits
+rotate through installed `horde1` through `horde7`, skipping unavailable arenas;
+the published older source's four-arena limit would omit three owned arenas.
+A new arena resets equipment as the source specifies. Revival instead preserves
+both hand and all six holster record identities and separate magazine contents.
+It restores those original records after the native spawn serializer, avoiding
+new IDs and inventory duplication. Horde monster deaths do not create ordinary
+VR weapon drops or multiplayer backpacks. Shared ammo pickup does not switch hands.
+Physical pickups retain their native carry, armor, key and powerup interactions;
+quad/pent duration is 30 seconds and uncollected drops expire after 14 seconds.
+
+`MGH_Active()` requires native MG1 campaign context and a live authored Horde
+manager. No persistent engine Horde setting is changed. Source Hunger timer
+stamps are stored on the player on first Hunger-rune collection, successful
+healing and spawn/revival, and survive saves. The published source has no
+consumer of that timer or Hunger effect implementation: the actual KEX-side
+Hunger consequences and other externally implemented rune effects still need
+runtime evidence and a separate native implementation. MG1 native readiness
+remains **false**. Multi-client network routing, late joins, team wipe/revival
+and shared currency still need acceptance with real concurrent clients; solo
+mock coverage does not establish those multiplayer properties.
+
+Debug -> Tests -> Machine Horde Tests is appended as page144 (back71), with
+unarchived `vr_mg_horde_test` default0. Production paths are exercised by its
+unit, wave, boss, key, inventory revival and deferred activation requests. The
+FGD describes the authored manager, pickup and typed spawn helpers; generated
+coverage now includes295 entities. Localization uses the installed rerelease
+English table and translates physical ammo/key pickup names through native
+print calls, rather than displaying literal localization identifiers.
+
+Acceptance: seven of seven owned arenas load; their BSP entity class inventory
+has no missing gameplay spawn functions. Focused tests pass24/0, including
+normal/flying/ranged/boss native constructors, overlap/skip/toggle behavior,
+shared currency underflow prevention, physical rewards, successful versus
+rejected healing and first Hunger pickup. Real wave1 completes to2; boss3
+produces a real key and its collection advances to4. A real Horde4 keyed button
+spends once; repeat contact does not spend again. A completed waiting boss/key
+save restores wave3, live0, waiting1, pending key, currency and exact Hunger
+timer; the restored key then advances to wave4. Wave-boundary revival restores
+health100 and preserves hand IDs4/5 with clips3/7 and holster IDs7..12 with
+clips1..6. Completed saves preserve those identities. Actual Horde5 exit and
+intermission advance to Horde6 with fresh source equipment. Both grips and
+`notarget` isolate inventory persistence from native enemy weapon-disarm behavior.
+
+Base-only ID1 plus owned MG1 runs Horde5 without Hipnotic/Rogue directories.
+The MG1 candle uses its owned identical candle asset rather than an unnecessary
+Rogue installation gate. Stock VRHub/e1m1, Dopa e5m1 and MG1 story mge1m1 remain
+Horde-inactive. Menu paths14 found/0 missing; page144 was visually checked.
+QC0 warnings, Release build, static/style/precedence and FGD295 checks pass.
+Honey h/saint cannot be revalidated in this worker: neither owned fixture nor
+kit qbase contains those BSPs; attempted loads explicitly reported absence.
+A single-job archived melee canary cannot start because
+`no_hit_reloading_2026-09-29_23-08-51.csv` is absent. No replacement or melee
+tuning was used. Horde2 contains four empty editor `s` fields; these warn as
+unknown fields but do not drop entities or gameplay classes. Default map-index
+startup remains outside this acceptance; all runs use `-nomapindex -noaddons`.
+No assets, private configs, saves or logs are committed. Private `horde-tests/`,
+`evaltakes/`, test configs and screenshots are retained for coordinator cleanup.
+Human VR QA: physical rewards/keys/powerups, real arena gates, hand and holster
+inventory after death/revival, corpse cleanup, and all seven arenas' spawn flow.
+### MG1 Horde follow-up: source parity, coop and wave tables (mghorde2, 2026-10-06)
+
+Source parity fixes: a dead Horde player goes through the source's release-then-press gate again (official
+`client.qc` PlayerDeathThink): a trigger held at death no longer restarts the arena at once. Solo, or a coop team
+with nobody alive, restarts the arena (one queued `restart`, even when the press lasts several frames); a dead coop
+player with a living teammate waits for the wave-boundary revival. A player who leaves no longer counts as alive
+(official ClientDisconnect), so waves, targets and team-wipe checks ignore the left body. With a save made in this
+session and `sv_autoload` 2 (the engine default), a solo wipe loads that save, as every Quake death does in this
+engine; with no save (or `sv_autoload` 0) the arena restarts fresh as the source does. Coop has no autoload.
+
+Source behaviour reviewed and deliberately left as it is:
+- Rune of Hunger: the shipped `mg1/progs.dat` (checked by its statement table) only writes `hunger_time`
+  (T_Heal, sigil_touch); nothing reads it and `HUNGER_MIN` is unused. No arena holds an `item_sigil`, and `map`
+  clears serverflags, so Hunger cannot occur in shipped Horde play. The native port stamps the same timer.
+- Horde re-aggro (`combat.qc`, `AGGRO_MIN`/`AGGRO_ADD`): the source's condition
+  `aggro_time + AGGRO_MIN + (random() * AGGRO_ADD < time)` is always true once set, so monsters switch targets as
+  in stock Quake. Native T_Damage already does that.
+- Rune 3 axe chain (`weapons.qc`): `axe_hit_chain` is never incremented, so the combo is dead code; VR melee is
+  physical anyway.
+
+Tests (Debug > Tests > Machine Horde Tests, `vr_mg_horde_test`): 13/14 wave monitor (each wave's squad budget and
+every squad's monster classes), 15 all-players report, 16 continue a script from `mghorde_after.cfg` after an
+arena restart, 17 team wipe, 18 keyed door spend. `Misc/quakevr/check_horde_waves.py <log>` checks a monitor log
+against the official SpawnWavePrep budget (skill offset, army waves, boss/elite/fodder, player scalar) and the
+SpawnSquad2 compositions; `Misc/quakevr/multiplayer/mghorde_mp_test.sh <agent>` runs a listen server and a client.
+
+Measured (hidden mock, `-nomapindex`, owned rerelease MG1 found through the Steam install):
+- Waves: horde1 skill 1, 12 complete waves (100 squads) match; horde5 skill 0 (8), horde7 skill 3 (6), horde4
+  skill 2 (6) and coop horde1 with two players (scalar 1.25, 3) match, 0 failures. Boss waves gave a silver key each
+  (shared: 1 after wave 3, 2 after wave 6).
+- Save/load mid-spawn (horde1 wave 1, 2 squads still to come, 3 alive): restored wave 1, waiting 1, 2/0/0, 3 alive;
+  the following waves kept matching the tables.
+- Keyed doors (horde1, horde3, horde7) stay shut without a shared key, spend one and open, leaving the second key;
+  keyed buttons (horde2, horde4, horde6) spend once. Acceptance (request 1) 24/0 on horde1, horde4 and horde5.
+- Death: held trigger at death keeps the player dead (deadflag 2); release, press: one restart, wave 0, no keys,
+  health 100. Coop: the dead client stays dead while the host lives, the wave end revives it (health 100); both
+  players carry the shared key; a team wipe and the host's press restart the arena with both players alive; the
+  client's leaving leaves it at health 0 and "alive" counts only the host.
+- Campaign switch: `vr_campaign_hub`, then e1m1: Horde inactive, 25 shells, active campaign id1.
+- Regressions: Dopa e5m1 triggers 34/0 and world 19/0; MG1 hub 20/0, mge2m2 puzzle 15/0, mge5m2 route 10/0
+  (Horde inactive there); e1m1 smoke; QC 0 warnings, statics/precedence/FGD 295. The archived melee canary still
+  cannot run (`no_hit_reloading_2026-09-29_23-08-51.csv` absent).
+
+Arenas for manual tests (all seven are in the owned MG1 PAK; `vr_campaign_native mg1`, then `map hordeN`):
+- horde1 (Tower of the Apprentice): the first try, waves, the boss-wave key, silver/gold key doors, flying spawns.
+- horde4: three authored key spawns (first/second/third) and keyed buttons: the currency flow.
+- horde5: the only boss and flying spawn points together: boss waves (shambler/shalrath/fiends).
+- horde2 and horde6: keyed buttons; horde6 has the most item spawns (9) and two exits.
+- Revival needs coop (two games): any arena, best horde1 (4 coop starts); one player dies, the other finishes the
+  wave. Solo death restarts the arena (or loads your save).
+
+Still open for full MG1 acceptance: a human coop session (real headsets, late joins, revival telefrag spots);
+melee, gore and ragdolls on Horde monsters in VR (native constructors, not separately measured here); the arena
+intermission/exit flow in coop; the story campaign's own acceptance.

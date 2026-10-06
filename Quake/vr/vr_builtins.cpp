@@ -22,6 +22,7 @@
 #include "vr_protocol.hpp"
 #include "vr_ropesim.hpp"
 #include "vr_server.hpp"
+#include "vr_shock.hpp"
 #include "vr_selfcollide.hpp"
 #include "vr_twohand.hpp"
 #include "vr_cvars.hpp"
@@ -72,6 +73,61 @@ void PF_modelbounds()
     if(model)
     {
         VectorCopy(max ? model->maxs : model->mins, out);
+    }
+}
+
+// An entity's drawn box (its model as drawn: the weapon models' own scale and offset, a prop's Size, its model_scale
+// about model_scale_origin and model_offset), not turned, about its origin: its lo (`max` 0) or hi corner:
+// vector(entity e, float max) drawnbounds. A weapon model's raw bounds (modelbounds) are not where it is drawn.
+void PF_drawnbounds()
+{
+    edict_t* ent = G_EDICT(OFS_PARM0);
+    const bool max = G_FLOAT(OFS_PARM1) != 0.f;
+    float* out = G_VECTOR(OFS_RETURN);
+    VectorCopy(vec3_origin, out);
+
+    const int index = static_cast<int>(ent->v.modelindex);
+    const qmodel_t* model = index > 0 && index < MAX_MODELS ? sv.models[index] : nullptr;
+    if(!model)
+    {
+        return;
+    }
+    const FieldOffsets& f = fields();
+    glm::vec3 lo, hi;
+    held::modelBox(model, fieldVec(ent, f.model_scale), fieldVec(ent, f.model_scale_origin), fieldVec(ent, f.model_offset), lo, hi);
+    const glm::vec3& v = max ? hi : lo;
+    out[0] = v.x;
+    out[1] = v.y;
+    out[2] = v.z;
+}
+
+// The model_offset that puts the middle of an entity's drawn box (drawnbounds, with its model_scale and
+// model_scale_origin; its model_offset ignored) at `at` (about its origin, not turned): vector(entity e, vector at)
+// modeloffsetto. An alias model's model_offset is in its stored vertices' units (before the weapon models' and its
+// own scale), so the drawn shift it gives is measured (it is linear in it).
+void PF_modeloffsetto()
+{
+    edict_t* ent = G_EDICT(OFS_PARM0);
+    const float* a = G_VECTOR(OFS_PARM1);
+    float* out = G_VECTOR(OFS_RETURN);
+    VectorCopy(vec3_origin, out);
+
+    const int index = static_cast<int>(ent->v.modelindex);
+    const qmodel_t* model = index > 0 && index < MAX_MODELS ? sv.models[index] : nullptr;
+    if(!model)
+    {
+        return;
+    }
+    const FieldOffsets& f = fields();
+    const glm::vec3 scale = fieldVec(ent, f.model_scale), scaleOrigin = fieldVec(ent, f.model_scale_origin);
+    glm::vec3 lo0, hi0, lo1, hi1;
+    held::modelBox(model, scale, scaleOrigin, glm::vec3{0.f}, lo0, hi0);
+    held::modelBox(model, scale, scaleOrigin, glm::vec3{1.f}, lo1, hi1);
+    const glm::vec3 c0 = (lo0 + hi0) * 0.5f;
+    const glm::vec3 perUnit = (lo1 + hi1) * 0.5f - c0; // the drawn shift of a unit of offset, an axis
+    for(int i = 0; i < 3; i++)
+    {
+        out[i] = fabsf(perUnit[i]) > 1e-6f ? (a[i] - c0[i]) / perUnit[i] : 0.f;
     }
 }
 
@@ -425,8 +481,9 @@ void PF_vr_tip_setpos()
 // fixed point in the map (the client is told -1).
 void PF_vr_tip_setentity()
 {
-    const int num = NUM_FOR_EDICT(G_EDICT(OFS_PARM1));
-    tips::serverSetEntity(tipHandle(), num > 0 ? num : -1);
+    edict_t* ed = G_EDICT(OFS_PARM1);
+    const int num = NUM_FOR_EDICT(ed);
+    tips::serverSetEntity(tipHandle(), num > 0 ? num : -1, PR_GetString(ed->v.classname));
 }
 
 void PF_vr_tip_setdistance()
@@ -1300,7 +1357,65 @@ void PF_ragdolldecap()
 // spin (rad/s: .vr_spin); the stump now, 4 the neck, 5 the way out of it.
 void PF_ragdollcut()
 {
-    const glm::vec3 v = box3d::ragdollCut(NUM_FOR_EDICT(G_EDICT(OFS_PARM0)), static_cast<int>(G_FLOAT(OFS_PARM1)));
+    const int bone = qcvm->argc > 2 ? static_cast<int>(G_FLOAT(OFS_PARM2)) : -1;
+    const glm::vec3 v = box3d::ragdollCut(NUM_FOR_EDICT(G_EDICT(OFS_PARM0)), static_cast<int>(G_FLOAT(OFS_PARM1)), bone);
+    float* out = G_VECTOR(OFS_RETURN);
+    out[0] = v.x;
+    out[1] = v.y;
+    out[2] = v.z;
+}
+
+// Limb gore (vr_box3d.cpp, "Limb gore"; vr_limbs.qc). float ragdollcutlimb(entity e, float bone, vector blade, [float
+// settle]): as ragdolldecap, the limb at joint `bone` (-1 the head) cut off; ragdollcut's 0-3 the piece after it.
+void PF_ragdollcutlimb()
+{
+    const float* v = G_VECTOR(OFS_PARM2);
+    const float settle = qcvm->argc > 3 ? G_FLOAT(OFS_PARM3) : 1.f;
+    G_FLOAT(OFS_RETURN) = box3d::ragdollCutLimb(G_EDICT(OFS_PARM0), static_cast<int>(G_FLOAT(OFS_PARM1)), glm::vec3{v[0], v[1], v[2]},
+                              settle) ? 1.f : 0.f;
+}
+
+// float ragdolllimb(entity e, vector p): the joint a hit at p would cut (box3d::limbAt: the head's bone for the head; -1
+// the torso, -2 no rig).
+void PF_ragdolllimb()
+{
+    const float* p = G_VECTOR(OFS_PARM1);
+    G_FLOAT(OFS_RETURN) = static_cast<float>(box3d::limbAt(G_EDICT(OFS_PARM0), glm::vec3{p[0], p[1], p[2]}));
+}
+
+// float ragdolllimbs(entity e, float what, [float bone]): box3d::limbInfo (0 the limb joints not cut, bits; 1 the
+// head's bones; 2 the bones cut off; 3 the head bone, -1 none; 4 what a cut at `bone` takes now; 5 `bone`'s parent).
+void PF_ragdolllimbs()
+{
+    const int what = static_cast<int>(G_FLOAT(OFS_PARM1));
+    const int bone = qcvm->argc > 2 ? static_cast<int>(G_FLOAT(OFS_PARM2)) : -1;
+    const uint32_t v = box3d::limbInfo(G_EDICT(OFS_PARM0), what, bone);
+    G_FLOAT(OFS_RETURN) = (what == 3 || what == 5) && v == ~0u ? -1.f : static_cast<float>(v);
+}
+
+// vector limbpiece(entity e, float bone, float what): the piece a cut at `bone` (-1 the head) takes (box3d::limbPiece): 0
+// {kg it weighs (its share of the ragdoll's mass by the kind of limb), the ragdoll's mass, the share}, 1 its cut end in
+// its model's space.
+void PF_limbpiece()
+{
+    const glm::vec3 v = box3d::limbPiece(G_EDICT(OFS_PARM0), static_cast<int>(G_FLOAT(OFS_PARM1)), static_cast<int>(G_FLOAT(OFS_PARM2)));
+    float* out = G_VECTOR(OFS_RETURN);
+    out[0] = v.x;
+    out[1] = v.y;
+    out[2] = v.z;
+}
+
+// string limbmodel(entity e, float bone): the model of e's limb at joint `bone` (vr_limbmodel.cpp), "" none.
+void PF_limbmodel()
+{
+    G_INT(OFS_RETURN) = PR_SetEngineString(box3d::limbModel(G_EDICT(OFS_PARM0), static_cast<int>(G_FLOAT(OFS_PARM1))));
+}
+
+// vector limbplace(entity e, float bone, float what): where e's limb at `bone` is now: 0 its model's origin, 1 its
+// angles, 2 its velocity, 3 a point on its own bone's surface (the tests' hit).
+void PF_limbplace()
+{
+    const glm::vec3 v = box3d::limbPlace(G_EDICT(OFS_PARM0), static_cast<int>(G_FLOAT(OFS_PARM1)), static_cast<int>(G_FLOAT(OFS_PARM2)));
     float* out = G_VECTOR(OFS_RETURN);
     out[0] = v.x;
     out[1] = v.y;
@@ -1468,10 +1583,37 @@ void PF_bodyshock()
         static_cast<float>(NUM_FOR_EDICT(target)), G_FLOAT(OFS_PARM1));
 }
 
+// bodyshockdeath(target, duration): lightning's lasting shock on a body it killed or struck (QC vr_shock.qc): Quad's arcs
+// crawling over it for `duration` s, fading (vr_shock.cpp, KindBodyDeath).
+void PF_bodyshockdeath()
+{
+    edict_t* target = G_EDICT(OFS_PARM0);
+    server::sendShock(PROG_TO_EDICT(pr_global_struct->self), 4, target->v.origin,
+        static_cast<float>(NUM_FOR_EDICT(target)), G_FLOAT(OFS_PARM1));
+}
+
+// bodysmoulder(target, left): `target`'s fire goes out in `left` s (0: it has just gone out), and it smokes while it burns
+// and a while after (QC vr_burning.qc; vr_smoulder.cpp); `left` below 0: put out in a liquid, it stops smoking.
+void PF_bodysmoulder()
+{
+    edict_t* target = G_EDICT(OFS_PARM0);
+    const float left = G_FLOAT(OFS_PARM1);
+    server::sendShock(PROG_TO_EDICT(pr_global_struct->self), left < 0.f ? 6 : 5, target->v.origin,
+        static_cast<float>(NUM_FOR_EDICT(target)), left < 0.f ? 0.f : left);
+}
+
 extern "C" void VR_PortalCarry(edict_t* box, edict_t* player, int hand, int begin);
 void PF_portal_carry()
 {
     VR_PortalCarry(G_EDICT(OFS_PARM0), G_EDICT(OFS_PARM1), static_cast<int>(G_FLOAT(OFS_PARM2)), G_FLOAT(OFS_PARM3) != 0.f);
+}
+
+// playershock(player, damage, at): `player` struck by lightning (a shambler's bolt, another's lightning gun, a trap's, the
+// water's shock spreading) for `damage` at `at`: its client draws arcs over its arms, hands and body a while
+// (vr_shock.cpp, KindSelfHit; how long: vr_shock_self_time, by the damage).
+void PF_playershock()
+{
+    server::sendShock(G_EDICT(OFS_PARM0), shock::KindSelfHit, G_VECTOR(OFS_PARM2), G_FLOAT(OFS_PARM1), 0.f);
 }
 
 void PF_watershock()
@@ -1794,6 +1936,8 @@ constexpr VrBuiltin vrBuiltins[] = {
     {"weapondrawnpose", PF_weapondrawnpose},
     {"modelbounds", PF_modelbounds},
     {"modelcentre", PF_modelcentre},
+    {"drawnbounds", PF_drawnbounds},
+    {"modeloffsetto", PF_modeloffsetto},
     {"findcone", PF_findcone},
     {"findportalcone", PF_findportalcone},
     {"portal_pullimage", PF_portal_pullimage},
@@ -1837,6 +1981,12 @@ constexpr VrBuiltin vrBuiltins[] = {
     {"ragdolldecap", PF_ragdolldecap},
     {"ragdollcut", PF_ragdollcut},
     {"ragdollhead", PF_ragdollhead},
+    {"ragdollcutlimb", PF_ragdollcutlimb},
+    {"ragdolllimb", PF_ragdolllimb},
+    {"ragdolllimbs", PF_ragdolllimbs},
+    {"limbmodel", PF_limbmodel},
+    {"limbpiece", PF_limbpiece},
+    {"limbplace", PF_limbplace},
     {"physicsshot", PF_physicsshot},
     {"physicsdamp", PF_physicsdamp},
     {"ropestep", PF_ropestep},
@@ -1887,10 +2037,13 @@ constexpr VrBuiltin vrBuiltins[] = {
     {"weaponfired", PF_weaponfired},
     {"tracer", PF_tracer},
     {"watershock", PF_watershock},
+    {"playershock", PF_playershock},
     {"portal_ai_sight", PF_portal_ai_sight},
     {"portal_ai_map", PF_portal_ai_map},
     {"portal_ai_client", PF_portal_ai_client},
     {"bodyshock", PF_bodyshock},
+    {"bodyshockdeath", PF_bodyshockdeath},
+    {"bodysmoulder", PF_bodysmoulder},
     {"portal_carry", PF_portal_carry},
     {"findflags", PF_findflags},
     {"liquidentry", PF_liquidentry},
