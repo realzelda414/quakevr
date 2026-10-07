@@ -16,12 +16,12 @@ says, and the "no hit" ones nothing.
 
 ## Recording in the headset
 
-1. **Go to the firing range**: VR Settings > Advanced VR Options > Play > Firing Range (`map vrfiringrange`).
+1. **Go to the firing range**: Advanced VR > Play > Firing Range (`map vrfiringrange`).
 2. **Stand in front of the training dummy** as you would fight it. Where you stand and which way you face,
    relative to the dummy, is recorded every frame (and playback puts you there again), so a swing that reaches
    it in the take reaches it in the replay. Move as you like during a take: steps and the stick are recorded too.
 3. **Take the weapon** the motion is for (the sword, the axe, a gun, or empty hands), one hand or two.
-4. **Open the menu**: VR Settings > Advanced VR Options > **Motion Recorder** (under Melee):
+4. **Open the menu**: Advanced VR > **Motion Recorder** (under Melee):
    - **Category**: what the motion should do (the list below). **Detail** (optional): which kind, e.g. the
      swing's direction; its takes also count with the category's.
    - **Arm Recorder**: On.
@@ -136,8 +136,8 @@ armed (`vr_input.cpp` asks `motion::stickClick` first), so it never reaches the 
 also in the middle of a two-handed grip. Press to start and press to end (not hold), so the thumb is free during
 the motion.
 
-**Other record buttons** (2026-09-30, "the thumbstick can be annoying to press"): `vr_motion_button` (VR Settings >
-Advanced > Motion Recorder, Record Button) also picks A, B, X, Y, either grip, or a combination: hold B (Y) and pull the
+**Other record buttons** (2026-09-30, "the thumbstick can be annoying to press"): `vr_motion_button` (Advanced VR >
+Motion Recorder, Record Button) also picks A, B, X, Y, either grip, or a combination: hold B (Y) and pull the
 main (off) trigger. Whichever it is, while armed it is the recorder's: its key never reaches the game (A: no jump; B,
 Y: no weapon change; X: no reload; a grip: no grab), and a press it took has its release taken too (`vr_input.cpp` asks
 `motion::button` for every button). For a combination the face button alone does nothing, and the trigger pulled
@@ -173,7 +173,7 @@ meaning).
 | `origin0` | the player's world origin at `t` = 0 |
 | `target` | the nearest monster at `t` = 0: classname, entity number, targetname, origin, angles, box |
 | `dummy attacks` | `on`: the training dummy was striking back at some moment of the take (`vr_dummy_attacks`, the firing range's button; ROUND21.md, "Dummy attacks"). Its blows are the `strike` events, and a replay has it strike exactly then. Not written when it wasn't |
-| `dummy` | when the target is the training dummy: `vr_dummy_type` (its enemy: 0 grunt .. 18 electric eel, QC/vr_dummy_types.qc), `vr_dummy_health`, `vr_dummy_gore`, `vr_dummy_gib`, `vr_dummy_regen`. Playback stands the dummy as that enemy, of that health, before placing the take (both are in `settings` too; a take without them: a grunt, of a grunt's health) |
+| `dummy` | when the target is the training dummy: `vr_dummy_type` (its enemy: 0 grunt .. 18 electric eel, 19.. Dawn of the Machine's, QC/vr_dummy_types.qc), `vr_dummy_health`, `vr_dummy_gore`, `vr_dummy_gib`, `vr_dummy_regen`. Playback stands the dummy as that enemy, of that health, before placing the take (both are in `settings` too; a take without them: a grunt, of a grunt's health) |
 | `melee settings` | every `vr_melee_*`, `vr_bash*`, `vr_shove*`, `vr_parry*`, `vr_deflect*`, `vr_headbutt*` cvar |
 | `settings` | every archived `vr_*` setting (`name=value`, spaces as `_`) and `host_maxfps`: what playback sets again |
 | `weapon settings` | the weapon offsets (`vr_wofs_*`) of the empty hand's slot and of the weapons in the hands as the take is saved |
@@ -428,7 +428,7 @@ category's.
 ## Reviewing failing takes
 
 Takes that fail the evaluation are either the melee's fault or the take's (recorded under the wrong category, a motion
-that isn't what its label says). **VR Settings > Advanced VR Options > Review Takes** (under Motion Recorder) lists
+that isn't what its label says). **Advanced VR > Review Takes** (under Motion Recorder) lists
 them, plays each one in front of the dummy as a ghost, and keeps, discards or relabels it.
 
 - **The list.** At the top: the takes, how many fail, how many are suspect, how many you reviewed; when they were

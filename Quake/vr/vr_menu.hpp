@@ -9,8 +9,9 @@
 namespace qvr::menu
 {
 
-// The path to a VR Settings page from Quake's main menu, the fewest links from the VR Settings by the labels the player
-// reads on the way ("Options > VR Settings > Advanced VR Options > Movement > Locomotion"); `spec` is the page's title,
+// The path to a VR Settings page from Quake's main menu, the fewest links from the VR Settings or the Advanced VR Options
+// by the labels the player reads on the way ("Options > VR Settings > ...", "Advanced VR > Movement > Locomotion"; the
+// main menu's Advanced VR row and the corner's button open those); `spec` is the page's title,
 // or "<title> > <row label>" for a row on it. False when no page has that title, no link reaches it, or it has no row of
 // that label (the menus changed: the calibration room's boards, vr_setup.hpp).
 bool pathTo(za::StringView spec, za::String& out);
@@ -37,8 +38,8 @@ void handCalMatch_f();
 [[nodiscard]] int currentPage();
 void reopen(int page);
 
-// "Advanced VR" (the corner's button): the Advanced VR Options from any menu, their selection and
-// scroll as they were left; Back from them goes to the VR Settings, as always.
+// "Advanced VR" (the corner's button, the main menu's row): the Advanced VR Options from any menu, their selection and
+// scroll as they were left; Back from them goes to the VR Settings (to the main menu when opened from its row).
 void jumpToAdvanced();
 
 // "Checklist" (the corner's button): the Checklist page (vr_checklist.hpp) from any menu, the list read again; Back
@@ -54,6 +55,16 @@ void jumpToRelighting();
 
 // The presets' callbacks (Locomotion's Comfort, Body and Display's Handedness) and VR Settings' own rows (Turning Mode, Move Towards, the hands), once the cvars are registered.
 void init();
+
+// The leftmost x (menu pixels) the menu shown draws text at: a VR page's longest label (right-aligned to the values'
+// column, reaching left of Quake's 320 columns) or its help; Ironwail's lists laid out from the canvas's width; else 0.
+// The corner's buttons stand left of it (vr_menuui.cpp).
+[[nodiscard]] float contentLeft();
+
+// The rightmost x (menu pixels) the menu shown draws at from menu y `y` down (-1e9: nothing there): a VR page's rows and
+// their scrollbar, its help box at its widest, Search's, the Map Library's and the console's keyboards; Quake's and
+// Ironwail's menus as menu.c's M_ContentExtent says. The corner's version label keeps right of it (vr_menubrand.cpp).
+[[nodiscard]] float contentRightBelow(float y);
 
 // Menu Detail at Developer (vr_menu_level 2): the tuning and testing pages, the corner's Checklist button.
 [[nodiscard]] bool developerLevel();

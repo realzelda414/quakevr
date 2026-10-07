@@ -14,6 +14,7 @@
 #include "vr_protocol.hpp"
 
 #include "Zancle/Algorithm/Find.hpp"
+#include "Zancle/Base/PtrDiffT.hpp"
 #include "Zancle/Container/AnkerlUnorderedDense.hpp"
 #include "Zancle/Container/Array.hpp"
 #include "Zancle/Container/Vector.hpp"
@@ -402,6 +403,98 @@ constexpr Seed scorSeeds[] = {
     {"leg_fr", 0, Joint::Ball, {-1.7f, -10.8f, -11.9f}, {-0.7f, -2.9f, -8.2f}, {-2.6f, -18.8f, -15.6f}, 0.f, 60.f, 25.f, 0.f, {}},
 };
 
+// Dawn of the Machine's rocket ogre (owned/mg3/progs/ogre_rocket.mdl, read from MG3's pack in place: 982 vertices, 147
+// frames in id's ogre's order: its death frames checked against Quake VR's ogre's, ROUND21.md "Dawn of the Machine (MG3):
+// monsters"). The rest pose ($stand1): x forward, y left, z up; upright, his left arm down, his rocket launcher (a box
+// and a long barrel behind him) in his right hand, kept on the hand (he does not drop it). Measured on his frames
+// (Misc/quakevr/ragdoll/rig.py ogre_rocket ogre_rocket_bones.json, RIG_PAK MG3's pak0.pak): clusters 1.06 units rms,
+// bones 1.19. Death frames 112-125 ($death1-14) and 126-135 ($bdeath1-10), as the ogre's.
+constexpr Seed ogreRocketSeeds[] = {
+    {"pelvis", -1, Joint::Root, {1.4f, -1.1f, 4.5f}, {1.4f, -1.1f, 4.5f}, {-2.4f, -0.6f, 13.f}, 0.f, 0.f, 0.f, 0.f, {}},
+    {"chest", 0, Joint::Ball, {3.9f, -0.4f, 23.5f}, {-2.4f, -0.6f, 13.f}, {5.4f, -2.1f, 24.2f}, 0.f, 35.f, 25.f, 0.f, {}},
+    {"head", 1, Joint::Ball, {11.f, -1.6f, 31.4f}, {5.4f, -2.1f, 24.2f}, {16.5f, -1.f, 38.6f}, 0.f, 45.f, 50.f, 0.f, {}},
+    {"upperarm_l", 1, Joint::Ball, {2.6f, 14.8f, 26.2f}, {3.7f, 9.2f, 25.2f}, {-2.4f, 15.3f, 19.2f}, 0.f, 85.f, 45.f, 0.f, {}},
+    {"forearm_l", 3, Joint::Hinge, {1.6f, 17.6f, 6.9f}, {-2.4f, 15.3f, 19.2f}, {3.1f, 17.7f, 1.7f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
+    {"hand_l", 4, Joint::Ball, {10.3f, 17.4f, -13.7f}, {3.1f, 17.7f, 1.7f}, {17.5f, 17.1f, -29.1f}, 0.f, 40.f, 30.f, 0.f, {}},
+    {"upperarm_r", 1, Joint::Ball, {2.8f, -16.5f, 17.3f}, {3.6f, -13.5f, 21.5f}, {0.f, -20.6f, 11.3f}, 0.f, 85.f, 45.f, 0.f, {}},
+    {"forearm_r", 6, Joint::Hinge, {0.4f, -19.7f, 7.2f}, {0.f, -20.6f, 11.3f}, {1.9f, -20.5f, 0.3f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
+    {"hand_r", 7, Joint::Ball, {-7.9f, -21.6f, -7.4f}, {1.9f, -20.5f, 0.3f}, {-17.8f, -22.7f, -15.f}, 0.f, 40.f, 30.f, 0.f, {}},
+    {"thigh_l", 0, Joint::Ball, {2.9f, 6.9f, -5.8f}, {-3.2f, 5.7f, 4.4f}, {4.7f, 12.7f, -10.4f}, 4.5f, 70.f, 30.f, 0.f, {}},
+    {"shin_l", 9, Joint::Hinge, {4.f, 7.4f, -20.9f}, {4.7f, 12.7f, -10.4f}, {4.f, 7.7f, -20.4f}, 4.f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
+    {"thigh_r", 0, Joint::Ball, {1.3f, -8.6f, -10.6f}, {-0.4f, -11.6f, -2.1f}, {-2.3f, -12.8f, -19.5f}, 4.5f, 70.f, 30.f, 0.f, {}},
+    {"shin_r", 11, Joint::Hinge, {2.1f, -9.5f, -22.6f}, {-2.3f, -12.8f, -19.5f}, {-1.1f, -11.9f, -20.4f}, 4.f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
+};
+
+// Dawn of the Machine's demo dog (owned/mg3/progs/dog_explosive.mdl, read in place: 915 vertices, 86 frames in id's
+// rottweiler's order, checked: frameorder.py dog dog_explosive). The rottweiler's build with a bomb pack on his back
+// (its two barrels on the pelvis and the chest); the rest pose $attack1 as the rottweiler's; his bones the rottweiler's
+// (keepHinge on the lower legs, as his). Measured on his frames (rig.py dog_explosive dog_explosive_bones.json, RIG_PAK
+// MG3's pak0.pak): clusters 0.58 units rms, bones 0.71. Death frames 8-16 ($death1-9) and 17-25 ($deathb1-9), used
+// only knocked down or beheaded (he always bursts otherwise: QC vr_mg3_demodog.qc).
+constexpr Seed dogExplosiveSeeds[] = {
+    {"pelvis", -1, Joint::Root, {-6.7f, -0.1f, 3.8f}, {-6.7f, -0.1f, 3.8f}, {0.8f, -0.1f, 1.9f}, 0.f, 0.f, 0.f, 0.f, {}},
+    {"chest", 0, Joint::Ball, {6.1f, -0.3f, 4.6f}, {0.8f, -0.1f, 1.9f}, {15.2f, 0.1f, -2.2f}, 0.f, 30.f, 20.f, 0.f, {}},
+    {"head", 1, Joint::Ball, {23.4f, -0.1f, 0.3f}, {15.2f, 0.1f, -2.2f}, {31.6f, -0.3f, 2.8f}, 0.f, 50.f, 40.f, 0.f, {}},
+    {"jaw", 2, Joint::Hinge, {26.5f, -0.5f, -3.7f}, {21.2f, -0.4f, -2.8f}, {31.8f, -0.5f, -4.7f}, 0.f, 0.f, 0.f, 40.f, {0.f, 1.f, 0.f}},
+    {"upperleg_fl", 1, Joint::Ball, {8.8f, 8.f, -3.4f}, {8.2f, 3.8f, 0.4f}, {7.2f, 10.8f, -7.8f}, 2.f, 60.f, 20.f, 0.f, {}},
+    {"lowerleg_fl", 4, Joint::Hinge, {10.8f, 9.5f, -18.f}, {7.2f, 10.8f, -7.8f}, {12.4f, 8.8f, -22.6f}, 1.6f, 0.f, 0.f, 140.f, {0.f, -1.f, 0.f}, true},
+    {"upperleg_fr", 1, Joint::Ball, {12.4f, -7.5f, -6.8f}, {10.f, -3.9f, -1.7f}, {14.7f, -9.8f, -16.9f}, 2.f, 60.f, 20.f, 0.f, {}},
+    {"lowerleg_fr", 6, Joint::Hinge, {20.5f, -8.3f, -19.4f}, {14.7f, -9.8f, -16.9f}, {26.3f, -6.8f, -21.9f}, 1.6f, 0.f, 0.f, 140.f, {0.f, -1.f, 0.f}, true},
+    {"thigh_bl", 0, Joint::Ball, {-6.5f, 6.9f, -8.2f}, {-9.7f, 6.f, -0.9f}, {-7.3f, 8.1f, -14.8f}, 2.5f, 60.f, 20.f, 0.f, {}},
+    {"shin_bl", 8, Joint::Hinge, {-6.8f, 6.3f, -20.4f}, {-7.3f, 8.1f, -14.8f}, {-6.6f, 5.5f, -22.9f}, 1.6f, 0.f, 0.f, 120.f, {0.f, 1.f, 0.f}, true},
+    {"thigh_br", 0, Joint::Ball, {-13.2f, -6.9f, -8.4f}, {-10.f, -5.8f, -1.f}, {-15.9f, -6.3f, -13.8f}, 2.5f, 60.f, 20.f, 0.f, {}},
+    {"shin_br", 10, Joint::Hinge, {-19.4f, -6.5f, -19.9f}, {-15.9f, -6.3f, -13.8f}, {-21.3f, -6.6f, -23.1f}, 1.6f, 0.f, 0.f, 120.f, {0.f, 1.f, 0.f}, true},
+    {"tail", 0, Joint::Ball, {-17.5f, -0.1f, -1.1f}, {-14.8f, -0.5f, 3.3f}, {-20.2f, 0.4f, -5.6f}, 0.f, 50.f, 30.f, 0.f, {}},
+};
+
+// Dawn of the Machine's ranged knight (owned/mg3/progs/rknight.mdl, read in place: 1155 vertices, 166 frames in id's
+// death knight's order, checked: frameorder.py hknight rknight). The rest pose ($stand1): x forward, y left, z up;
+// upright, clawed, no weapon: pauldrons on the upper arms, his left hand on its forearm, his right claw a piece of its
+// own (the hand). The death knight's bones. Measured on his frames (rig.py rknight rknight_bones.json, RIG_PAK MG3's
+// pak0.pak): clusters 0.63 units rms, bones 0.77 (the death knight: 1.02, 1.29).
+// Death frames 42-53 ($death1-12) and 54-62 ($deathb1-9).
+constexpr Seed rknightSeeds[] = {
+    {"pelvis", -1, Joint::Root, {0.4f, -0.4f, 9.7f}, {0.4f, -0.4f, 9.7f}, {0.f, 0.3f, 14.f}, 0.f, 0.f, 0.f, 0.f, {}},
+    {"chest", 0, Joint::Ball, {3.9f, -0.6f, 23.8f}, {0.f, 0.3f, 14.f}, {5.7f, -1.1f, 25.6f}, 0.f, 35.f, 25.f, 0.f, {}},
+    {"head", 1, Joint::Ball, {8.8f, -1.4f, 33.f}, {5.7f, -1.1f, 25.6f}, {11.9f, -1.7f, 40.5f}, 0.f, 45.f, 50.f, 0.f, {}},
+    {"upperarm_l", 1, Joint::Ball, {-0.9f, 12.8f, 21.2f}, {1.5f, 9.9f, 26.7f}, {-1.9f, 12.7f, 16.3f}, 0.f, 85.f, 45.f, 0.f, {}},
+    {"forearm_l", 3, Joint::Hinge, {7.7f, 15.5f, 5.5f}, {-1.9f, 12.7f, 16.3f}, {17.4f, 18.4f, -5.2f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
+    {"upperarm_r", 1, Joint::Ball, {-0.5f, -14.9f, 19.6f}, {1.3f, -12.1f, 25.2f}, {-1.7f, -16.f, 13.4f}, 0.f, 85.f, 45.f, 0.f, {}},
+    {"forearm_r", 5, Joint::Hinge, {4.4f, -19.6f, 11.f}, {-1.7f, -16.f, 13.4f}, {5.5f, -20.9f, 9.7f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
+    {"hand_r", 6, Joint::Ball, {11.6f, -23.8f, 6.3f}, {5.5f, -20.9f, 9.7f}, {17.7f, -26.7f, 2.8f}, 0.f, 40.f, 30.f, 0.f, {}},
+    {"thigh_l", 0, Joint::Ball, {3.f, 7.2f, -2.3f}, {0.6f, 4.7f, 4.5f}, {5.4f, 7.9f, -8.1f}, 3.5f, 70.f, 30.f, 0.f, {}},
+    {"shin_l", 8, Joint::Hinge, {3.8f, 8.8f, -10.9f}, {5.4f, 7.9f, -8.1f}, {-0.2f, 11.7f, -20.2f}, 3.f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
+    {"foot_l", 9, Joint::Ball, {2.3f, 12.f, -22.6f}, {-0.2f, 11.7f, -20.2f}, {4.8f, 12.4f, -25.1f}, 0.f, 35.f, 15.f, 0.f, {}},
+    {"thigh_r", 0, Joint::Ball, {2.7f, -7.3f, -0.9f}, {0.2f, -4.5f, 5.4f}, {5.7f, -8.2f, -7.6f}, 3.5f, 70.f, 30.f, 0.f, {}},
+    {"shin_r", 11, Joint::Hinge, {4.7f, -8.9f, -10.4f}, {5.7f, -8.2f, -7.6f}, {0.5f, -11.3f, -20.2f}, 3.f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
+    {"foot_r", 12, Joint::Ball, {2.7f, -11.4f, -23.f}, {0.5f, -11.3f, -20.2f}, {4.9f, -11.6f, -25.7f}, 0.f, 35.f, 15.f, 0.f, {}},
+};
+
+// Dawn of the Machine's super shambler (MG3's progs/shambler_blood.mdl, read in place from the owned pack: 1076 vertices,
+// 96 frames, unnamed; the shambler's 94 first, as its QC's $frames). The rest pose ($stand1): x forward, y left, z up;
+// taller than Quake VR's shambler (74 up, his face further forward), his claws low. The shambler's bones: pelvis (his
+// belly), chest (the hump), head (the face and jaw at the hump's front), upper arms, forearms (elbow hinges) and claws,
+// thighs and shins (knee hinges; capsules 5.5 and 5). Measured on his frames (Misc/quakevr/ragdoll/rig.py shambler_blood
+// shambler_blood_bones.json, RIG_PAK: MG3's pak0; 24 clusters: 1.29 units rms): bones 1.77. Seed centres set by hand
+// where the fit's would give a cluster to another bone (rig.py's warnings): pelvis 7 -1 26 (the belly's front, not the
+// head's), chest 12 -3 55, head 31 -3.5 52 (its brow, not the hump's), thigh_l 5.4 12.9 8.4 (the hip's cluster the
+// pelvis's). Death frames 83-93 ($death1-11).
+constexpr Seed shamblerBloodSeeds[] = {
+    {"pelvis", -1, Joint::Root, {7.f, -1.f, 26.f}, {7.6f, -0.9f, 30.1f}, {8.6f, 0.4f, 32.8f}, 0.f, 0.f, 0.f, 0.f, {}},
+    {"chest", 0, Joint::Ball, {12.f, -3.f, 55.f}, {8.6f, 0.4f, 32.8f}, {22.2f, -1.1f, 48.f}, 0.f, 35.f, 25.f, 0.f, {}},
+    {"head", 1, Joint::Ball, {31.f, -3.5f, 52.f}, {22.2f, -1.1f, 48.f}, {42.6f, -5.5f, 47.3f}, 0.f, 30.f, 30.f, 0.f, {}},
+    {"upperarm_l", 1, Joint::Ball, {8.2f, 22.9f, 44.f}, {10.1f, 11.4f, 53.8f}, {8.8f, 30.7f, 32.6f}, 0.f, 85.f, 45.f, 0.f, {}},
+    {"forearm_l", 3, Joint::Hinge, {25.9f, 33.8f, 19.6f}, {8.8f, 30.7f, 32.6f}, {30.9f, 36.6f, 18.5f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
+    {"hand_l", 4, Joint::Ball, {40.8f, 29.4f, 17.7f}, {30.9f, 36.6f, 18.5f}, {50.7f, 22.2f, 16.9f}, 0.f, 40.f, 30.f, 0.f, {}},
+    {"upperarm_r", 1, Joint::Ball, {3.9f, -26.7f, 41.3f}, {10.1f, -17.3f, 51.3f}, {0.3f, -30.8f, 28.3f}, 0.f, 85.f, 45.f, 0.f, {}},
+    {"forearm_r", 6, Joint::Hinge, {13.f, -38.5f, 12.f}, {0.3f, -30.8f, 28.3f}, {17.8f, -45.6f, 11.8f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
+    {"hand_r", 7, Joint::Ball, {26.8f, -42.6f, 7.2f}, {17.8f, -45.6f, 11.8f}, {35.9f, -39.6f, 2.7f}, 0.f, 40.f, 30.f, 0.f, {}},
+    {"thigh_l", 0, Joint::Ball, {5.4f, 12.9f, 8.4f}, {-0.5f, 5.8f, 20.6f}, {6.3f, 15.1f, 0.2f}, 5.5f, 70.f, 30.f, 0.f, {}},
+    {"shin_l", 9, Joint::Hinge, {1.7f, 12.9f, -13.8f}, {6.3f, 15.1f, 0.2f}, {-0.3f, 11.9f, -20.1f}, 5.f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
+    {"thigh_r", 0, Joint::Ball, {5.9f, -13.7f, 5.2f}, {-1.2f, -8.4f, 19.1f}, {7.1f, -12.6f, -9.3f}, 5.5f, 70.f, 30.f, 0.f, {}},
+    {"shin_r", 11, Joint::Hinge, {5.2f, -15.7f, -18.f}, {7.1f, -12.6f, -9.3f}, {4.6f, -16.6f, -20.7f}, 5.f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
+};
+
 constexpr SeedTable seedTables[] = {
     {modelmeta::Id::Soldier, 555, gruntSeeds, static_cast<int>(sizeof(gruntSeeds) / sizeof(gruntSeeds[0])), 2, {8, 18}, {17, 28}},
     {modelmeta::Id::Knight, 655, knightSeeds, static_cast<int>(sizeof(knightSeeds) / sizeof(knightSeeds[0])), 2, {76, 86}, {85, 96}},
@@ -417,6 +510,10 @@ constexpr SeedTable seedTables[] = {
     {modelmeta::Id::Mummy, 177, mummySeeds, static_cast<int>(sizeof(mummySeeds) / sizeof(mummySeeds[0])), 2, {103, 162}, {116, 178}},
     {modelmeta::Id::Shalrath, 371, shalrathSeeds, static_cast<int>(sizeof(shalrathSeeds) / sizeof(shalrathSeeds[0])), 1, {16, 0}, {22, 0}},
     {modelmeta::Id::Scor, 235, scorSeeds, static_cast<int>(sizeof(scorSeeds) / sizeof(scorSeeds[0])), 1, {36, 0}, {40, 0}, 26, true},
+    {modelmeta::Id::Mg3DogExplosive, 915, dogExplosiveSeeds, static_cast<int>(sizeof(dogExplosiveSeeds) / sizeof(dogExplosiveSeeds[0])), 2, {8, 17}, {16, 25}},
+    {modelmeta::Id::Mg3Rknight, 1155, rknightSeeds, static_cast<int>(sizeof(rknightSeeds) / sizeof(rknightSeeds[0])), 2, {42, 54}, {53, 62}},
+    {modelmeta::Id::Mg3OgreRocket, 982, ogreRocketSeeds, static_cast<int>(sizeof(ogreRocketSeeds) / sizeof(ogreRocketSeeds[0])), 2, {112, 126}, {125, 135}},
+    {modelmeta::Id::Mg3ShamblerBlood, 1076, shamblerBloodSeeds, static_cast<int>(sizeof(shamblerBloodSeeds) / sizeof(shamblerBloodSeeds[0])), 1, {83, 0}, {93, 0}, 24},
 };
 
 [[nodiscard]] const SeedTable* tableOf(const qmodel_t* model)
@@ -802,15 +899,20 @@ void sayLog(const DeriveLog& log)
     }
 }
 
-// Any thread: reads the model's data (loaded: Mod_Extradata on the main thread first) and writes `rig` and `log` only.
-bool derive(qmodel_t* model, const SeedTable& table, Rig& rig, DeriveLog& log)
+// Any thread: reads the model's data `hdr` (Mod_Extradata, taken on the main thread: Cache_Check relinks the cache's LRU
+// list, which a worker must never touch; the cache does not move while the pool runs this) and writes `rig` and `log`
+// only.
+bool derive(qmodel_t* model, const aliashdr_t* hdr, const SeedTable& table, Rig& rig, DeriveLog& log)
 {
     const double t0 = Sys_DoubleTime();
-    const auto* hdr = static_cast<const aliashdr_t*>(Mod_Extradata(model));
     if(!hdr || hdr->poseverttype != aliashdr_t::PV_QUAKE1 || Mod_NextSurface(const_cast<aliashdr_t*>(hdr)) ||
         hdr->numverts != table.numVerts || hdr->numposes < 2 || table.count > maxBones)
     {
-        q_snprintf(log.text, sizeof(log.text), "ragdoll: %s is not the model its seed table was made for\n", model->name);
+        q_snprintf(log.text, sizeof(log.text),
+            "ragdoll: %s is not the model its seed table was made for (%d vertices, the table's %d; pose type %d; %d poses; "
+            "surfaces %s)\n",
+            model->name, hdr ? hdr->numverts : -1, table.numVerts, hdr ? static_cast<int>(hdr->poseverttype) : -1,
+            hdr ? hdr->numposes : -1, hdr && Mod_NextSurface(const_cast<aliashdr_t*>(hdr)) ? "several" : "one");
         return false;
     }
     Mesh m;
@@ -1270,6 +1372,30 @@ struct MotionTest
 };
 MotionTest motionTest;
 
+// vr_knockdown_debug 2 (Combat > Knockdowns, Print Rolls: "And Get-Ups' Motion"): a get-up as the client draws it,
+// frame by frame from the moment the monster starts getting up (its ragdoll blended into its animation, then its
+// animation): how fast its vertices move (units a second: the frames' lengths vary), the fastest frame against the mean
+// (a jump), the frames that went back on the one before (a pose shown again: the jitter) and the frame its animated model
+// is drawn again (the switch: its speed against the frames' before). vr_knockdown_debug 3: each frame's.
+struct GetupWatch
+{
+    int num{0};          // the entity (0 none)
+    double from{0.0}, until{0.0}; // the server times it is followed from and to
+    int frames{0}, moving{0};
+    float sumSpeed{0.f}, maxSpeed{0.f}, recentSpeed{0.f}, switchRatio{0.f};
+    int maxAt{0}, backs{0}, switchAt{-1};
+    bool skinned{false}; // drawn as a ragdoll last frame
+    double startTime{0.0}, lastTime{0.0};
+};
+GetupWatch getupWatch;
+
+struct GetupPoints
+{
+    za::Vector<glm::vec3> last, step, now;
+    auto members() { return mem::list(last, step, now); }
+};
+mem::Cache<GetupPoints> getupPoints{"get-up motion", mem::MapChange};
+
 struct MotionPoints
 {
     za::Vector<glm::vec3> rag;  // a frame's maxBones (the parts')
@@ -1366,25 +1492,80 @@ void animatedPoses(const entity_t* e, const aliashdr_t* hdr, int& pose1, int& po
         blend = 0.f;
         return;
     }
-    const float span = (e->lerpflags & LERP_FINISH) ? e->lerpfinish - e->lerpstart : e->lerptime;
+    const float span = (e->lerpflags & LERP_FINISH) ? R_FrameLerpFinish(e) - e->lerpstart : e->lerptime;
     blend = span > 0.f ? za::clamp(static_cast<float>(cl.time - e->lerpstart) / span, 0.f, 1.f) : 1.f;
     pose1 = blend >= 1.f ? e->currentpose : e->previouspose;
     pose2 = e->currentpose;
 }
 
+// The animated model's lerp of `e` kept up with its frame while its skinned model is drawn (R_SetupAliasFrame's, which
+// doesn't run for it then): a knocked-down monster's get-up plays its frames under the blend from its ragdoll
+// (vr_box3d.cpp updateRecoveries), and drawn again it goes on from them. (Not kept, it went on from the frame it was
+// knocked down in, a standing one, to its get-up's: a jump of 20 units and back, the get-up's jitter.)
+void trackPose(entity_t* e)
+{
+    const auto* hdr = static_cast<const aliashdr_t*>(Mod_Extradata(e->model));
+    if(!hdr || hdr->numframes <= 0)
+    {
+        return;
+    }
+    const maliasframedesc_t& f = hdr->frames[za::clamp(e->frame, 0, hdr->numframes - 1)];
+    int posenum = f.firstpose;
+    if(f.numposes > 1 && f.interval > 0.f)
+    {
+        posenum += static_cast<int>(cl.time / static_cast<double>(f.interval)) % f.numposes;
+    }
+    if(e->lerpflags & (LERP_RESETANIM | LERP_RESETANIM2))
+    {
+        if(e->currentpose == posenum && !(e->lerpflags & LERP_RESETANIM))
+        {
+            return; // (RESETANIM2: as R_SetupAliasFrame, waits for the pose to change)
+        }
+        e->lerpstart = 0.f;
+        e->animlerpfinish = 0.f;
+        e->previouspose = e->currentpose = static_cast<short>(posenum);
+        e->lerpflags &= static_cast<byte>(~((e->lerpflags & LERP_RESETANIM) ? LERP_RESETANIM : LERP_RESETANIM2));
+        return;
+    }
+    if(e->currentpose != posenum)
+    {
+        e->lerpstart = static_cast<float>(cl.time);
+        e->animlerpfinish = (e->lerpflags & LERP_FINISH) ? e->lerpfinish : 0.f;
+        e->previouspose = e->currentpose;
+        e->currentpose = static_cast<short>(posenum);
+    }
+}
+
 // The animated model of `e` as it would be drawn now (its lerp; its place last frame; the .mdl's vertices in the world), for
 // comparing a ragdoll's first frame with it (vr_debug_ragdoll).
-void animatedVertices(const entity_t* e, za::Vector<glm::vec3>& out, int& pose1, int& pose2, float& blend)
+void animatedVertices(const entity_t* e, za::Vector<glm::vec3>& out, int& pose1, int& pose2, float& blend, bool now = false)
 {
     const auto* hdr = static_cast<const aliashdr_t*>(Mod_Extradata(e->model));
     animatedPoses(e, hdr, pose1, pose2, blend);
     float m16[16];
     vec3_t origin, angles;
     // Where it was drawn last frame: the message before this frame's (the server moved its origin to follow the pelvis
-    // as the ragdoll was made: writeRagdoll; a listen server sends one a frame).
-    const bool moved = e->msgtime == cl.mtime[0];
+    // as the ragdoll was made: writeRagdoll; a listen server sends one a frame). `now`: where it is drawn this frame.
+    const bool moved = !now && e->msgtime == cl.mtime[0];
     VectorCopy(moved ? e->msg_origins[1] : e->origin, origin);
     VectorCopy(moved ? e->msg_angles[1] : e->angles, angles);
+    if(now && r_lerpmove.value && (e->lerpflags & LERP_MOVESTEP) && !(e->lerpflags & LERP_RESETMOVE))
+    {
+        // (A monster's steps lerped as R_SetupEntityTransform does, without changing the entity.)
+        const bool changed = !VectorCompare(e->origin, e->currentorigin) || !VectorCompare(e->angles, e->currentangles);
+        const float t = changed ? 0.f : R_MoveLerpBlend(e);
+        const float* from = changed ? e->currentorigin : e->previousorigin;
+        const float* to = e->currentorigin;
+        const float* fromA = changed ? e->currentangles : e->previousangles;
+        const float* toA = e->currentangles;
+        for(int i = 0; i < 3; i++)
+        {
+            float d = toA[i] - fromA[i];
+            d = d > 180.f ? d - 360.f : d < -180.f ? d + 360.f : d;
+            origin[i] = from[i] + (to[i] - from[i]) * t;
+            angles[i] = fromA[i] + d * t;
+        }
+    }
     R_EntityMatrix(m16, origin, angles, e->scale);
     ApplyTranslation(m16, hdr->scale_origin[0], hdr->scale_origin[1], hdr->scale_origin[2]);
     ApplyScale(m16, hdr->scale[0], hdr->scale[1], hdr->scale[2]);
@@ -1475,7 +1656,7 @@ const Rig* rigFor(qmodel_t* model)
     }
     za::UniquePtr<Rig> r = za::makeUnique<Rig>();
     DeriveLog log;
-    const bool ok = derive(model, *table, *r, log);
+    const bool ok = derive(model, static_cast<const aliashdr_t*>(Mod_Extradata(model)), *table, *r, log);
     sayLog(log);
     if(!ok)
     {
@@ -1493,6 +1674,7 @@ void warmRigs(qmodel_t* const* models, int count)
     struct Job
     {
         qmodel_t* model{nullptr};
+        const aliashdr_t* hdr{nullptr}; // (Mod_Extradata here, on the main thread: derive runs on the pool)
         const SeedTable* table{nullptr};
         za::UniquePtr<Rig> rig;
         DeriveLog log;
@@ -1512,22 +1694,34 @@ void warmRigs(qmodel_t* const* models, int count)
         {
             twice = twice || j.model == model;
         }
-        if(twice || !Mod_Extradata(model))
+        const auto* hdr = twice ? nullptr : static_cast<const aliashdr_t*>(Mod_Extradata(model));
+        if(!hdr)
         {
             continue;
         }
         Job j;
         j.model = model;
+        j.hdr = hdr;
         j.table = table;
         j.rig = za::makeUnique<Rig>();
         work.pushBack(static_cast<Job&&>(j));
+    }
+    // The headers again once every model is loaded (a load above may have let an earlier one go from the cache):
+    // Cache_Check loads nothing, so these stay put until the pool is done.
+    for(za::SizeT k = work.size(); k-- > 0;)
+    {
+        work[k].hdr = static_cast<const aliashdr_t*>(Cache_Check(&work[k].model->cache));
+        if(!work[k].hdr)
+        {
+            work.erase(work.begin() + static_cast<za::PtrDiffT>(k));
+        }
     }
     // Each its own on the pool (tens of milliseconds each: the map's monsters were a quarter of a second in a row).
     qvr::jobs::parallelFor(warmSite, work.size(), 1, [&work](za::SizeT begin, za::SizeT end) {
         for(za::SizeT k = begin; k < end; k++)
         {
             Job& j = work[k];
-            j.ok = derive(j.model, *j.table, *j.rig, j.log);
+            j.ok = derive(j.model, j.hdr, *j.table, *j.rig, j.log);
         }
     });
     // Kept in the order asked (as rigFor one by one would have).
@@ -1914,7 +2108,127 @@ void recordMotion()
     }
 }
 
+void reportGetup()
+{
+    GetupWatch& g = getupWatch;
+    if(g.moving > 0)
+    {
+        const float mean = g.sumSpeed / static_cast<float>(g.moving);
+        Con_Printf("knockdown: %d get-up drawn: %d frames over %.2f s, %.0f units/s, the fastest %.0f (%.1fx, frame %d), %d frames "
+                   "back on the one before; the animated model from frame %d (%.1fx the frames' before)\n",
+            g.num, g.frames, g.lastTime - g.startTime, mean, g.maxSpeed, mean > 0.f ? g.maxSpeed / mean : 0.f, g.maxAt, g.backs,
+            g.switchAt, g.switchRatio);
+    }
+    g = GetupWatch{};
+}
+
+// A frame of the get-up followed (vr_knockdown_debug 2), after the swaps: its vertices as drawn now.
+void recordGetup()
+{
+    GetupWatch& g = getupWatch;
+    if(g.num <= 0)
+    {
+        return;
+    }
+    if(g.num >= cl.num_entities || !sv.active || cl.mtime[0] > g.until || cl.mtime[0] < g.from - 1.0) // (or a new map)
+    {
+        reportGetup();
+        return;
+    }
+    entity_t* e = &cl_entities[g.num];
+    bool swapped = false;
+    for(const Swapped& s : draw.swapped)
+    {
+        swapped = swapped || s.num == g.num;
+    }
+    GetupPoints& pts = getupPoints;
+    int pose1 = 0, pose2 = 0;
+    float blend = 1.f;
+    if(swapped ? !skinnedVertices(g.num, pts.now, nullptr, true) : !e->model || e->model->type != mod_alias)
+    {
+        return;
+    }
+    if(!swapped)
+    {
+        animatedVertices(e, pts.now, pose1, pose2, blend, true);
+    }
+    const double dt = cl.time - g.lastTime;
+    const bool same = g.frames > 0 && pts.last.size() == pts.now.size() && dt > 0.0;
+    if(g.frames > 0 && !same)
+    {
+        return; // (no time passed: a frame drawn twice)
+    }
+    const bool hadStep = same && pts.step.size() == pts.now.size() && g.frames > 1;
+    float step = 0.f, back = 0.f, along = 0.f;
+    pts.step.resize(pts.now.size());
+    for(za::SizeT v = 0; v < pts.now.size(); v++)
+    {
+        const glm::vec3 d = same ? pts.now[v] - pts.last[v] : glm::vec3{0.f};
+        step += glm::length(d);
+        if(hadStep)
+        {
+            back += za::max(-glm::dot(d, pts.step[v]), 0.f);
+            along += glm::length(d) * glm::length(pts.step[v]);
+        }
+        pts.step[v] = d;
+    }
+    step /= static_cast<float>(za::max(static_cast<int>(pts.now.size()), 1));
+    const float speed = same ? step / static_cast<float>(dt) : 0.f;
+    const float backShare = along > 1e-6f ? back / along : 0.f;
+    if(g.frames == 0)
+    {
+        g.startTime = cl.time;
+    }
+    if(!swapped && g.skinned && g.switchAt < 0)
+    {
+        g.switchAt = g.frames;
+        g.switchRatio = g.recentSpeed > 0.f ? speed / g.recentSpeed : 0.f;
+    }
+    g.skinned = swapped;
+    if(same)
+    {
+        g.sumSpeed += speed;
+        g.moving++;
+        if(speed > g.maxSpeed)
+        {
+            g.maxSpeed = speed;
+            g.maxAt = g.frames;
+        }
+        g.backs += backShare > 0.5f && step > 0.05f;
+        g.recentSpeed = g.recentSpeed > 0.f ? g.recentSpeed + (speed - g.recentSpeed) * 0.2f : speed;
+    }
+    if(vr_knockdown_debug.value >= 3.f)
+    {
+        glm::vec3 mid{0.f};
+        for(const glm::vec3& v : pts.now)
+        {
+            mid += v / static_cast<float>(pts.now.size());
+        }
+        Con_Printf("knockdown: %d get-up frame %d: cl.time %.4f, %s, frame %d (poses %d..%d at %.2f), %.0f units/s, %.2f back, "
+                   "middle %.1f %.1f %.1f\n",
+            g.num, g.frames, cl.time, swapped ? "ragdoll" : "animated", e->frame, pose1, pose2, blend, speed, backShare, mid.x,
+            mid.y, mid.z);
+    }
+    pts.last = pts.now;
+    g.lastTime = cl.time;
+    g.frames++;
+}
+
 } // namespace
+
+void watchGetup(int num, double from, double until)
+{
+    if(getupWatch.num > 0)
+    {
+        reportGetup();
+    }
+    getupWatch = GetupWatch{};
+    getupWatch.num = num;
+    getupWatch.from = from;
+    getupWatch.until = until;
+    getupPoints.last.clear();
+    getupPoints.step.clear();
+}
 
 void swapModels()
 {
@@ -1981,6 +2295,7 @@ void swapModels()
             }
         }
         drawnPose(num);
+        trackPose(e);
         Swapped s;
         s.num = num;
         s.original = e->model;
@@ -2028,6 +2343,7 @@ void swapModels()
         e->lerpflags &= static_cast<byte>(~(LERP_RESETANIM | LERP_RESETANIM2));
         draw.swapped.pushBack(s);
     }
+    recordGetup();
 }
 
 void restoreModels()

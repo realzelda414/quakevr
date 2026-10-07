@@ -49,6 +49,13 @@ constexpr float kReach = 24.f;    // how far round a trigger's brush its slipgat
 constexpr float kStand = 24.f;    // a standing player's origin over the floor
 constexpr float kRange = 1536.f;  // how far from the head a gate is looked through
 constexpr float kOblique = 0.25f; // the oblique near plane's slope in the depth (see VR_PortalClip)
+// A body this near a gate's plane (either side, over its opening) straddles it. The server carries a player at the start
+// of a tick (VR_PortalClientCross, before the move), so the tick whose move takes his torso past the plane sends him
+// still behind it, not yet carried, while the client's eye is already through (eyeThrough: drawn from the
+// destination); and once carried, an eye still behind the exit's face is drawn from the source. VR_PortalAddPVS sends
+// both rooms' entities while he straddles a gate: else the room he sees lost its doors, lifts and floors (start's
+// pentagram floor, func_bossgate) for that one frame, seen through.
+constexpr float kStraddle = 32.f;
 [[nodiscard]] bool triggerActive(const edict_t* trig);
 
 // A side of a slipgate: its faces in one plane, seen from in front of it, and where they lead.
@@ -78,6 +85,8 @@ struct PortalScratch
 mem::Scratch<PortalScratch> scratch{"portal mask and PVS"};
 
 za::Vector<Side> sides;
+[[nodiscard]] Side reverseSide(const Side& entry);
+[[nodiscard]] bool onGate(const Side& sd, const glm::vec3& onPlane, float margin);
 const qmodel_t* builtFor = nullptr;
 int builtGeneration = -1;
 int chosen = -1;  // the side looked through this frame (-1: none)
@@ -800,6 +809,29 @@ extern "C" mleaf_t* VR_PortalViewLeaf(mleaf_t* leaf)
     return dest && dest->contents != CONTENTS_SOLID ? dest : leaf;
 }
 
+// R_MarkSurfaces: a view leaf with a liquid's or a gate's face in it takes the PVS round the view's origin (SV_FatPVS,
+// for seeing through the surface). In the view through the gate that origin is the camera carried behind the
+// destination (in a wall, or another room: its PVS empty or elsewhere, the world through the gate black: vrslipgates'
+// loop, its turns and its platform gate, whose destinations' leaves touch a gate's face); there it is the destination's
+// point, the one VR_PortalViewLeaf finds the leaf by.
+extern "C" void VR_PortalPVSOrigin(float origin[3])
+{
+    if(!portals::enabled() || !portals::inView || portals::chosen < 0)
+    {
+        return;
+    }
+    const portals::Side& sd = portals::sides[static_cast<za::SizeT>(portals::chosen)];
+    const glm::vec3 p = sd.to + sd.turn * -sd.normal * 8.f;
+    vec3_t q{p.x, p.y, p.z};
+    const mleaf_t* dest = Mod_PointInLeaf(q, cl.worldmodel);
+    if(dest && dest->contents != CONTENTS_SOLID)
+    {
+        origin[0] = p.x;
+        origin[1] = p.y;
+        origin[2] = p.z;
+    }
+}
+
 // R_SetFrustum, its view matrix made (Quake's view space: x forward, y left, z up), its projection's not yet multiplied
 // in: in the view through the gate, the projection's depth row made oblique (Lengyel's), its near plane the gate's
 // plane carried to the destination: with reversed Z, depth = 1 - kOblique * (P . v) / w, P the plane (in view space,
@@ -924,25 +956,40 @@ extern "C" void VR_PortalAddPVS(byte* pvs, const float org[3])
     memcpy(sourcePvs.data(), pvs, sourcePvs.size());
     auto& added = portals::scratch.added;
     added.clear();
+    const auto add = [&added = added](const glm::vec3& p)
+    {
+        for(const glm::vec3& done : added)
+        {
+            if(done == p) { return; }
+        }
+        added.pushBack(p);
+        vec3_t d{p.x, p.y, p.z};
+        SV_AddToFatPVS(d, sv.worldmodel->nodes, sv.worldmodel);
+    };
+    // Whether `o` is within kStraddle of a side's plane, over its opening.
+    const auto straddles = [&o](const portals::Side& sd)
+    {
+        const float d = glm::dot(sd.normal, o) - sd.dist;
+        return za::fabs(d) < portals::kStraddle && portals::onGate(sd, o - sd.normal * d, portals::kStraddle);
+    };
     for(const portals::Side& sd : portals::sides)
     {
-        if(glm::dot(sd.normal, o) - sd.dist < 0.f || !portals::inPvs(sourcePvs.data(), sd.leaf) ||
-            glm::distance(portals::nearestPoint(sd, o), o) > portals::kRange)
+        // A body straddling a gate: the eye may be drawn from the other room before or after the server carries the
+        // body (see kStraddle), so both rooms are sent then.
+        if(straddles(sd))
         {
-            continue;
+            add(sd.dest);
         }
-        bool seen = false;
-        for(const glm::vec3& destination : added)
+        else if(glm::dot(sd.normal, o) - sd.dist >= 0.f && portals::inPvs(sourcePvs.data(), sd.leaf) &&
+            glm::distance(portals::nearestPoint(sd, o), o) <= portals::kRange)
         {
-            if(destination == sd.dest) { seen = true; break; }
+            add(sd.dest);
         }
-        if(seen)
+        if(glm::distance(sd.to, o) < portals::kRange && straddles(portals::reverseSide(sd)))
         {
-            continue;
+            const glm::vec3 c = (sd.mins + sd.maxs) * 0.5f;
+            add(c - sd.normal * (glm::dot(sd.normal, c) - sd.dist) + sd.normal * 8.f); // just in front of the entry
         }
-        added.pushBack(sd.dest);
-        vec3_t d{sd.dest.x, sd.dest.y, sd.dest.z};
-        SV_AddToFatPVS(d, sv.worldmodel->nodes, sv.worldmodel);
     }
 }
 
@@ -1353,6 +1400,43 @@ extern "C" void VR_PortalClientCross(edict_t* ent)
     // Collision must let the torso actually reach the plane. A frame or sill stopping the box is never permission
     // to cross; raised openings require a jump into them.
     crossPlayer(ent, *best, EDICT_NUM(best->trigger), cs);
+}
+
+// CL_RelinkEntities: an entity's last two places far apart (over 100 units on an axis: Quake's teleport, no lerp). The
+// client draws a tick behind the server, lerping from the older place to the newer; snapping to the newer at a
+// seamless crossing jumped the view a tick ahead and then held it still for a frame, a hitch at every slipgate. When
+// the older place, near a gate's plane and over its opening (either way through), carried through it lands within a
+// tick's move of the newer, `from` is it carried (and `yaw` the turn): the lerp goes on in the new room.
+extern "C" int VR_PortalLerpFrom(const float older[3], const float newer[3], float from[3], float* yaw)
+{
+    using namespace qvr::portals;
+    if(!walkOn() || !current())
+    {
+        return 0;
+    }
+    const glm::vec3 o = vec(older), n = vec(newer);
+    float best = kStraddle * 2.f;
+    for(const Side& entry : sides)
+    {
+        for(int back = 0; back < 2; back++)
+        {
+            const Side sd = back ? reverseSide(entry) : entry;
+            const float d = glm::dot(sd.normal, o) - sd.dist;
+            if(za::fabs(d) >= kStraddle || !onGate(sd, o - sd.normal * d, kStraddle))
+            {
+                continue;
+            }
+            const glm::vec3 c = carried(sd, o);
+            const float miss = glm::distance(c, n);
+            if(miss < best)
+            {
+                best = miss;
+                setVec(from, c);
+                *yaw = sd.yaw;
+            }
+        }
+    }
+    return best < kStraddle * 2.f ? 1 : 0;
 }
 
 namespace qvr::portals

@@ -374,7 +374,7 @@ channel_t *SND_PickChannel (int entnum, int entchannel)
 	life_left = 0x7fffffff;
 	for (ch_idx = NUM_AMBIENTS; ch_idx < NUM_AMBIENTS + MAX_DYNAMIC_CHANNELS; ch_idx++)
 	{
-		if (entchannel != 0		// channel 0 never overrides
+		if (!S_AUTOCHANNEL (entchannel)	// channel 0 never overrides (QVR: nor the hands')
 			&& snd_channels[ch_idx].entnum == entnum
 			&& (snd_channels[ch_idx].entchannel == entchannel || entchannel == -1) )
 		{	// always override sound from same entity
@@ -459,6 +459,11 @@ void SND_Spatialize (channel_t *ch)
 
 void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float fvol, float attenuation)
 {
+	S_StartSoundPitch (entnum, entchannel, sfx, origin, fvol, attenuation, 1.f);
+}
+
+void S_StartSoundPitch (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float fvol, float attenuation, float pitch)
+{
 	channel_t	*target_chan, *check;
 	sfxcache_t	*sc;
 	sfx_t		*old_sfx;
@@ -487,7 +492,7 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 	VectorCopy (origin, old_origin);
 	old_vol = fvol;
 	old_atten = attenuation;
-	if (entnum > 0 && entchannel > 0 && target_chan->entnum == entnum && target_chan->entchannel == entchannel)
+	if (entnum > 0 && entchannel > 0 && !S_AUTOCHANNEL (entchannel) && target_chan->entnum == entnum && target_chan->entchannel == entchannel)
 	{
 		old_sfx = target_chan->sfx;
 		VectorCopy (target_chan->origin, old_origin);
@@ -523,6 +528,13 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 	target_chan->sfx = sfx;
 	target_chan->pos = 0.0;
 	target_chan->end = paintedtime + sc->length;
+	pitch = CLAMP (SND_PITCH_MIN, pitch, SND_PITCH_MAX);
+	if (pitch != 1.f) // QVR: its playback rate (snd_mix.c paints it at it; the voices read at it, vr/vr_audio.cpp)
+	{
+		target_chan->pitch = pitch;
+		target_chan->end = paintedtime + (int) (sc->length / pitch);
+		target_chan->resampled = 1;
+	}
 
 // if an identical sound has also been started this frame, offset the pos
 // a bit to keep it from just making the first one louder
@@ -924,8 +936,22 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 			{
 				sfxcache_t *sc = (sfxcache_t *) Cache_Check (&ch->sfx->cache);
 				if (snd_show.value >= 2.f)
-					Con_SafePrintf ("L:%3i R:%3i | ENT:%5i CH:%3i | %s%s\n",
-						ch->leftvol, ch->rightvol, ch->entnum, ch->entchannel, ch->sfx->name, sc && sc->loopstart >= 0 ? " [L]" : "");
+				{
+					// QVR: where it plays from, and a hand's sound's hand (vr/vr_audio.cpp handOf)
+					vec3_t	hand, d, head;
+					int	h = VR_SndHandOf (ch, hand);
+					char	extra[128] = "";
+					if (h >= 0)
+					{
+						VectorSubtract (listener_origin, ch->origin, head);
+						VectorSubtract (hand, ch->origin, d);
+						q_snprintf (extra, sizeof (extra), " | %s hand %.0f %.0f %.0f (%.1f off; the head %.1f)", h ? "off" : "main",
+							hand[0], hand[1], hand[2], VectorLength (d), VectorLength (head));
+					}
+					Con_SafePrintf ("L:%3i R:%3i | ENT:%5i CH:%3i | %s%s | pitch %.3f | at %.0f %.0f %.0f%s\n",
+						ch->leftvol, ch->rightvol, ch->entnum, ch->entchannel, ch->sfx->name, sc && sc->loopstart >= 0 ? " [L]" : "",
+						S_CHANPITCH (ch), ch->origin[0], ch->origin[1], ch->origin[2], extra);
+				}
 				total++;
 			}
 		}

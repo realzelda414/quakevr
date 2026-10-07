@@ -18,6 +18,13 @@
 #                 crackling fizz), and its ticks, faster and faster until it goes off
 #   grenade_pouch.wav, grenade_pin.wav  hand grenades (QC vr_grenade.qc): one taken from the pouch or put back (the
 #                 leather's rustle and flap, iron knocking on iron), and its pin pulled (a rasp, then the ring's ping)
+#   reload_pouch.wav, reload_empty.wav  immersive reloading (QC vr_reload.qc): a shell taken from the front ammo pouch
+#                 or put back (a dry rustle, shells knocking), and the pouch found empty (soft pats on flat leather); (the
+#                 shell pushed into the shotgun's port, reload_shell_in*.wav: recorded, cut by make_reload_shell_sounds.py)
+#   reload_blocked.wav, reload_full.wav  a shell held to a full shotgun (the gate's dry click: it won't open), and the
+#                 last shell in (the tube full: a heavier double knock)
+#   reload_mag_in.wav, reload_mag_out.wav  a magazine seated in its gun (a slide, the catch's click, a metal clack) and
+#                 let go of (the catch's click, a falling scrape)
 #   torch_pull.wav, torch_out.wav, torch_light.wav, torch_hit.wav  wall torches (QC vr_walltorch.qc): pulled out of
 #                 its holder (a wooden scrape and a knock), its fire going out (a puff and a hiss), fire catching (a
 #                 whoosh and crackles), a burning torch's blow (a burst of flame)
@@ -686,6 +693,167 @@ def grenade_pin():
     return finish(out, 0.8)
 
 
+# ---- Immersive reloading (QC vr_reload.qc; docs/vr-port/RELOAD_PLAN.md) --------------------------------------------
+
+
+def reload_pouch():
+    """A shell taken out of the front ammo pouch (or put back): fingers in the leather (a short dry rustle, lighter than
+    the grenade pouch's), the shells in it knocking together (two small plastic tocks with a brass tick on them)."""
+    rng = random.Random(611)
+    n = int(RATE * 0.24)
+    lp1, hp1 = OnePole(3000), OnePole(600)
+    tock_lp = OnePole(2400)
+    table = ((2950, 0.5, 0.012), (4630, 0.35, 0.008), (6210, 0.2, 0.005))
+    out = []
+    for i in range(n):
+        t = i / RATE
+        noise = rng.uniform(-1, 1)
+        band = lp1(noise)
+        band -= hp1(band)
+        swell = sum(a * math.exp(-((t - c) / w) ** 2) for c, a, w in ((0.015, 0.7, 0.01), (0.05, 1.0, 0.016)))
+        clicks = 0.0
+        for at, a, p in ((0.045, 1.0, 1.0), (0.085, 0.6, 1.13)):
+            tc = t - at
+            if tc >= 0:
+                # A plastic tock (filtered noise burst, very short) and the brass heads' tick.
+                tock = rng.uniform(-1, 1) * math.exp(-tc / 0.004)
+                clicks += a * (tock * 0.8 + partials(tc, p, table) * min(1.0, tc / 0.0003))
+        out.append(math.tanh(band * swell * 1.3 + tock_lp(clicks) * 0.6 + clicks * 0.5))
+    return finish(out, 0.75)
+
+
+def reload_blocked():
+    """A shell held to a full shotgun's port: the loading gate won't give: a small dry metallic click (a flap knocked
+    against its stop), short and dull, no follow-through."""
+    rng = random.Random(631)
+    n = int(RATE * 0.09)
+    lp = OnePole(3200)
+    tick = ((1520, 0.9, 0.004), (2380, 0.5, 0.003), (960, 0.4, 0.006))
+    out = []
+    for i in range(n):
+        t = i / RATE
+        grit = rng.uniform(-1, 1) * math.exp(-t / 0.002)
+        out.append(math.tanh(lp(partials(t, 1.0, tick) * min(1.0, t / 0.0003) + grit * 0.4) * 2.0))
+    return finish(out, 0.6)
+
+
+def reload_full():
+    """The last shell in, the tube full: the shell's "chk", then the follower bottoming against a full tube (a deeper,
+    heavier double knock: the spring compressed solid)."""
+    rng = random.Random(641)
+    n = int(RATE * 0.26)
+    lp = OnePole(2000)
+    knock = ((620, 0.9, 0.009), (980, 0.6, 0.006), (1450, 0.3, 0.004), (330, 0.6, 0.02))
+    phase = [0.0]
+    out = []
+    for i in range(n):
+        t = i / RATE
+        x = 0.0
+        for at, a, pitch in ((0.0, 1.0, 1.0), (0.085, 0.8, 0.86)):
+            tc = t - at
+            if tc >= 0:
+                x += a * (partials(tc, pitch, knock) * min(1.0, tc / 0.0004) +
+                          rng.uniform(-1, 1) * math.exp(-tc / 0.003) * 0.4)
+        tt = t - 0.085
+        if tt >= 0:
+            x += thud(tt, phase, 55.0, 90.0, 0.06) * 0.9
+        out.append(math.tanh(lp(x) * 2.0))
+    return finish(out, 0.85)
+
+
+def reload_mag_in():
+    """A magazine seated in its gun: a short slide of steel on steel, then the catch snapping over it (a hard click) and
+    the magazine's own weight knocking home (a dull metal clack, a short ring)."""
+    rng = random.Random(619)
+    n = int(RATE * 0.3)
+    slide_lp, slide_hp = OnePole(4200), OnePole(900)
+    click = ((2870, 0.9, 0.012), (4410, 0.6, 0.008), (6230, 0.35, 0.005))
+    clack = ((940, 0.8, 0.05), (1530, 0.55, 0.035), (2270, 0.35, 0.025), (610, 0.4, 0.06))
+    phase = [0.0]
+    out = []
+    for i in range(n):
+        t = i / RATE
+        noise = rng.uniform(-1, 1)
+        slide = slide_lp(noise)
+        slide -= slide_hp(slide)
+        env = min(1.0, t / 0.01) * (1.0 if t < 0.045 else math.exp(-(t - 0.045) / 0.005))
+        hit = 0.0
+        tc = t - 0.05
+        if tc >= 0:
+            hit = partials(tc, 1.0, click) * min(1.0, tc / 0.0002) * 0.9
+            hit += partials(tc, 1.0, clack) * min(1.0, tc / 0.0004) + thud(tc, phase, 80.0, 140.0, 0.05) * 0.8
+        out.append(math.tanh(slide * env * 0.6 + hit * 1.2))
+    return finish(out, 0.9)
+
+
+def reload_mag_out():
+    """A magazine let go of by its gun: the catch's click, then the magazine sliding out (a falling scrape)."""
+    rng = random.Random(621)
+    n = int(RATE * 0.26)
+    slide_lp, slide_hp = OnePole(3600), OnePole(700)
+    click = ((3120, 0.9, 0.01), (4870, 0.5, 0.007), (2050, 0.4, 0.015))
+    out = []
+    for i in range(n):
+        t = i / RATE
+        noise = rng.uniform(-1, 1)
+        hit = partials(t, 1.0, click) * min(1.0, t / 0.0002)
+        slide = slide_lp(noise)
+        slide -= slide_hp(slide)
+        ts = t - 0.02
+        env = 0.0
+        if ts >= 0:
+            env = min(1.0, ts / 0.01) * math.exp(-ts / 0.07)
+        out.append(math.tanh(hit * 1.1 + slide * env * 0.8))
+    return finish(out, 0.8)
+
+
+def reload_ssg_eject():
+    """The super shotgun broken open throws its shells out (the ejectors' springs): a hollow pop as the hulls leave the
+    chambers (air out of the tubes), two quick plastic-and-brass clacks a few ms apart, and their whisper past the breech.
+    Under the recorded break-open (reload_ssg_open.wav, which carries the metal)."""
+    rng = random.Random(651)
+    n = int(RATE * 0.16)
+    pop_lp, pop_hp = OnePole(1400), OnePole(380)
+    air_lp = OnePole(5200)
+    clack = ((1850, 0.8, 0.006), (2900, 0.5, 0.004), (1230, 0.5, 0.009))
+    out = []
+    for i in range(n):
+        t = i / RATE
+        noise = rng.uniform(-1, 1)
+        pop = pop_lp(noise)
+        pop -= pop_hp(pop)
+        pop *= min(1.0, t / 0.0015) * math.exp(-t / 0.018)
+        x = pop * 2.4
+        for at, a, pitch in ((0.004, 0.9, 1.0), (0.011, 0.7, 1.07)):
+            tc = t - at
+            if tc >= 0:
+                x += a * partials(tc, pitch, clack) * min(1.0, tc / 0.0003)
+        ta = t - 0.02
+        if ta >= 0:
+            x += air_lp(noise) * min(1.0, ta / 0.01) * math.exp(-ta / 0.04) * 0.25
+        out.append(math.tanh(x * 1.2))
+    return finish(out, 0.7)
+
+
+def reload_empty():
+    """A hand finding the ammo pouch empty: fingers patting flat leather (two soft dull pats, no shell to knock)."""
+    rng = random.Random(617)
+    n = int(RATE * 0.2)
+    lp = OnePole(900)
+    phase = [0.0]
+    out = []
+    for i in range(n):
+        t = i / RATE
+        noise = lp(rng.uniform(-1, 1))
+        s = 0.0
+        for at, a in ((0.0, 1.0), (0.07, 0.6)):
+            tp = t - at
+            if tp >= 0:
+                s += a * (noise * 2.2 * math.exp(-tp / 0.018) + thud(tp, phase, 70.0, 90.0, 0.03) * 0.35)
+        out.append(math.tanh(s))
+    return finish(out, 0.6)
+
+
 # ---- Wall torches (QC vr_walltorch.qc; docs/vr-port/ROUND21.md, "Wall torches you can take") ----------------------------
 
 
@@ -986,6 +1154,13 @@ def main():
         "grenade_tick.wav": grenade_tick,
         "grenade_pouch.wav": grenade_pouch,
         "grenade_pin.wav": grenade_pin,
+        "reload_pouch.wav": reload_pouch,
+        "reload_empty.wav": reload_empty,
+        "reload_blocked.wav": reload_blocked,
+        "reload_full.wav": reload_full,
+        "reload_mag_in.wav": reload_mag_in,
+        "reload_mag_out.wav": reload_mag_out,
+        "reload_ssg_eject.wav": reload_ssg_eject,
         "torch_pull.wav": torch_pull,
         "torch_out.wav": torch_out,
         "torch_light.wav": torch_light,

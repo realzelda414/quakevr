@@ -1,6 +1,6 @@
 # Dawn of the Machine (MG3): native Quake VR port plan
 
-Status: plan (2026-10-06); phase A (M3-01..04) built the same day (EXPANSIONS.md). Vittorio's decisions
+Status: plan (2026-10-06); phase A (M3-01..04) built the same day (EXPANSIONS.md); phase B (M3-05..10) on 2026-10-07 (ROUND21.md). Vittorio's decisions
 (the last section) override section 4's defaults and the tasks that assumed them (M3-11, M3-12). Target: **full native Quake VR gameplay** (VR hands, weapons, melee, holsters, magazines,
 transition/save state), not compatibility mode. Campaign id **5** (`vr_campaign`/`vr_campaign_schema`), `nativeReady`
 false at `Quake/vr/vr_gamedir.cpp:375` until the acceptance in section 5 passes.
@@ -274,22 +274,36 @@ Melee-touching tasks also run `eval.sh` (archived settings; no melee tuning).
 
 - **M3-11 Super Axe.** MG3 Mjolnir branch on WID_MJOLNIR: damage/zombie/debounce/gibs, lightning burst (Q2), pickup
   silent teleport, MG3 model offset. Accept: scripted swing damage 40 (zombie rule), burst uses 15 cells, gib on
-  finishing hit; eval.sh canary unchanged. Dep: M3-01.
+  finishing hit; eval.sh canary unchanged. Dep: M3-01. **Built 2026-10-07** as a weapon of its own (decision 2:
+  `WID_SUPERAXE`, MG3's model read in place from the owned pack in any campaign; ROUND21.md, "Dawn of the Machine
+  (MG3): weapons").
 - **M3-12 Axe buttons.** `func_axe_button` with per-hand filter (Q1). Accept: map6 button opens on axe/Super Axe hand
-  hit, not on a shotgun blast or a non-axe hand; map8 18 buttons all reachable by test. Dep: M3-11.
+  hit, not on a shotgun blast or a non-axe hand; map8 18 buttons all reachable by test. Dep: M3-11. **Built
+  2026-10-07** with decision 1 (any melee blow, thrown things too; ROUND21.md).
 - **M3-13 Laser cannon (MG3).** behaviour deltas vs Hipnotic, MG3-PAK model resolution, no Hipnotic install needed.
-  Accept: map2b laser pickup works with Hipnotic absent; bolts bounce/damage as source.
+  Accept: map2b laser pickup works with Hipnotic absent; bolts bounce/damage as source. **Built 2026-10-07**: the same
+  weapon (`WID_LASER_CANNON`), MG3's 15/20 bolt damage in campaign 5 (ROUND21.md).
 - **M3-14 Bloody shotguns.** BN-only pickups, persistent bits (M3-02), model/skin swap, refire (Q4).
   Accept: BN new game collects bloody SG on map1, it survives changelevel/save and BN strip; non-BN game: pickup inert.
+  **Built 2026-10-07** (decision 4: refire 0.28 s, 28 pellets; drawn as Quake VR's shotguns, their skins a BACKLOG
+  item; the BN strip is M3-09's; ROUND21.md).
 
 ### Phase D: monsters (registration per archetype: hit zones, decap head, ragdoll seeds, hulls, parry, knockdown, grapple, gibs, dummy, FGD)
 
 - **M3-15 Infected group.** generic + army/knight/enforcer/hknight infected, transformation, single kill count.
-  Accept: killing each infected spawns the right zombie/demon, kills +1 once; map2 counts match the checker.
+  Accept: killing each infected spawns the right zombie/demon, kills +1 once; map2 counts match the checker. **Built
+  2026-10-07**: a full model change (not upstream's modelindex swap), any campaign, the lying death knights (ROUND21.md,
+  "Dawn of the Machine (MG3): monsters").
 - **M3-16 Rocket ogre.** Accept: spawns on map1, fires rockets, rocket parry, decap/ragdoll sane; frame-order check recorded.
+  **Built 2026-10-07**: its own rig and head zone, any campaign with MG3's data, training dummy 19 (ROUND21.md).
 - **M3-17 Demodog.** Accept: kamikaze explosion damages player and neighbours; grenades; grab/throw explodes per source.
+  **Built 2026-10-07**: its own rig, any campaign with MG3's data, training dummy 20; every death spills its grenades
+  (beheaded or cut: a ragdoll, else gibs) (ROUND21.md).
 - **M3-18 Ranged knight.** Accept: projectile attack, parry, hit zones on rknight.mdl.
-- **M3-19 Orb.** Accept: flies/teleports, projectiles, death; no ragdoll; grapple rules.
+  **Built 2026-10-07**: its own rig and head zone, the death knight's tables, any campaign with MG3's data, training
+  dummy 21 (ROUND21.md).
+- **M3-19 Orb.** Accept: flies/teleports, projectiles, death; no ragdoll; grapple rules. **M3-19..23 built 2026-10-07**
+  (ROUND21.md, "Dawn of the Machine (MG3): monsters II").
 - **M3-20 Ghost, sacrifices, slime.** monster_ghost, misc_sacrifice + counter, monster_slime. Accept: map8 sacrifice
   count reaches its target; slime spawns tarbabies; ghost phases.
 - **M3-21 MG3 lava man.** campaign-scoped branch of the existing class. Accept: map2b lava men behave per MG3; Rogue r2m* lava man unchanged.
@@ -299,11 +313,19 @@ Melee-touching tasks also run `eval.sh` (archived settings; no melee tuning).
   hknight/zombie (hanging), BN branches. Accept: per-monster BN test attack; stock campaigns unchanged (e1m1, hip1m1, r1m1 smoke).
 - **M3-24 Chthon finale I.** boss_final spawn, phases, waves, teleport points, lavasuits. Accept: boss.bsp loads 0
   missing; forced phase changes teleport the boss; waves spawn.
+  **Built 2026-10-07** (`QC/vr_mg3_chthon.qc`; ROUND21.md "Dawn of the Machine (MG3): the Chthon finale"): Debug spawner 50,
+  training dummy 40, `vr_mg3_ctest`; boss.bsp 0 missing.
 - **M3-25 Chthon finale II.** trigger_boss_teleport (player, comfort fade), music, kill -> ending. Accept: scripted
   fight reaches the hub/NG+ route. Dep: M3-24, M3-10.
+  **Built 2026-10-07**: the comfort fade (`vr_comfort_teleport_fade`, vr_comfortfade.cpp), the map's Chthon's death ->
+  MG3_BossEnding 8 s on (credits, or Bloody Nightmare's map1); `vr_mg3_ctest 3/4` (ROUND21.md).
 - **M3-26 Shub finale I.** oldone_new phases and child spawners. Accept: boss2 loads 0 missing; each child type spawns and dies.
+  **Built 2026-10-07**: `QC/vr_mg3_shub.qc`, any campaign with MG3's data (Debug spawner 60/62/63, training dummy 50/51),
+  `vr_mg3_shubtest` (ROUND21.md, "Dawn of the Machine (MG3): the Shub finale").
 - **M3-27 Shub finale II.** shub zombies (36 spawns), 8 func_breakable ceilings, ending -> credits. Accept: ceilings
   lower on phases, never trap the player outside source behaviour; death of Shub reaches credits. Dep: M3-26, M3-10.
+  **Built 2026-10-07**: `QC/vr_mg3_shub_zombie.qc`; the 8 "ceilings" are pillars round Shub that any damage sinks 20
+  units (upstream), so her attacks bring them down over the fight; boss2 0 missing (ROUND21.md, "the Shub finale").
 
 ### Phase E: acceptance and readiness
 

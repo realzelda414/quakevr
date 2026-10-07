@@ -130,10 +130,10 @@ void(entity g, float xVolume) VR_Gib_Squish =
 {
     if(g.vr_sgib)
     {
-        sound(g, CHAN_AUTO, VR_Gib_SquishSound(TRUE), xVolume * 0.6, ATTN_NORM);
+        VR_SoundVaried(g, CHAN_AUTO, VR_Gib_SquishSound(TRUE), xVolume * 0.6, ATTN_NORM);
         return;
     }
-    sound(g, CHAN_AUTO, random() < 0.25 ? "zombie/z_miss.wav" : VR_Gib_SquishSound(FALSE), xVolume, ATTN_NORM);
+    VR_SoundVaried(g, CHAN_AUTO, random() < 0.25 ? "zombie/z_miss.wav" : VR_Gib_SquishSound(FALSE), xVolume, ATTN_NORM);
 };
 
 // A rock's longest side (the five rocks' mean), times vr_world_scale (the pieces' size).
@@ -527,9 +527,12 @@ float(entity e, float xBrains) VR_SmallGib_Mult =
     else if(e.th_die == demon_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_fiend : cvarh_vr_smallgibs_mult_fiend; known = TRUE; }
     else if(e.th_die == ogre_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_ogre : cvarh_vr_smallgibs_mult_ogre; known = TRUE; }
     else if(e.th_die == knight_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_knight : cvarh_vr_smallgibs_mult_knight; known = TRUE; }
-    else if(e.th_die == hknight_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_hellknight : cvarh_vr_smallgibs_mult_hellknight; known = TRUE; }
+    else if(e.th_die == hknight_die || e.th_die == rknight_die) // (and MG3's ranged knight)
+    {
+        h = xBrains ? cvarh_vr_smallgibs_brains_mult_hellknight : cvarh_vr_smallgibs_mult_hellknight; known = TRUE;
+    }
     else if(e.th_die == shalrath_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_vore : cvarh_vr_smallgibs_mult_vore; known = TRUE; }
-    else if(e.th_die == sham_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_shambler : cvarh_vr_smallgibs_mult_shambler; known = TRUE; }
+    else if(e.th_die == sham_die || e.th_die == supsham_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_shambler : cvarh_vr_smallgibs_mult_shambler; known = TRUE; }
     else if(e.th_die == wiz_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_scrag : cvarh_vr_smallgibs_mult_scrag; known = TRUE; }
     else if(e.th_die == fish_die || e.th_die == f_death1) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_fish : cvarh_vr_smallgibs_mult_fish; known = TRUE; }
     else if(e.th_die == gremlin_die) { h = xBrains ? cvarh_vr_smallgibs_brains_mult_gremlin : cvarh_vr_smallgibs_mult_gremlin; known = TRUE; }
@@ -603,7 +606,7 @@ float(entity inflictor, entity attacker) VR_SmallGib_Kind =
         {
             return QVR_SGIB_BLUNT; // a pommel, a hilt, a butt (client.qc: the blow's part)
         }
-        if(w == WID_AXE || w == WID_SWORD)
+        if(w == WID_AXE || w == WID_SWORD || w == WID_SUPERAXE)
         {
             return QVR_SGIB_BLADES;
         }
@@ -642,7 +645,8 @@ float(entity inflictor, entity attacker) VR_SmallGib_Kind =
     }
     if(c == "thrown_weapon")
     {
-        return (inflictor.weapon == WID_AXE || inflictor.weapon == WID_SWORD || inflictor.weapon == WID_CHAINSAW) ?
+        return (inflictor.weapon == WID_AXE || inflictor.weapon == WID_SWORD || inflictor.weapon == WID_CHAINSAW ||
+                inflictor.weapon == WID_SUPERAXE) ?
             QVR_SGIB_BLADES : QVR_SGIB_PROPS;
     }
     if(inflictor.vr_gib || (inflictor.carry_use && !inflictor.vr_grenade) || inflictor.vr_deflect_time > 0)

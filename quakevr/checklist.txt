@@ -3,6 +3,11 @@
 # (both kept in git history). Reload List refreshes this page; no rebuild needed.
 
 [New this week]
+Main menu: VR rows, Single Player/Multiplayer, Download Maps/Play Custom Map, the rest in separate groups; Play Custom Map opens the Levels and Back returns to the main menu; laser picks only drawn rows (nothing in the gaps); Mods gone (Advanced VR > HUD and Menus > Menu > Mods on the Main Menu brings it back)
+Back goes where you came from: Single Player > Official Campaigns > Back = Single Player; a corner button (Search, Advanced VR, Levels...) from any menu, Back returns there with the same row selected; a Search result's page goes back up its own menus, not to Search
+VR Settings new rows: Reloading Mode (Immersive/Simple/Disabled), Swimming (Immersive/Vanilla), Leaning Detection, Bullet Time > Activation (Wrist Gadget / Left or Right Thumbstick Press); Holster Calibration: hip, chest and back pairs move Forward/Inward/Up mirrored and show while chosen; Reset Holsters
+Fine slider steps: hold a grip (Shift on a flat screen) while moving a slider: a tenth of the step (Held Object Offsets: 0.05 instead of 0.5), more decimals shown; Fine Step under HUD and Menus > Menu
+Section gaps: space above each section's heading on every settings page (HUD and Menus > Menu > Section Gap, 0.75 rows): try 0, 0.75, 2; scrolling, laser and help all right; Multiplayer menu shows its "untested" notice
 VR Settings rebuilt for new players (Options > VR Settings, and right after VR Calibration on the main menu): sections read well, every row's help makes sense, nothing you use is missing (old rows: Advanced VR Options pages; Search finds them)
 Hand Calibration on VR Settings: Show Controller on, Hand Forward/Inward/Up/Pitch/Yaw/Roll move both hands mirrored; Reset Hand Offsets puts them back
 Comfort Vignette (VR Settings > Comfort): edges darken while the stick moves or turns you (snap: a short blink), never for room steps or teleports; Strength 0.6 right?
@@ -45,6 +50,21 @@ Music: plays from your own rerelease install in e1m1, hip1m1, r1m1, an mg3 and a
 Firing range: buttons visible from the far end; doors/buttons don't flicker against frames up close; labels fit their text even after playing a Map Library package
 Map Library: Debug > External Map Index shows Download Cache Size (512 MB) and Usage; an oversized cache trims at start
 VR Settings: last line shows the build (date + commit); Map Library installs still work (downloads now checked by sha256)
+MG3 monsters (Debug spawner Things 30-36, 40-45, or Training Dummy): infected knight beheaded bursts and its zombie keeps its head; bat back rocket-ogre rockets and ranged-knight diamonds; parry a demo dog's leap; ranged knight head zone fair?
+MG3 monsters 2: orb flung on death blows up where it lands; touch a ghost with your hand and it vanishes; slime splits twice; lava man shrugs off non-lightning hits; super shambler beheads, head-pops and loses limbs
+MG3 Shub (boss2, or Debug spawner Thing 60): pillars sinking under you are comfortable; her zombies rise and ragdoll; sweeping beam and blasts readable; lights go out at her death and the credits follow
+MG3 Chthon (boss map, or Debug spawner Thing 50): comfort fade at both arena moves (Locomotion > Comfort > Fade on Scripted Teleports: 0.6 vs 1.2 s); head zone; bat his spheres back; fight length fair with arm hits at 0.35x; finale gibs then credits
+vrstart2: cold start ~1 s after the first one (which saves hitbox files); death/restart quick; swimming, climbing and shore path unchanged
+vrstart2 buttons: 18-unit buttons comfortable to press; one texture copy each; labels just above, value screens above the labels
+Immersive reload phase 1 (Weapons > Reloading): shotgun in one hand, grip at the belly pouch = tap + rustle + shell in fist; push into the port under the gun = click + haptic + count up; put one back (refund); drop, pick up, force grab; empty pouch pats; Shell Pairs; pouch position/size, port leniency, shell pose (Held Object Offsets)
+Immersive reload phase 2: nailgun/super nailgun/thunderbolt magazines from the pouch into the well; B/Y drops it; gentle grip keeps it, hard pull + wrist snap takes it out; bump a new one in; part-used mag back in the pouch refunds its count; sizes and placement on each gun
+Reload notes applied: pouch sways with your legs (Follow Legs); Show Load Points and per-gun X/Y/Z; shell reaches the shotgun port (Collision Leniency); ammo box into the pouch; pouch shows the real count; reserve counter on the pouch; empty hands/melee/super shotgun keep giving the last ammo type
+Leaning through stick turns (Locomotion > Leaning > Lean on Turns 2): lean, smooth/snap turn 90-180, straighten up: body stays with you, no backwards lean or slide; next to a wall too; head wobble in fast smooth turns? Debug Log Body Drift ~0
+vrstart2 fixes: no holes in terrain/water, lanterns glow, ropes to bollards, SETTINGS banner over the doorway, one bullseye per target, brazier pillars into the rock, barrels push/tip/roll/carry/break; slipgate surface still looks right
+Reload rounds 2-3: spent shells look different; full shotgun 'can't' click and 'full' cue; magazine top must meet the gun's seat point (Show Load Points, per-gun radius); grip the mag = two-hand aim, out only by hard pull/wrist snap/hands apart; punch or the other gun knocks it out; bump = knock out, then seat; receivers visible; lava mags red, plasma blue; ammo button only from the front; fist moving onto a two-hand spot doesn't attach
+Menus in VR: shortcut column and banner clear of every page; 27-28 rows on long pages; laser still hits the shortcuts and spectator switch
+Ammo screens and pouch counter: white text (White Ammo Screen Text), green frame
+Stray presses: loading vrstart2/vrstart (menu, save, slipgate back) never presses a far button; buttons near the start press at once
 
 [Menus and maps]
 Menus: Menu Detail, VR presets, first-start calibration, Changed Settings (*), Reset This Page and Search all work
@@ -96,7 +116,7 @@ Recording: slow motion with game-time sound and highlight markers line up in Res
 Spectator camera: no hand ghost, hides head-locked text, Bullet Time effects toggle
 
 [Decide]
-Map tips: seen-tips limit (~80), targetname naming clash, tip_delay 0
+MG3 monsters: ghosts drawn solid (no transparency upstream)? lava man 0.8 damage by what hit it? super shambler/rocket ogre/ranged knight share stock ragdoll settings? demo dog ragdolls (not gibs) when beheaded/limb cut on the killing blow?
 MG3 (defaults used until you answer): axe buttons only axe/Super Axe? Super Axe burst on a 2nd hit? base health 50 + caps 50/100/20/100? bloody shotguns faster refire? new hi-poly monsters with copied/box rigs?
 Profiling: which of the top 5 (same-map hull cache, AO disk cache, shadow casters per light, low-res retro particles, more hull work)?
 Defaults: which of the ~20 candidate settings from your config (INSTALLER.md appendix)?

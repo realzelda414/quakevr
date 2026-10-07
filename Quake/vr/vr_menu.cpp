@@ -2,7 +2,7 @@
 #include "vr_alloccount.h"
 // vr_menu.cpp -- the "VR Settings" pages (Options > VR Settings), drawn like Ironwail's options
 // pages: scrolling lists of labelled settings, changed with left/right (the sticks in VR), with
-// actions on enter (A). "Advanced VR Options" at the bottom opens a list of further pages: the old
+// actions on enter (A). "Advanced VR Options" (the main menu's Advanced VR, the corner's) lists further pages: the old
 // Quake VR settings pages (vr_menu_pages.inc) and the new body, throwing and force grab tweaks,
 // grouped by topic, the long ones split into pages of a screenful or so. In a headset the pages are
 // taller (vr_menu_height, vr_menuui.cpp): more rows at once. Escape (B) goes back a page. With the mouse (and the VR laser pointer, vr_menuui.cpp): the row under
@@ -76,7 +76,13 @@ extern "C" {
 extern float m_mousex, m_mousey; // menu.c: the mouse in menu coordinates
 extern qboolean keydown[MAX_KEYS]; // keys.c
 extern cvar_t ui_mouse_sound; // menu.c
+extern cvar_t vr_zone_threadcheck; // zone.c
 const char* M_Main_RowLabel(void); // menu.c: the main menu's selected row (menu_vr pos)
+extern int m_singleplayer_cursor; // menu.c: Single Player's (menu_vr pos)
+int M_ContentLeft(void); // menu.c: the left edge of what its menu shown draws (menu x)
+void M_ContentExtent(float* right, float* bottom); // menu.c: how far right and down its menu shown draws
+int M_TextLeft(void); // menu.c: its leftmost text (Ironwail's lists; 320 for Quake's menus)
+void M_Main_Layout(int* step, int* gap); // menu.c: the main menu's rows' spacing and its groups' gaps
 }
 
 using namespace qvr;
@@ -280,6 +286,19 @@ void restartVr()
         out.pushBack({17.f, "Overlord"});
         out.pushBack({18.f, "Electric Eel"});
     }
+    if(VR_CampaignDataAvailable("mg3")) // (Dawn of the Machine's own: its data read in place, in any campaign)
+    {
+        out.pushBack({19.f, "Rocket Ogre"});
+        out.pushBack({20.f, "Demo Dog"});
+        out.pushBack({21.f, "Ranged Knight"});
+        out.pushBack({30.f, "Orb"});
+        out.pushBack({32.f, "Lava Man (Dawn of the Machine)"});
+        out.pushBack({33.f, "Super Shambler"});
+        out.pushBack({50.f, "Shub-Niggurath"});
+        out.pushBack({51.f, "Shub's Eye"});
+        out.pushBack({40.f, "Chthon (Dawn of the Machine)"});
+    }
+    out.pushBack({31.f, "Slime"}); // (Dawn of the Machine's splitting spawn: Quake's model)
     return out;
 }
 
@@ -482,7 +501,7 @@ using PageBuilder = za::Vector<Item> (*)();
 //   released at a map change like any scratch.
 struct MenuReadouts
 {
-    za::String motionNote, motionLastSaved, extendableHelp, serverRuleHelp;
+    za::String motionNote, motionLastSaved, extendableHelp, serverRuleHelp, fineHelp;
     za::String checklistUndoHelp;      // checklistUndoHelp
     za::String weight[2];              // weightReadout, by hand
     za::String weaponWeightsDamage[2]; // weaponWeightsDamageReadout, by line
@@ -497,7 +516,7 @@ struct MenuReadouts
     char buildVersion[64];             // buildVersionLine
     auto members()
     {
-        return qvr::mem::list(motionNote, motionLastSaved, extendableHelp, serverRuleHelp, weight, weaponWeightsDamage, heldObjectMass, heldObjectDamage,
+        return qvr::mem::list(motionNote, motionLastSaved, extendableHelp, serverRuleHelp, fineHelp, weight, weaponWeightsDamage, heldObjectMass, heldObjectDamage,
             weaponWeightsDrop, weaponWeightsHits, weaponOffsetsStock, checklistSummary, checklistUndoHelp, stamina, renderScaleHelp, buildVersion);
     }
 };
@@ -715,9 +734,24 @@ void playCalibration() { Cbuf_AddText("vr_setup\n"); }
 void playHub() { Cbuf_AddText("vr_campaign_hub\n"); }
 void playTutorial() { Cbuf_AddText("map vrtutorial\n"); }
 void playFiringRange() { Cbuf_AddText("map vrfiringrange\n"); }
+// Official Campaigns > Dawn of the Machine: Bloody Nightmare: skill 3 and vr_mg3_bn_start (the start map's first frame
+// makes it a Bloody Nightmare game, QC vr_mg3_defs.qc MG3_Frame), then the campaign as its own row starts it. While
+// the campaign cannot start, only its reason is printed and nothing is set.
+void playMg3BloodyNightmare()
+{
+    if(VR_CampaignUnavailable(5) == 0)
+    {
+        Cvar_Set("skill", "3");
+        Cvar_Set("vr_mg3_bn_start", "1");
+    }
+    VR_SelectCampaign(5);
+}
 void addBotTeam0() { Cbuf_AddText("impulse 100\n"); }
 void addBotTeam1() { Cbuf_AddText("impulse 101\n"); }
 void kickBot() { Cbuf_AddText("impulse 102\n"); }
+
+// Whether Official Campaigns was built with the Bloody Nightmare row (items(): rebuilt when that changes).
+int campaignsBloodyShown = -1;
 
 [[nodiscard]] za::Vector<Item> pageCampaigns()
 {
@@ -727,6 +761,17 @@ void kickBot() { Cbuf_AddText("impulse 102\n"); }
         Item choice = row(VR_CampaignLabel, VR_CampaignHelp, VR_SelectCampaign, i, -1);
         choice.dimArg = [](int index) -> bool { return VR_CampaignUnavailable(index) != 0; };
         items.pushBack(choice);
+    }
+    // Dawn of the Machine's hidden difficulty: offered once found in a game (the hell knight's head, or the hub's
+    // Bloody Nightmare button: QC sets vr_mg3_bn_discovered).
+    campaignsBloodyShown = vr_mg3_bn_discovered.value != 0.f ? 1 : 0;
+    if(campaignsBloodyShown)
+    {
+        Item bloody = action("Dawn of the Machine: Bloody Nightmare", playMg3BloodyNightmare)
+            .help("A new Dawn of the Machine game on Bloody Nightmare: skill 3, harder monsters, each level begun with the "
+                  "axe and shotgun only. Killing Chthon on it starts its new game.");
+        bloody.dimArg = [](int) -> bool { return VR_CampaignUnavailable(5) != 0; };
+        items.pushBack(bloody);
     }
     items.pushBack(command("Campaign Data Status", "vr_campaign_status"));
     items.pushBack(action("Return to VR Hub", playHub));
@@ -881,8 +926,11 @@ void kickBot() { Cbuf_AddText("impulse 102\n"); }
         slider("Get-Up Speed", vr_knockdown_getup_speed, 0.25f, 3.f, 0.05f, "%.2fx").extend(0.1f, 10.f)
             .help("How fast its get-up animation plays."),
         header("Debug"),
-        toggle("Print Rolls", vr_knockdown_debug)
-            .help("Prints each shove's chance and roll, and each get-up (developer 1)."),
+        cycle("Print Rolls", vr_knockdown_debug, {{0.f, "Off"}, {1.f, "On"}, {2.f, "And Get-Ups' Motion"}, {3.f, "And Each Frame's"}})
+            .help("Prints each shove's chance and roll, and each get-up (developer 1). And Get-Ups' Motion: a line per get-up "
+                  "of how it is drawn (how fast it moves, its biggest jump, the frames that go back on the one before: a "
+                  "jitter; the switch from its ragdoll to its animation). And Each Frame's: a line a frame as well. Knock "
+                  "one down with vr_knockdown_test 0 and get it up with vr_knockdown_test 1."),
     };
 }
 
@@ -931,6 +979,11 @@ void kickBot() { Cbuf_AddText("impulse 102\n"); }
         header("Their Damage"),
         open("Weapon Damage", pageIndex(pageWeaponDamage))
             .help("The swords', chainsaws', burst rifles' and laser rifles' damage, with every other weapon's."),
+        header("Lying About"),
+        slider("Most Lying About", vr_enemy_weapon_drop_max, 0.f, 128.f, 4.f, "%.0f").extend(0.f, 512.f)
+            .help("The grunts' burst rifles, the enforcers' laser rifles and the ogres' chainsaws lying about: past this "
+                  "many, the oldest fades away (never one in your hand, pulled to it or in flight). Every other weapon, "
+                  "drop and prop stays. 0: no limit (vr_enemy_weapon_drop_max)."),
         header("Ogres' Chainsaws"),
         slider("Fuel When Dropped", vr_chainsaw_drop_fuel_min, 0.f, 100.f, 5.f, "%.0f%% or more")
             .help("The fuel an ogre's chainsaw has as it drops: at least this much of a full tank, at random up to full. "
@@ -1017,6 +1070,14 @@ void kickBot() { Cbuf_AddText("impulse 102\n"); }
             .help("A rocket's direct hit, and up to a quarter more (60); its blast 1.25 times it."),
         slider("Plasma Gun", vr_dmg_plasma, 5.f, 300.f, 5.f, "%.0f").extend()
             .help("A ball's direct hit, and up to a quarter more (80); its blast 7/8 of it, its arcs 5/8."),
+        header("Dawn of the Machine"),
+        slider("Super Axe", vr_dmg_superaxe, 1.f, 150.f, 1.f, "%.0f").extend()
+            .help("A blow (40, twice the axe's), before its speed and weight; a zombie takes three times it, a blow that "
+                  "kills twice it (it gibs). Its lightning: Mjolnir's Lightning. Held when the Dawn of the Machine data is "
+                  "there (any campaign: Debug > Tests > Dawn of the Machine Weapons)."),
+        slider("Super Axe Burst Window", vr_superaxe_burst_window, 0.3f, 4.f, 0.1f, "%.1f s").extend(0.1f, 10.f)
+            .help("A second blow on the same monster within this long of the first fires the Super Axe's lightning burst "
+                  "(15 cells; the head glows while it is ready). Dawn of the Machine's own: 0.5 s, too quick for real swings."),
         header("Melee"),
         slider("Fist", vr_dmg_fist, 1.f, 60.f, 1.f, "%.0f").extend()
             .help("A punch (10), before its speed (twice Swing Speed: a full blow) and Melee's Punch Damage Mult."),
@@ -1108,12 +1169,21 @@ void kickBot() { Cbuf_AddText("impulse 102\n"); }
             .help("Sounds muffled while your head is in water, slime or lava (your head's place, not your body's). 0 off."),
         header("Movement and Nearness"),
         toggle("Weapons From Your Hands", vr_snd_hands)
-            .help("Your guns' shots and your blows sound from the hand that holds the weapon, not from the middle of your "
+            .help("Your guns' shots, your blows and what your hands do (a parry, a reload, drawing and holstering, a dry "
+                  "click, the grenade pouch, a chainsaw's cord) sound from the hand doing it, not from the middle of your "
                   "head."),
         toggle("Sounds Follow Things", vr_snd_follow)
             .help("A sound stays with what made it as it moves (a monster, a door, a hook in flight)."),
         slider("Doppler", vr_snd_doppler, 0.f, 2.f, 0.1f, "%.1fx").extend(0.f, 4.f)
             .help("Things coming at you sound higher, going away lower (1: as physics has it; 0 off)."),
+        slider("Pitch Variation", vr_snd_pitch_jitter, 0.f, 10.f, 1.f, "%.0f%%").extend(0.f, 25.f)
+            .help("The most frequent sounds (punches and blows, swings, squishes, clicks, knocks, casings, footsteps) "
+                  "each a little higher or lower at random, up to this much, so that one recording isn't heard the same "
+                  "every time (0 off)."),
+        slider("Blow Material Layer", vr_snd_hit_layer, 0.f, 1.f, 0.1f, "%.1f")
+            .help("A punch, a gun's butt, a headbutt or a thrown thing landing also sounds of what it hit: a slap of "
+                  "flesh on a body, a clink of armour on a knight or an enforcer, a knock of wood on a crate, your "
+                  "knuckles' knock on a wall. How loud, under the blow's thud (0 none)."),
         slider("Near Field", vr_snd_nearfield, 0.f, 2.f, 0.1f, "%.1f")
             .help("A sound within a metre of your head: the nearer ear louder, the farther one quieter and duller, by how "
                   "near and how much to the side. 0 off."),
@@ -2207,9 +2277,11 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
                   "stood; 1: flung as a kill) (vr_limbs_body_speed)."),
         slider("Most Limbs Lying About", vr_limbs_max, 1.f, 64.f, 1.f, "%.0f").extend(1.f, 256.f)
             .help("Past it, the oldest go first (not one in your hand) (vr_limbs_max)."),
-        toggle("Make Limbs as the Map Loads", vr_limbs_prebuild)
-            .help("On: the limbs of every kind of monster the map has are made as it loads (about 5 ms each: a tenth of a "
-                  "second or so more), not at their first cut (a dropped frame). The next map load (vr_limbs_prebuild)."),
+        cycle("Make Limbs as the Map Loads", "vr_limbs_prebuild", {{0.f, "Off"}, {1.f, "The Map's"}, {2.f, "And the Range's"}})
+            .help("The Map's: the limbs of every kind of monster the map has (those waiting to appear too) are made as it "
+                  "loads (about 5 ms each: a tenth of a second or so more), not at their first cut (a dropped frame). And the "
+                  "Range's: also every kind the firing range's dispensers and dummies can make (half a second more there, "
+                  "once a session). The next map load (vr_limbs_prebuild)."),
         slider("Limb Weight", vr_limbs_mass_scale, 0.f, 3.f, 0.05f, "%.2fx").extend(0.f, 10.f)
             .help("A limb (or head) cut off weighs its share of its monster's ragdoll Mass by the kind of limb: a whole arm "
                   "6.3%, a forearm and hand 2.8%, a hand 0.8%, a whole leg 15.5%, a shin and foot 6%, the head 7% (four "
@@ -2463,7 +2535,7 @@ void hologramTestMessage()
         header("Wrist Gadget"),
         toggle("Level and Stats", vr_gadget_show_level),
         toggle("Stamina and Counters", vr_gadget_stamina)
-            .help("The top row shows your parry stamina (with Parry Stamina on) and COUNTER while a counter-attack's window is open."),
+            .help("The STAMINA row shows your stamina (parries, shoves and blows spend it) and COUNTER while a counter-attack's window is open."),
         slider("Screen Light", vr_gadget_light, 0.f, 3.f, 0.1f, "%.1fx").extend()
             .help("The screen casts a light in its colour the way it faces, and a faint one on your hand (0 off)."),
         slider("CRT Look", vr_gadget_crt, 0.f, 2.f, 0.1f, "%.1fx").extend()
@@ -2497,6 +2569,7 @@ void hologramTestMessage()
         toggle("Weapon Ammo Screen", "vr_weapon_screen").help("The ammunition text on a small screen on the weapon (colours from the wrist gadget's screen)."),
         slider("Ammo Screen Margin", "vr_weapon_screen_padding", 0.f, 2.f, 0.1f, "%.1f").extend(),
         slider("Ammo Screen CRT Look", "vr_weapon_screen_crt", 0.f, 2.f, 0.1f, "%.1fx").extend().help("Scanlines, a slight flicker, faint static and now and then a glitch, as on the wrist gadget's screen (0 off)."),
+        toggle("White Ammo Screen Text", "vr_ammo_screen_text_white").help("The numbers on the ammo screens (and the ammo pouch's counter) near-white, as the wrist gadget's, for readability; their frame and glow keep the screen's colour. Off: in the screen's colour."),
         toggle("Screens on Weapons at Rest", "vr_weapon_screen_idle").help("Weapons in your holsters and lying in the world show their ammo screen and button too, not only the ones in your hands."),
         header("Map Boards"),
         toggle("Map Boards as CRTs", "vr_worldtext_crt").help("The text boards in maps (the tutorial's, the start map's) are CRT screens with glowing text, as the wrist gadget's. Off: plain text."),
@@ -2516,7 +2589,10 @@ void hologramTestMessage()
         hueSlider("Screen Hue", vr_gadget_screen_hue)
             .help("The screen's colour (and your weapons' screens'). Player's: the Player Effects Hue."),
         slider("Screen Brightness", vr_gadget_screen_brightness, 0.3f, 1.5f, 0.05f, "%.2f").extend(),
-        slider("Screen Background", vr_gadget_screen_background, 0.f, 4.f, 0.1f, "%.1f").extend(),
+        slider("Screen Background", vr_gadget_screen_background, 0.f, 4.f, 0.1f, "%.1f").extend()
+            .help("How bright the screen's dark background is in its colour (the text reads best dark: 1)."),
+        slider("Screen Text Whiteness", vr_gadget_screen_text_white, 0.f, 1.f, 0.05f, "%.2f")
+            .help("How white the screen's numbers and values are: 1 white, 0 the screen's colour (as its labels). Warnings stay red."),
         slider("Casing Tint", vr_gadget_tint, 0.f, 1.f, 0.05f, "%.2f").help("0 keeps the casing's own olive drab."),
         slider("Casing Tint Hue", vr_gadget_tint_hue, 0.f, 355.f, 5.f, "%.0f"),
         header("Effects"),
@@ -2754,6 +2830,14 @@ void hologramTestMessage()
             .help("Grip a box or a backpack to carry it, push it with a hand or gun. Off: touching takes it."),
         cycle("Take a Box", vr_carry_take, {{0.f, "At a holster"}, {1.f, "Trigger"}, {2.f, "Either"}})
             .help("At a holster: let go of it at a hip or shoulder holster to put it in your pack."),
+        toggle("Put-Away Transition", vr_collect_fx)
+            .help("What you put away (a box or backpack at a holster, a key, a rune or a power-up, an ammo box or a round "
+                  "at the ammo pouch, a grenade at its pouch) is seen shrinking into the holster or pouch, following you, "
+                  "instead of vanishing. Only how it looks: it is yours the moment you let go, as before."),
+        slider("Put-Away Time", vr_collect_fx_time, 0.05f, 0.6f, 0.05f, "%.2f s").extend(0.f, 2.f)
+            .help("How long it takes to go in (slowed in bullet time)."),
+        slider("Put-Away End Size", vr_collect_fx_size, 0.05f, 1.f, 0.05f, "%.2fx")
+            .help("How small it is as it goes in: its size then, of its own."),
         slider("Grab Distance Bias", vr_carry_grab_bias, -3.f, 5.f, 0.5f, "%+.1f cm")
             .extend(-10.f, 20.f)
             .help("A hand takes a box, gib, backpack or armour when its fist (the palm and the curled fingers) touches it. "
@@ -2911,6 +2995,12 @@ void hologramTestMessage()
         slider("Knock Spacing", vr_physsound_interval, 0.f, 0.5f, 0.02f, "%.2f s").extend(0.f, 2.f)
             .help("A thing knocks at most this often (a hit twice as loud sooner): a box rattling to rest or a stack "
                   "settling doesn't chatter."),
+        slider("Bodies", vr_physsound_bodies, 0.f, 1.f, 0.1f, "%.1f").extend(0.f, 2.f)
+            .help("Ragdolls and corpses knocking as they fall, tumble, are thrown or hit by things: a heavy thud for the "
+                  "torso, softer for a limb, a squish for a small part; each body at most every two Knock Spacings (0 off)."),
+        slider("Quietest Body Knock", vr_physsound_body_min_speed, 1.f, 5.f, 0.25f, "%.2f m/s").extend(1.f, 20.f)
+            .help("A body's hit slower than this is silent (2 m/s: a drop of 20 cm). Raise it if a pile of bodies "
+                  "settling thumps."),
         slider("Scrapes", vr_physsound_scrape, 0.f, 1.f, 0.1f, "%.1f")
             .help("Things sliding along the floor or each other (shoved, dragged, skidding after a throw): louder the "
                   "faster and the heavier; they stop as the thing stops (0 off)."),
@@ -3033,6 +3123,11 @@ void hologramTestMessage()
             .help("How near a torch's flame a nail must pass, in units (a hand is about 4)."),
         slider("Nail Sizzle Volume", vr_burn_nail_sound, 0.f, 1.f, 0.1f, "%.1f")
             .help("Volume of the short fizz a nail makes as it catches fire in a torch's flame (0 off)."),
+        slider("Crackle Volume", vr_burn_sound, 0.f, 1.f, 0.1f, "%.1f")
+            .help("A burning monster, corpse or crate crackles as a wall torch does, heard close by, quieter as its flames "
+                  "die (0 off)."),
+        slider("Most Crackling", vr_burn_sound_max, 1.f, 8.f, 1.f, "%.0f").extend(1.f, 32.f)
+            .help("At most this many burning things crackle at once; the rest burn silent until one goes out."),
         header("Crates"),
         toggle("Crates Burn", vr_burn_crates)
             .help("Wooden crates catch fire: a lit torch's blow or touch, a lava nail, a burning crate touching them."),
@@ -4093,6 +4188,13 @@ za::Vector<Item> pageDebugViews()
                   "its pose and calibration without a mirror)."),
         command("Print Torso Direction", "vr_torso_report")
             .help("vr_torso_report: the head's yaw, the old and the new torso guesses, the hands' pull and weights."),
+        toggle("Log Body Drift", vr_debug_body_error)
+            .help("Twice a second in the console: how far the game's body (its feet) has drifted in your room since it was turned "
+                  "on (or marked), and how far its facing has turned, with your lean. Stand still in the room: leaning and "
+                  "turning or moving with the stick, both should stay near 0 (vr_body_error)."),
+        command("Mark Body Drift Here", "vr_body_error mark")
+            .help("vr_body_error mark: measure the body's drift from where it stands now (stand straight, your feet where they "
+                  "are to stay)."),
         cycle("Show Body Collisions", vr_debug_body_collide, {{0.f, "Off"}, {1.f, "Logged"}, {2.f, "Logged and Drawn"}})
             .help("The drawn hands and weapons stopping at each other and the body: each contact printed (and "
                   "body_collide_trace.txt); drawn: the capsules and the pushes."),
@@ -4154,7 +4256,8 @@ za::Vector<Item> pageDebugLogging()
                   "and the cord's hole drawn. The engine and cut lines need Developer Messages."),
         cycle("Wall Buttons", vr_debug_wallbuttons, {{0.f, "Off"}, {1.f, "Each Press"}, {2.f, "And Weapon Lines"}})
             .help("Each button pressed: what pressed it and how (a hand, a held weapon and its line, a thrown thing and "
-                  "its speed, stepped on). And Weapon Lines: every frame, each held weapon's line that presses buttons "
+                  "its speed, stepped on), and where the hand was: how far from the button and from you (a far one is a "
+                  "stray press). And Weapon Lines: every frame, each held weapon's line that presses buttons "
                   "(from its pommel or butt to its tip or muzzle). Needs Developer Messages."),
         toggle("Shots and Damage", vr_debug_shots)
             .help("Each hitscan shot (where it starts, its direction, what its pellets hit, headshots), each damage you deal "
@@ -4198,6 +4301,9 @@ za::Vector<Item> pageDebugLogging()
             .help("Each grasp solve of the jointed hands (and each finger's stops)."),
         toggle("Holster Draw Blend", vr_debug_draw_blend)
             .help("Each frame of a gun easing between a holster and a hand: the turn and the distance left."),
+        cycle("Put-Away Transition", vr_debug_collect_fx, {{0.f, "Off"}, {1.f, "Each Thing"}, {2.f, "Each Frame"}})
+            .help("Each thing put away at a holster or pouch (its model, from where, the holster) and when it has gone "
+                  "in; or also each frame's size and distance left."),
         command("Check Last Pose", "vr_pose_check")
             .help("vr_pose_check: after the posing mode, how far what you set is from what you get. A weapon or hotspot: "
                   "hold it. In a holster: holster it there; each holster of that kind holding it is measured."),
@@ -4300,6 +4406,27 @@ za::Vector<Item> pageDebugProfiling()
         command("Load Times", "vr_startup_times")
             .help("vr_startup_times: where the start-up and the last map load spent their time (from the map command to its "
                   "first frame drawn: the stages, then the kinds of work across them), and every load's total."),
+        toggle("Ready What Can Appear", vr_probe_kinds)
+            .help("On: the kinds of monster that can appear later on a map (the firing range's dispensers and dummies, monsters "
+                  "waiting for a trigger) are made ready as it loads: their models, sounds and compiled hull, so their first "
+                  "appearance drops no frame (15-25 ms otherwise). The next map load (vr_probe_kinds)."),
+        cycle("Ready the Debug Spawner's", "vr_probe_test_spawn", {{0.f, "Off"}, {1.f, "Its Kind"}, {2.f, "Every Kind"}})
+            .help("The debug spawner's monsters (vr_test_spawn, impulse 241) made ready as each map loads too: Its Kind the one "
+                  "vr_test_spawn names, Every Kind all 23 (a longer load). The next map load (vr_probe_test_spawn)."),
+        slider("Decoded Image Cache", vr_image_cache_mb, 0.f, 2048.f, 64.f, "%.0f MB")
+            .help("Image files decoded once are kept for later loads up to this size (a texture pack's world textures and "
+                  "material maps: QRP's E1M1 loads 0.5 s faster the second time); the least recently used go first. 0: none "
+                  "kept (vr_image_cache_mb)."),
+        toggle("Campaign Switch Keeps Models", vr_campaign_keep_models)
+            .help("On: a switch of campaign (id1 to a mission pack and back) keeps the models whose files are the same in "
+                  "its folders (each file their load looked for is found the same again), instead of loading every one "
+                  "again (vr_campaign_keep_models)."),
+        command("Kept Models Info", "vr_model_keep_info")
+            .help("vr_model_keep_info: how many models the last campaign switch kept, of how many, and the time its check "
+                  "took (console)."),
+        command("Decoded Image Cache Info", "vr_image_cache_info")
+            .help("vr_image_cache_info: the images kept, their size, and since the start how many were found there and how many "
+                  "decoded (console). vr_image_cache_clear empties it."),
         header("Particles' Fill"),
         toggle("Skip Hidden Particles", vr_particle_saturate)
             .help("vr_particle_saturate: in dense effects the particles are composited in reverse order into a layer of "
@@ -4328,6 +4455,10 @@ za::Vector<Item> pageDebugProfiling()
         toggle("Split Work Between Threads", vr_jobs_parallel)
             .help("The game's thread pool shares out the grasp solve, the liquids' volume, the decal atlas and the models' "
                   "occlusion bakes. Off: the calling thread does all of it (the same results, slower: to compare)."),
+        toggle("Catch Memory Use off the Main Thread", vr_zone_threadcheck)
+            .help("The game crashes at once, with the culprit's stack (qvr_crash.txt), when a thread other than the main one "
+                  "uses the hunk, the model cache or the zone (none of them is thread-safe; vr_zone_threadcheck). For "
+                  "testing: a map load's crash in its data is often one of these."),
         cycle("Worker Threads", vr_jobs_threads, {{0.f, "Auto"}, {1.f, "1"}, {2.f, "2"}, {3.f, "3"}, {4.f, "4"}, {8.f, "8"}, {16.f, "16"}})
             .help("The thread pool's workers besides the main thread (Auto: the CPU's threads less one). Changed, the pool is "
                   "made again. -jobs <n> on the command line sets it from the start."),
@@ -4411,6 +4542,10 @@ za::Vector<Item> pageDebugProfiling()
             .help("vr_heap_purge_delay: how long the heap (mimalloc) keeps freed memory before giving it back to the system. "
                   "At once: the smallest working set. 1 s, mimalloc's own default: map loads about 15% quicker, 0.3 to 1 GB "
                   "more memory held after them."),
+        cycle("Heap: Hold During Loads", "vr_heap_load_hold", {{0.f, "Off"}, {60000.f, "On"}})
+            .help("vr_heap_load_hold: a map load keeps the memory it frees for its own later allocations, then gives it all "
+                  "back at its first frame drawn. Off: freed memory goes back as Purge Delay says (a big map's hitbox "
+                  "build much slower: its threads queue on the system's memory calls)."),
         command("Heap: Return Free Memory", "vr_heap collect")
             .help("vr_heap collect: mimalloc returns the memory it holds unused to the system, then vr_heap."),
         header("Crashes"),
@@ -4515,6 +4650,7 @@ za::Vector<Item> pageDebugReports()
         command("Relighting: Status", "vr_relight_status").help("vr_relight_status: the relighting's state (a batch's maps done, each light running: its stage and process id; the progress and time left), how the map in play is lit, the light.exe found."),
         command("Relighting: Tool Lookup", "vr_relight_get_tool status").help("vr_relight_get_tool status: the light.exe found (or not), the folder Download ericw-tools writes, the pinned file (version, size, sha256), its URL and the last download's result. vr_relight_tool_dir points both lookup and download at a test folder; vr_relight_tool_url at a test server."),
         command("Relighting: Batch's Maps", "vr_relight_batch -list").help("vr_relight_batch -list: the maps Graphics > Relighting's Relight These Maps would take (Maps, Episode, Game), with their files and sizes, without relighting them."),
+        command("Menu Rows", "menu_vr rows").help("menu_vr rows: this page's rows as drawn (MROW: row, top, label), the scroll, the section gap, and whether the laser and mouse find each row where it is drawn."),
         command("Menu Help Fit", "menu_vr helpcheck").help("menu_vr helpcheck [columns]: every VR page's help wrapped as drawn: the pages whose box grew, the help shown in parts, the longest (HELPSUM)."),
         command("Main Menu Lettering", "vr_bigfont").help("vr_bigfont: which of the main menu's letters were cut from the menu pictures, and which were left out (a mod's own picture: the menu then shows the picture)."),
     };
@@ -4581,6 +4717,10 @@ za::Vector<Item> pageDebugTools()
         command("Soak Your Arms", "vr_wounds_test self 9 0 0 52").help("vr_wounds_test self 9 0 0 52: wet as from water up to your chest; dries in about 25 seconds."),
         command("Test Light", "vr_light_test").help("vr_light_test: a white light 48 units ahead for 5 seconds."),
         command("Test Message", "vr_message_test").help("vr_message_test: a message in the gadget's hologram (once the gadget has been drawn)."),
+        cycle("Gadget Screen Readings", "vr_gadget_test_state",
+            {{0.f, "Real"}, {1.f, "Low"}, {2.f, "Exhausted, Counter"}, {3.f, "Hanging, Bullet Time"}, {4.f, "Relighting"}, {5.f, "Every Item"}})
+            .help("vr_gadget_test_state: the wrist gadget's screen shows made-up readings, to see each state of its layout: low health, ammo and "
+                  "stamina; no stamina with a counter's window open; hanging with bullet time running; maps being relit; every key, powerup and sigil."),
         command("Eject a Casing", "vr_shells_eject").help("vr_shells_eject: a spent casing out of the held weapon's port."),
         command("Lightning Shock", "vr_shock_test 0").help("vr_shock_test 0: the lightning gun's shock in water (the flash, the arcs over your arms and body), without the damage."),
         command("Lightning Strikes You", "vr_shock_self_test 10; vr_shock_self_info")
@@ -4895,6 +5035,232 @@ za::Vector<Item> pageMg3Tests()
             .help("Destructive, any campaign: print the health/ammo capacities, overfill and bound every ammunition, heal from 1."),
         command("Take This Map's Upgrades", "vr_mg3_test 5")
             .help("Destructive: empty health/ammo, take every capacity upgrade here by its real pickup, check masks, caps and refills."),
+        command("Map Triggers Check", "vr_mg3_test 6")
+            .help("Destructive, any campaign: silent teleports and door relays here, plus spawned always/multitouch/heal/music/quad/doorgroup/repeater/killmonster triggers."),
+        command("Explosion Repeaters Check", "vr_mg3_test 7")
+            .help("Destructive, any campaign: use every explosion repeater here (secret2: 60) and count their blasts 20 seconds later."),
+        command("Monster Keys and Lore Check", "vr_mg3_test 8")
+            .help("Destructive: a health_target monster hit down past its relay (fires once), an aggro_target group woken, a lore text shown and cleared."),
+        command("Items Check", "vr_mg3_test 9")
+            .help("Destructive: take every armour shard here, touch each draught, wear a lava suit in lava and slime, take the hell knight's head (Bloody Nightmare on)."),
+        command("Take This Map's Runes", "vr_mg3_test 10")
+            .help("Destructive: bring out a hidden rune and take every rune here by its pickup; prints serverflags."),
+        command("Hub Rune Check", "vr_mg3_test 11")
+            .help("On the hub: fire its rune check as entering does; 6 s later each rune's doors and the exit (all four runes) are checked."),
+        command("Rune Count Report", "vr_mg3_test 12")
+            .help("Monsters, items, intermission views and corpses here with this many runes (NOT_IF_n_RUNES removes the others)."),
+        command("Walk Into the Exit", "vr_mg3_test 13")
+            .help("Destructive: touch this map's first changelevel (its route); then Leave the Intermission."),
+        command("Leave the Intermission", "vr_mg3_test 14")
+            .help("One button press of the intermission (text, then the next map)."),
+        command("Hub Skill Buttons Check", "vr_mg3_test 15")
+            .help("On the hub: its Bloody Nightmare relays' state, then skill buttons 4, 1, 4 (Bloody Nightmare on, off, on)."),
+        command("Seed a Full Loadout", "vr_mg3_test 16")
+            .help("Destructive: guns, a sword, the shotgun and the Super Axe in the holsters, yellow armour, ammunition; then change level."),
+        command("Loadout After Bloody Nightmare", "vr_mg3_test 17")
+            .help("After a level change: in a Bloody Nightmare game only the axe, shotgun, Super Axe (and the bloody super shotgun) are left."),
+        command("Bloody Nightmare Damage Check", "vr_mg3_test 18")
+            .help("Destructive: 50 on a monster and 10 from it on you: 80% and 120% on Bloody Nightmare, else 100%."),
+        command("Bloody Nightmare New Game Flags", "vr_mg3_test 19")
+            .help("Destructive: Bloody Nightmare on, found and its new game (upstream impulses 223/224), skill 3."),
+        command("Walk Into the Exit to secret2", "vr_mg3_test 20")
+            .help("On the hub: touch its final exit; in Bloody Nightmare's new game it leads to boss2."),
+        command("Chthon Beaten (Ending)", "vr_mg3_test 21")
+            .help("Destructive: the Chthon ending as if he died: the finale text and the credits, or on Bloody Nightmare its new game on map1. Then Leave the Intermission."),
+        command("Shub Beaten (Ending)", "vr_mg3_test 22")
+            .help("Destructive: the Shub ending: the final text, then the credits. Then Leave the Intermission."),
+        toggle("Aggro Groups", vr_mg3_aggro_groups)
+            .help("A waking monster wakes what its aggro_target names (map3, map7, map8). Upstream ships this off; off by default."),
+    };
+}
+
+// Dawn of the Machine's weapons (MG3_PLAN.md M3-11..14): "mg3wtest:" lines with developer 1 (QC/vr_mg3_weapons_test.qc).
+// The Super Axe works in any campaign when the Dawn of the Machine data is there (its models are read from it in place).
+za::Vector<Item> pageMg3WeaponTests()
+{
+    return {
+        header("Dawn of the Machine Weapons"),
+        command("A Super Axe in Your Hand", "impulse 168")
+            .help("The Super Axe in the main hand (impulse 188: the off hand). Strike a monster twice within Super Axe Burst "
+                  "Window (Combat > Weapon Damage) for the lightning burst (15 cells; the head glows while it is ready)."),
+        command("A Super Axe Pickup Ahead", "vr_physics_spawn weapon_superaxe 64")
+            .help("A weapon_superaxe lying 64 units ahead, as a map places one."),
+        command("Weapons Report", "vr_mg3_wtest 1")
+            .help("The Dawn of the Machine data, your hands, holsters and cells, the Super Axe's burst chain (developer 1)."),
+        command("Super Axe Blows and Burst", "vr_mg3_wtest 2")
+            .help("Destructive: two ogres and a zombie ahead, struck by the Super Axe: first blow, burst, window, another "
+                  "monster, water, cells, zombie and killing blows checked over a few seconds."),
+        command("Super Axe Pickup", "vr_mg3_wtest 3")
+            .help("Destructive: a pickup ahead taken by the empty main hand: its target fired, its silent drop (16 units)."),
+        command("Map2's Super Axe", "vr_mg3_wtest 4")
+            .help("Destructive, Dawn of the Machine's map2: its weapon_mjolnir is a Super Axe; take it: the secret counted, "
+                  "dropped 2047 units below, as Dawn of the Machine does."),
+        command("Super Axe in Hand and Holster", "vr_mg3_wtest 5")
+            .help("Destructive: a Super Axe in the main hand and the first holster (then change level or save and load, "
+                  "and Weapons Report)."),
+        command("Axe Buttons Check", "vr_mg3_wtest 6")
+            .help("Destructive, a Dawn of the Machine map with axe buttons (map6, map7, map8, secret5): each stays shut to "
+                  "a shot and a blast, then opens to a blow (fist, Super Axe, thrown weapon, thrown prop, headbutt)."),
+        command("Stand Before an Axe Button", "vr_mg3_wtest 7")
+            .help("You stand facing the nearest closed axe button: shoot it (it says to use the axe), then strike it."),
+        command("Did the Axe Button Open", "vr_mg3_wtest 8").help("The nearest axe button's state (developer 1)."),
+        command("Laser Cannon Bolts", "vr_mg3_wtest 9")
+            .help("A bolt's damage (Dawn of the Machine's 15, lit 20; elsewhere 18, 25), then 12 bolts at the floor ahead: "
+                  "their bounces (0.9 of the damage kept) and stops."),
+        command("Take the Nearest Laser Cannon", "vr_mg3_wtest 10")
+            .help("Destructive: the nearest weapon_laser_gun into the empty main hand (map2b)."),
+        command("Bloody Bits On", "vr_mg3_wtest 11")
+            .help("Both bloody shotguns' bits set for this game: every shotgun refires in 0.28 s, every super shotgun "
+                  "fires 28 pellets."),
+        command("Bloody Bits Off", "vr_mg3_wtest 15"),
+        command("Bloody Report", "vr_mg3_wtest 12").help("The bloody bits, the shotgun's refire, your shells (developer 1)."),
+        command("Take the Bloody Shotguns", "vr_mg3_wtest 13")
+            .help("Destructive: the map's bloody shotguns (none: two spawned ahead) taken by the empty main hand."),
+        command("Bloody Nightmare New Game Flag", "vr_mg3_wtest 14")
+            .help("Destructive: serverflags 256 set (then change level: the map's bloody shotguns stay)."),
+    };
+}
+
+// Dawn of the Machine's monsters (MG3_PLAN.md M3-15..18): "mg3mtest:" lines with developer 1 (QC/vr_mg3_monsters_test.qc).
+// The infected are stock monsters (any campaign); MG3's own monsters need its data (their models read from it in place).
+za::Vector<Item> pageMg3MonsterTests()
+{
+    return {
+        header("Dawn of the Machine Monsters"),
+        command("An Infected Grunt Ahead", "vr_test_spawn 30; vr_test_spawn_dist 128; impulse 241")
+            .help("An infected grunt 128 units ahead: killed, he bursts and gets up as a zombie (counted once, as it)."),
+        command("An Infected Knight Ahead", "vr_test_spawn 31; vr_test_spawn_dist 128; impulse 241"),
+        command("An Infected Enforcer Ahead", "vr_test_spawn 32; vr_test_spawn_dist 128; impulse 241")
+            .help("An infected enforcer: killed, he bursts and gets up as a fiend."),
+        command("An Infected Death Knight Ahead", "vr_test_spawn 33; vr_test_spawn_dist 128; impulse 241"),
+        command("A Death Knight Lying as a Corpse", "vr_test_spawn_flags 65536; vr_test_spawn 33; vr_test_spawn_dist 128; impulse 241; vr_test_spawn_flags 0")
+            .help("An infected death knight lying as Dawn of the Machine's corpses lie (not solid) until woken: shoot him, "
+                  "or wake him (he rises, his death backwards)."),
+        command("Monsters Report", "vr_mg3_mtest 1")
+            .help("The map's Dawn of the Machine monsters by kind, the infected turned, the kills (developer 1)."),
+        command("Infected Check", "vr_mg3_mtest 2")
+            .help("Destructive: an infected grunt, knight, enforcer and death knight ahead, each killed (bursts into a "
+                  "zombie or a fiend, not counted), then killed again (counted once each)."),
+        command("Lying Death Knight Check", "vr_mg3_mtest 3")
+            .help("Destructive: a death knight lying as a corpse (not solid, his last death frame), woken: he rises."),
+        command("A Rocket Ogre Ahead", "vr_test_spawn 34; vr_test_spawn_dist 192; impulse 241")
+            .help("Dawn of the Machine's rocket ogre (its data read in place): volleys of two rockets; bat them back."),
+        command("A Rocket Ogre's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 34; vr_test_spawn_dead 1; vr_test_spawn_dist 128; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0"),
+        command("A Demo Dog Ahead", "vr_test_spawn 35; vr_test_spawn_dist 192; impulse 241")
+            .help("Dawn of the Machine's demo dog: its leap onto you kills it; however it dies, three grenades spill."),
+        command("Demo Dog Check", "vr_mg3_mtest 6")
+            .help("Destructive: demo dogs ahead: one shot dead beside a grunt (grenades, the grunt hurt), one landing on "
+                  "you, one beheaded (it lies headless, the grenades spill all the same)."),
+        command("A Ranged Knight Ahead", "vr_test_spawn 36; vr_test_spawn_dist 256; impulse 241")
+            .help("Dawn of the Machine's ranged knight: fans of diamonds at range; bat or parry them."),
+        command("A Ranged Knight's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 36; vr_test_spawn_dead 1; vr_test_spawn_dist 128; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0"),
+        command("Ranged Knight Check", "vr_mg3_mtest 7")
+            .help("Destructive: a ranged knight ahead: its model, class, head zone; made to cast (six diamonds, you hurt), "
+                  "killed (its death frames), another gibbed (the death knight's head)."),
+        command("Rocket Ogre Check", "vr_mg3_mtest 5")
+            .help("Destructive: a rocket ogre ahead: its model, class, head zone; made to shoot (two rockets, you hurt), "
+                  "killed (its corpse, no chainsaw dropped)."),
+    };
+}
+
+// Dawn of the Machine's monsters, M3-19..23 (MG3_PLAN.md): "mg3btest:" lines with developer 1 (QC/vr_mg3_bestiary_test.qc).
+// They spawn in any campaign when the Dawn of the Machine data is there (read from it in place).
+za::Vector<Item> pageMg3BestiaryTests()
+{
+    return {
+        header("Dawn of the Machine Bestiary"),
+        command("An Orb Ahead", "vr_test_spawn 40; vr_test_spawn_dist 160; impulse 241")
+            .help("Dawn of the Machine's orb 160 units ahead: a flying eye that sees behind it too, bursts spheres at you, and "
+                  "blows up where it lands when killed."),
+        command("A Slime Ahead", "vr_test_spawn 41; vr_test_spawn_dist 160; impulse 241")
+            .help("Dawn of the Machine's slime: a spawn that, blowing up, throws blobs that become spawns, twice over."),
+        command("A Ghost Ahead", "vr_test_spawn 42; vr_test_spawn_dist 128; impulse 241")
+            .help("Dawn of the Machine's ghost: it drifts about; touch it (a hand will do) and it fades away."),
+        command("A Sacrifice Ahead", "vr_test_spawn 43; vr_test_spawn_dist 96; impulse 241")
+            .help("A hanging sacrifice (Dawn of the Machine's misc_sacrifice): struck down, it is gibbed."),
+        command("A Lava Man Ahead", "vr_test_spawn 44; vr_test_spawn_dist 200; impulse 241")
+            .help("Dawn of the Machine's lava man (MG3's model): it rises, stands as it throws lava balls, takes 0.8 of anything "
+                  "but the lightning gun and the laser cannon."),
+        command("A Super Shambler Ahead", "vr_test_spawn 45; vr_test_spawn_dist 200; impulse 241")
+            .help("Dawn of the Machine's blood shambler: 2000 health, plasma sprays on its blows, lightning near and far."),
+        command("A Super Shambler's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 45; vr_test_spawn_dead 1; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0")
+            .help("Ragdolls on and a super shambler killed at the Distance ahead (Debug > Tests > Ahead of You): he goes limp as he "
+                  "falls (his own rig on MG3's model)."),
+        command("Bestiary Report", "vr_mg3_btest 1")
+            .help("The Dawn of the Machine data each monster needs, and how many of each this map has (developer 1)."),
+        command("Orb Test", "vr_mg3_btest 2")
+            .help("Destructive: an orb ahead, woken (god mode meanwhile): its eyes, its spheres, its pain, its death and blast "
+                  "(developer 1)."),
+        command("Ghost, Sacrifice and Slime Test", "vr_mg3_btest 3")
+            .help("Destructive: a ghost laid to rest by your touch, a sacrifice struck down (its target fired), a slime's two "
+                  "generations of spawns counted as they start and die (developer 1)."),
+        command("Lava Man Test", "vr_mg3_btest 5")
+            .help("Destructive: a lava man of Dawn of the Machine's ahead (god mode): it rises and flies, its first hit staggers "
+                  "it, its damage rule, its throws, its death by a use; a Rogue lava man beside it unchanged (developer 1)."),
+        command("Super Shambler Test", "vr_mg3_btest 7")
+            .help("Destructive: a super shambler ahead (god mode): its plasma sprays, its lightning, half damage from blasts, its "
+                  "parries and head zone; killed: his ragdoll (developer 1)."),
+        command("Quake's Monsters in Dawn of the Machine", "vr_mg3_btest 10")
+            .help("Destructive: backpacks, skill 3's harder skins and pain rest, the shambler's lightning, the vore's balls, Bloody "
+                  "Nightmare's extra lasers, spikes and grenades, hanging and close-throwing zombies; it expects them only in "
+                  "Dawn of the Machine (and Bloody Nightmare: the next row) at skill 3 (developer 1)."),
+        command("Bloody Nightmare On", "vr_mg3_btest 11")
+            .help("Destructive: serverflags 64 (Dawn of the Machine's Bloody Nightmare) for the test above."),
+        command("The Map's Sacrifices", "vr_mg3_btest 4")
+            .help("Destructive (Dawn of the Machine's map8): every sacrifice used in turn; the counter's count down to its "
+                  "target fired (developer 1)."),
+    };
+}
+
+za::Vector<Item> pageMg3ShubTests()
+{
+    return {
+        header("Dawn of the Machine: Shub"),
+        command("Shub Ahead (Free)", "vr_test_spawn 60; vr_test_spawn_dist 256; impulse 241")
+            .help("Dawn of the Machine's Shub-Niggurath 256 units ahead (needs room: she is 256 units wide): volleys of diamonds, "
+                  "autoguns, lobbed plasma, a sweeping beam, eyes and a seeker by her phase; she raises shub zombies where the "
+                  "map has their spawns. One from here is free: killed, she bursts but ends nothing."),
+        command("A Shub Zombie Ahead", "vr_test_spawn 61; vr_test_spawn_dist 96; impulse 241")
+            .help("One of Shub's zombies: Quake's zombie lying there, up 7 s later and after you; it throws its flesh only up close."),
+        command("Shub's Eye Ahead", "vr_test_spawn 62; vr_test_spawn_dist 160; impulse 241")
+            .help("One of Shub's eyes: it hangs there and after 2 s spirals 72 spheres at you, then bursts. 120 health."),
+        command("Shub's Seeker Ahead", "vr_test_spawn 63; vr_test_spawn_dist 200; impulse 241")
+            .help("Shub's seeker eye: it chases you, faster and faster; its touch does 500. 300 health."),
+        command("Shub Report", "vr_mg3_shubtest 1")
+            .help("Her data, the map's Shub (phase, health), its shub zombie spawns, pillars, zombies and children (developer 1)."),
+        command("Shub Phases Test", "vr_mg3_shubtest 2")
+            .help("Destructive (god mode meanwhile): the map's Shub (boss2: you are taken to the arena) or a free one ahead: her "
+                  "wounds through her four phases, her thrash, her waves, each phase's children, her autoguns, every child "
+                  "dead (developer 1)."),
+        command("Shub Zombies and Pillars Test", "vr_mg3_shubtest 3")
+            .help("Destructive (boss2; god mode meanwhile): her zombies raised at the map's spawns (33 at most), up 7 s later, "
+                  "her spheres and their flesh passing each other; the pillars sinking 20 a hit, with you on one: down with it, "
+                  "the floor holding you as it sinks on (developer 1)."),
+        command("Shub Death Test", "vr_mg3_shubtest 4")
+            .help("Destructive (god mode meanwhile): Shub killed: her children cleared, the lights out, her burst; the map's "
+                  "then shows the final text and the credits (developer 1)."),
+        command("Training Dummy as Shub Test", "vr_mg3_shubtest 5")
+            .help("Destructive: a training dummy 300 units ahead as Shub (free), then as her eye: what it is, killed as each, "
+                  "nothing ended, a dummy back; Dummy Enemy reset to the grunt (developer 1)."),
+    };
+}
+
+// Dawn of the Machine's Chthon, M3-24/25 (MG3_PLAN.md): "mg3ctest:" lines with developer 1 (QC/vr_mg3_chthon_test.qc).
+za::Vector<Item> pageMg3ChthonTests()
+{
+    return {
+        header("Dawn of the Machine: Chthon"),
+        command("Chthon Ahead", "vr_test_spawn 50; vr_test_spawn_dist 600; impulse 241")
+            .help("Dawn of the Machine's Chthon 600 units ahead (any map with its data), woken at you: fans and volleys of "
+                  "spheres, six fits as he is hurt, 0.8 damage but from lightning and lasers. He ends no game here."),
+        command("Chthon Report", "vr_mg3_ctest 1")
+            .help("This map's Chthon (phase, health, fits), the second arena's points, lava suits, music (developer 1)."),
+        command("Chthon Test", "vr_mg3_ctest 2")
+            .help("Destructive: a Chthon ahead (god mode): his damage rules, every fit and phase, the spiral, his death, rings "
+                  "and gibs (developer 1)."),
+        command("The Boss Map's Fight", "vr_mg3_ctest 3")
+            .help("Destructive (Dawn of the Machine's boss map, before the fight): you walk into his trigger; each fit and phase "
+                  "driven, the waves, both teleports, his death (god mode; developer 1)."),
     };
 }
 
@@ -4915,10 +5281,25 @@ za::Vector<Item> pageDebugTests()
             .help("Destructive: seed independent hand/holster magazines for save/carry checks. Hold both grips and reload afterward."),
         open("Machine Horde Tests", pageIndex(pageMachineHordeTests))
             .help("Authored waves, currency, physical rewards, revival and saved equipment. Developer arena only."),
+        open("Dawn of the Machine Bestiary", pageIndex(pageMg3BestiaryTests))
+            .help("Dawn of the Machine's monsters in any campaign with its data: the orb, ..."),
+        open("Dawn of the Machine: Shub", pageIndex(pageMg3ShubTests))
+            .help("Dawn of the Machine's Shub-Niggurath (any campaign with its data; boss2's own): her phases, children and death."),
+        open("Dawn of the Machine: Chthon", pageIndex(pageMg3ChthonTests))
+            .help("Dawn of the Machine's Chthon in any campaign with its data, and its boss map's fight."),
+        open("Dawn of the Machine Weapons", pageIndex(pageMg3WeaponTests))
+            .help("The Super Axe (any campaign with the Dawn of the Machine data), the axe buttons, the laser cannon, the bloody shotguns."),
+        open("Dawn of the Machine Monsters", pageIndex(pageMg3MonsterTests))
+            .help("The infected (any campaign) and Dawn of the Machine's own monsters (with its data): spawns and checks."),
         open("Dawn of the Machine Tests", pageIndex(pageMg3Tests))
             .help("MG3 native port: state, saved upgrades and capacities. Developer campaign only."),
         command("Machine: Progression Report", "vr_mg_hub_test 3")
             .help("Report runes, return position, final gate and VR equipment."),
+        command("Machine: Walk Into the Next Exit", "vr_mg_hub_test 30")
+            .help("Put you inside this map's exit (the hub: the next episode's gate, or the final gate), the real trigger "
+                  "takes you on; jump presses leave the intermission. The campaign route test's step."),
+        command("Machine: Die Here", "vr_mg_hub_test 36")
+            .help("God mode off and a killing blow; a jump press respawns (single player: the last save loads)."),
         command("Machine: mge5m2 Trigger Route", "vr_mg_trigger_test 2")
             .help("Destructive authored rune puzzle and quake sequence on mge5m2. Uses real buttons and engine movement. Reload afterward."),
         command("Official World: Fog Report", "vr_mg_world_test 1")
@@ -5010,11 +5391,17 @@ za::Vector<Item> pageDebugTests()
             {{0.f, "Grunt"}, {1.f, "Ogre"}, {2.f, "Zombie"}, {3.f, "Shambler"}, {4.f, "Scrag"}, {5.f, "Knight"},
              {6.f, "Hell Knight"}, {7.f, "Dog"}, {8.f, "Enforcer"}, {9.f, "Fiend"}, {10.f, "Vore"}, {11.f, "Spawn"},
              {12.f, "Gremlin"}, {13.f, "Centroid"}, {14.f, "Mummy"}, {15.f, "Phantom Swordsman"}, {16.f, "Wrath"},
-             {17.f, "Overlord"}, {18.f, "Guardian"}, {19.f, "Dragon"}, {20.f, "Marksman Ogre"}, {100.f, "Health Box"}, {101.f, "Shells Box"}, {102.f, "Explosive Box"},
+             {17.f, "Overlord"}, {18.f, "Guardian"}, {19.f, "Dragon"}, {20.f, "Marksman Ogre"},
+             {30.f, "Infected Grunt"}, {31.f, "Infected Knight"}, {32.f, "Infected Enforcer"}, {33.f, "Infected Death Knight"},
+             {34.f, "Rocket Ogre"}, {35.f, "Demo Dog"}, {36.f, "Ranged Knight"}, {40.f, "Orb"}, {41.f, "Slime"}, {42.f, "Ghost"}, {43.f, "Sacrifice"}, {44.f, "Lava Man (Dawn of the Machine)"}, {45.f, "Super Shambler"},
+             {60.f, "Shub-Niggurath (Free)"}, {61.f, "Shub Zombie"}, {62.f, "Shub's Eye"}, {63.f, "Shub's Seeker"},
+             {50.f, "Chthon (Dawn of the Machine)"},
+             {100.f, "Health Box"}, {101.f, "Shells Box"}, {102.f, "Explosive Box"},
              {103.f, "Small Explosive Box"}, {104.f, "Explosive Box (Never Blows Up)"}, {105.f, "Ogre's Head"},
              {106.f, "Gib"}, {107.f, "Small Crate"}, {108.f, "Large Crate"}, {109.f, "Two Crates Stacked"},
-             {110.f, "Rocks and Bricks"}})
-            .help("What Put It There puts ahead of you, facing you. The mission packs' monsters need their game installed."),
+             {110.f, "Rocks and Bricks"}, {111.f, "Barrel"}, {112.f, "Barrel Lying"}, {113.f, "Silver Key"}})
+            .help("What Put It There puts ahead of you, facing you. The mission packs' monsters need their game installed; Dawn "
+                  "of the Machine's (its infected, which burst into zombies and fiends; its own monsters, the orb, the sacrifice: MG3's data, read in place)."),
         slider("Distance", vr_test_spawn_dist, 32.f, 256.f, 8.f, "%.0f units").extend().help("How far ahead."),
         toggle("Into the Main Hand", vr_test_spawn_hold)
             .help("A box or a crate (Health Box .. Explosive Box, the crates) put into your empty main hand, as if gripped: "
@@ -5031,6 +5418,16 @@ za::Vector<Item> pageDebugTests()
             .extend()
             .help("A box: tipped this far about the way you face, on its lowest corner (it topples: sv_gravity 0 keeps it so)."),
         command("Put It There", "impulse 241").help("Puts the Thing ahead of you."),
+        command("Enemy Weapon Drop Cap", "developer 1; vr_dropcap_test 1")
+            .help("vr_dropcap_test 1: 60 grunts spawned ahead and killed one by one (vr_dropcap_test_n), the first one's "
+                  "rifle taken into an empty hand, a chainsaw thrown up and three other weapons dropped: the burst rifles "
+                  "and chainsaws lying about never pass Most Lying About (vr_enemy_weapon_drop_max), the held one, the "
+                  "flying one and the others stay (dctest: lines, PASS or FAIL). vr_dropcap_test 2: the count lying about."),
+        command("Marksman Ogre: What It Is", "developer 1; vr_marksman_test 1")
+            .help("vr_marksman_test 1: the nearest marksman ogre's model (Honey's in a Honey map, else id's ogre: Dimension "
+                  "of the Machine's marksman), health, enemy and the grenades it has thrown, to the console (mkstest:)."),
+        command("Marksman Ogre: Kill It", "developer 1; vr_marksman_test 2; wait; wait; vr_marksman_test 3")
+            .help("vr_marksman_test 2, then 3: the nearest marksman ogre killed (not gibbed), then its body (ragdoll or not)."),
         command("A Knight's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 5; vr_test_spawn_dead 1; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0")
             .help("Ragdolls on (Gibs and Corpses > Ragdoll Settings) and a knight killed at the Distance ahead: he goes limp as "
                   "he falls (his sword dropped)."),
@@ -5080,6 +5477,12 @@ za::Vector<Item> pageDebugTests()
         command("Shove the Nearest Monster", "impulse 219")
             .help("impulse 219: the nearest monster within 200 units shoved as your two-handed shove does (knocked away, "
                   "staggered). Developer 1 logs grunts' and enforcers' shoves and why one can't shove (Combat > Enemy Shoves)."),
+        command("Knock Down the Nearest", "vr_knockdown_test 0")
+            .help("vr_knockdown_test 0: the nearest monster that can be knocked down is, pushed away from you, whatever "
+                  "its chance (A Grunt Ahead first: Debug > Tests)."),
+        command("Get Them Up Now", "vr_knockdown_test 1")
+            .help("vr_knockdown_test 1: every knocked-down monster tries to get up now. Combat > Knockdowns, Print Rolls: "
+                  "And Get-Ups' Motion prints how smoothly each is drawn getting up."),
         command("Remove Every Monster", "vr_knockdown_test 20")
             .help("Every monster removed, standing, knocked down or dead: a clean slate between shove tests (with a grunt "
                   "ahead: impulse 244). Shove one off vrclimb's long ledge or into its trench to see Over a Ledge, Always."),
@@ -5119,6 +5522,31 @@ za::Vector<Item> pageDebugTests()
             .help("The main hand's weapon carried by the off hand, as letting go of a two-handed weapon does."),
         command("Take It Back", "vr_test_weaponinst 6; impulse 120").help("The main hand takes the carried weapon's handle."),
         command("Switch Hands", "vr_test_weaponinst 7; impulse 120").help("The main hand's weapon into the off hand (8: back)."),
+        header("Reloading"),
+        command("Shotgun in the Off Hand", "impulse 154; wait; vr_test_weaponinst 7; impulse 120; give s 40")
+            .help("A loaded shotgun into the off hand and 40 shells: the main hand is free for the ammo pouch."),
+        command("Nailgun in the Off Hand", "impulse 156; wait; vr_test_weaponinst 7; impulse 120; give n 100")
+            .help("A loaded nailgun into the off hand and 100 nails (impulse 157: the super nailgun, 161 the thunderbolt)."),
+        command("Eject the Off Hand's Magazine", "vr_reload_test 6; impulse 125").help("As its B/Y does."),
+        command("Empty the Off Hand's Gun", "vr_reload_test 5; impulse 125")
+            .help("Its magazine back into your ammo (to load it again)."),
+        command("Take a Shell (Main Hand)", "vr_reload_test 1; impulse 125")
+            .help("As gripping at the ammo pouch does: a shell (or a taped pair) for the off hand's gun."),
+        command("Load the Held Shell", "vr_reload_test 2; impulse 125")
+            .help("The main hand's shell into the off hand's gun, as at its port."),
+        command("Drop the Held Shell", "vr_reload_test 3; impulse 125").help("Let go of, as anywhere but the pouch."),
+        command("Put It Back", "vr_reload_test 4; impulse 125").help("As letting go at the pouch: refunded."),
+        command("Report", "vr_reload_test 0; impulse 125")
+            .help("Prints your shells, the off hand's magazine, what each hand holds, the shells lying about."),
+        command("Run the Self-Test", "vr_reload_test 9; impulse 125")
+            .help("Takes, loads, refunds and drops in turn and checks every count: reload: PASS or FAIL lines."),
+        cycle("Reload Prints", "vr_reload_debug", {{0.f, "Off"}, {1.f, "Events"}, {2.f, "Every Frame"}, {3.f, "And Magazine Grips"}})
+            .help("Events: each take, load, refund, loss, magazine out and hold. Every Frame: a held round's distance to the "
+                  "port, a held magazine's pull, snap and apart, a hit's speed. And Magazine Grips: each empty hand's "
+                  "distance off the other gun's magazine (its box) and the grip it would take."),
+        toggle("Show Load Points", "vr_reload_show_ports")
+            .help("Each held gun's load point and radius, a held magazine's top, an attached magazine's box (blue)."),
+        toggle("Show the Pouches' Reach", "vr_show_grenade_pouch").help("Spheres where the grenade pouch and the ammo pouch are reached."),
         header("Climbing"),
         command("Climbing Test Map", "map vrclimb").help("map vrclimb: rungs, ledges, a jump wall, moving and floating ledges."),
         command("To the Jump Wall", "setpos -40 -310 24 0 0 0; noclip")
@@ -5158,7 +5586,11 @@ za::Vector<Item> pageDebugTests()
             .help("vr_weaponfx_test 1 3: the main hand's weapon kicks and flashes as if it fired (its Effects), with 3 "
                   "tracers (no shot)."),
         toggle("Print Weapon Effects", vr_debug_weaponfx)
-            .help("vr_debug_weaponfx: each shot's recoil, flash and tracers (2: and the recoil each frame)."),
+            .help("vr_debug_weaponfx: each shot's recoil, flash and tracers (2: and the recoil each frame); the shotgun's auto "
+                  "pump strokes (start, back, home) and when its shell leaves."),
+        slider("Hold the Auto Pump", vr_autopump_hold, -0.05f, 1.f, 0.05f, "%.2f")
+            .help("vr_autopump_hold: every shotgun's fore-end held at that point of its auto pump's stroke, to look at it "
+                  "(0.35-0.45: at the back; below 0: off)."),
         header("Flung Props"),
         slider("Fling Speed", vr_test_fling_speed, 1.f, 40.f, 1.f, "%.0f m/s").extend(),
         cycle("Fling At", vr_test_fling_at, {{0.f, "Nearest Monster"}, {1.f, "You"}}),
@@ -5304,6 +5736,10 @@ za::Vector<Item> pageDebugTests()
             .help("The map's brushes and compiled hulls kept in memory when it is left, for a load of the same map again "
                   "(a death's reload, restart, a changelevel back): that load skips their build (vr_hull_keep). Off: "
                   "built at every load."),
+        cycle("Hitboxes on Disk", vr_hull_cache, {{0.f, "Off"}, {1.f, "On"}, {2.f, "Check"}})
+            .help("A big map's compiled hulls kept on disk (cache/hulls) and read at its next load instead of compiled "
+                  "again (vrstart2: 9 s to 0.1 s). Check: read, then compiled anyway and compared (Hitbox Stats counts "
+                  "them). Off: compiled at every load (vr_hull_cache)."),
         command("Hitbox Keep Test", "vr_hull_keeptest")
             .help("Builds the map's brushes and compiled hulls again from scratch and prints whether the server's (kept "
                   "from the last load, or built with this one) are the same (vr_hull_keeptest)."),
@@ -5349,6 +5785,11 @@ za::Vector<Item> pageDebugTests()
         command("Through A Gate", "map start; wait120; setpos 232 1330 24 0 90 0; wait10; noclip 0; wait80; vr_mock_stick off 0 0.5; wait20; +jump; wait30; -jump; vr_mock_stick off 0 0; wait30; vr_portals_info")
             .help("Mock movement with collision enabled: approach the first gate and jump into its opening. "
                   "The torso reaches y=1384 before crossing (developer 1: VR portal: carried edict 1 through side 0)."),
+        command("Frame Strip Through A Gate", "map start; wait120; setpos 544 1330 24 0 90 0; wait10; noclip 0; wait80; vr_mock_stick off 0 0.5; wait20; +jump; wait36; -jump; vr_screenshot_frames 12; wait20; vr_mock_stick off 0 0")
+            .help("The same jump into the middle gate (Normal skill), a screenshot of each of the 12 frames round the "
+                  "crossing (vr_screenshot_frames 12: every frame drawn, not only those on a server tick). The room "
+                  "beyond must look the same in each: the pentagram's floor over the pit (func_bossgate) was missing "
+                  "in the first frame after the crossing until the server sent both rooms while you straddle a gate."),
         command("A Shot Through A Gate", "map start; wait120; setpos 232 1360 24 0 90 0; wait10; vr_physics_fire 10 232 1500 25")
             .help("vr_physics_fire 10: a pellet's trace at a point beyond the first gate: the console says through 1 "
                   "slipgate(s), in at ..., out at ... (shots and thrown props go through as before)."),
@@ -5358,6 +5799,23 @@ za::Vector<Item> pageDebugTests()
                   "carries you, the trigger teleports you the old way (a flash, a jump, 0.7 s locked), and "
                   "vr_portals_info says the feature is off. It is turned back on at the end; Graphics > Slipgates has "
                   "the same switch."),
+        header("Slipgates: Test Map (vrslipgates)"),
+        command("Slipgate Test Map", "map vrslipgates")
+            .help("map vrslipgates: slipgate pairs of every size (crate, player, shambler, very wide), flush with the floor "
+                  "and in frames with sills, at 90 and 45 degrees, a loop, between floor heights and by a pool. Every gate "
+                  "goes both ways; each room's buttons spawn a grunt, dog, ogre, shambler or scrag by its far wall."),
+        command("To the Flush Gates", "setpos -256 576 24 0 90 0; noclip")
+            .help("In vrslipgates: facing the player-sized flush gate (its bottom at the floor). The north gallery behind "
+                  "it is where it leads, so a monster chasing you through walks straight into it."),
+        command("To the Framed Gates", "setpos 1180 576 24 0 90 0; noclip")
+            .help("In vrslipgates: facing the player-sized gate in a frame with a 16-unit sill (a step); the next one east "
+                  "has a 32-unit sill (a jump: monsters can't)."),
+        command("To the Turning Gates", "setpos -1280 640 24 0 90 0; noclip")
+            .help("In vrslipgates: facing the gate that comes out of the next room's east wall (90 degrees); the loop is "
+                  "left and right of you, the 45-degree wall behind you to the left."),
+        command("To the Heights and Water", "setpos -400 -960 24 0 180 0; noclip")
+            .help("In vrslipgates: facing the floor-level gate that comes out over the 128-high platform; the pool's two "
+                  "gates are in the east and south walls."),
         header("Visibility: Hidden Staircase"),
         command("Hidden Staircase Probe", "map start; wait120; setpos 278 1728 24 7 -20 0; wait60; vr_hull_leafdebug")
             .help("Places the player at the reported staircase spot. setpos enables noclip; turn it off before "
@@ -5933,9 +6391,29 @@ const Page pages[] = {
     {"Ragdolls - Vore", pageRagdollVore, pageRagdolls, LevelDeveloper},
     {"Ragdolls - Centroid", pageRagdollCentroid, pageRagdolls, LevelDeveloper},
     {"Dawn of the Machine Tests", pageMg3Tests, pageDebugTests, LevelDeveloper},
+    {"Dawn of the Machine Weapons", pageMg3WeaponTests, pageDebugTests, LevelDeveloper},
+    {"Dawn of the Machine Monsters", pageMg3MonsterTests, pageDebugTests, LevelDeveloper},
+    {"Dawn of the Machine Bestiary", pageMg3BestiaryTests, pageDebugTests, LevelDeveloper},
+    {"Dawn of the Machine: Shub", pageMg3ShubTests, pageDebugTests, LevelDeveloper},
+    {"Dawn of the Machine: Chthon", pageMg3ChthonTests, pageDebugTests, LevelDeveloper},
     {"Debug - Cheats and Recording", pageDebugCheats, pageDebug, LevelDeveloper}, // (vr_menu_cheats.inc)
+    {"Reloading", pageReloading, pageWeaponsHub},
+    {"Reloading - Shotgun", pageReloadShotgun, pageReloading},
+    {"Reloading - Super Shotgun", pageReloadSuperShotgun, pageReloading},
+    {"Reloading - Nailgun", pageReloadNailgun, pageReloading},
+    {"Reloading - Super Nailgun", pageReloadSuperNailgun, pageReloading},
+    {"Reloading - Thunderbolt", pageReloadThunderbolt, pageReloading},
 };
 constexpr int pageCount = static_cast<int>(sizeof(pages) / sizeof(pages[0]));
+
+// The roots of the pages' tree as Search and the boards' menu paths walk it (breadth first, in this order): the VR
+// Settings and the Advanced VR Options, each opened on its own (the VR Settings: Options' and the main menu's rows; the
+// Advanced VR Options: the main menu's Advanced VR row and the corner's button), neither linking the other.
+constexpr int menuRoots[] = {PageMain, PageAdvanced};
+[[nodiscard]] constexpr bool isMenuRoot(int p)
+{
+    return p == PageMain || p == PageAdvanced;
+}
 
 // Weapon Offsets' parts, as its main page links them (in WeaponOffsetsPart's order). A new part: its builder, a
 // WeaponOffsetsPart, a line in `pages` (last) and one here.
@@ -6120,6 +6598,27 @@ const HandWrapper handWrappers[] = {
     return var.default_string ? static_cast<float>(Q_atof(var.default_string)) : 0.f;
 }
 
+// One Holster Calibration row (VR Settings): a pair of holsters' offset (one setting for both, the left one mirrored)
+// from its default, `sign` -1 for Inward (the offsets' Y is outward).
+struct HolsterWrapper
+{
+    cvar_t* wrapper;
+    cvar_t* offset;
+    float sign;
+};
+
+const HolsterWrapper holsterWrappers[] = {
+    {&vr_menu_holster_hip_x, &vr_hip_offset_x, 1.f},
+    {&vr_menu_holster_hip_y, &vr_hip_offset_y, -1.f},
+    {&vr_menu_holster_hip_z, &vr_hip_offset_z, 1.f},
+    {&vr_menu_holster_chest_x, &vr_upper_holster_offset_x, 1.f},
+    {&vr_menu_holster_chest_y, &vr_upper_holster_offset_y, -1.f},
+    {&vr_menu_holster_chest_z, &vr_upper_holster_offset_z, 1.f},
+    {&vr_menu_holster_back_x, &vr_shoulder_holster_offset_x, 1.f},
+    {&vr_menu_holster_back_y, &vr_shoulder_holster_offset_y, -1.f},
+    {&vr_menu_holster_back_z, &vr_shoulder_holster_offset_z, 1.f},
+};
+
 [[nodiscard]] bool wrapperCvar(const cvar_t& var)
 {
     if(&var == &vr_menu_turning || &var == &vr_menu_move_towards)
@@ -6133,7 +6632,14 @@ const HandWrapper handWrappers[] = {
             return true;
         }
     }
-    return false;
+    for(const HolsterWrapper& w : holsterWrappers)
+    {
+        if(&var == w.wrapper)
+        {
+            return true;
+        }
+    }
+    return &var == &vr_menu_bullettime;
 }
 
 void showWrapper(cvar_t& var, float value)
@@ -6142,6 +6648,38 @@ void showWrapper(cvar_t& var, float value)
     {
         Cvar_SetValueQuick(&var, value);
     }
+}
+
+// Bullet Time's Activation (vr_menu_bullettime) as the settings it stands for are now.
+[[nodiscard]] float bulletTimeActivation()
+{
+    if(vr_bullettime_enabled.value == 0.f)
+    {
+        return 3.f;
+    }
+    const int trigger = static_cast<int>(vr_bullettime_trigger.value);
+    if(trigger == 1 || trigger == 2)
+    {
+        return static_cast<float>(trigger);
+    }
+    const bool tap = vr_bullettime_tap.value != 0.f;
+    const bool button = vr_bullettime_button.value != 0.f;
+    return tap && button ? 0.f : tap ? 4.f : button ? 5.f : 6.f;
+}
+
+// Its choices: the three, and the settings' own combination where it is none of them (shown, not offered otherwise).
+[[nodiscard]] za::Vector<Choice> bulletTimeChoices()
+{
+    za::Vector<Choice> out{{0.f, "Wrist Gadget"}, {1.f, "Left Thumbstick Press"}, {2.f, "Right Thumbstick Press"}};
+    switch(static_cast<int>(bulletTimeActivation()))
+    {
+        case 3: out.pushBack({3.f, "Off"}); break;
+        case 4: out.pushBack({4.f, "Wrist Gadget (tap only)"}); break;
+        case 5: out.pushBack({5.f, "Wrist Gadget (button only)"}); break;
+        case 6: out.pushBack({6.f, "Wrist Gadget (tap and button off)"}); break;
+        default: break;
+    }
+    return out;
 }
 
 void syncWrappers()
@@ -6159,6 +6697,11 @@ void syncWrappers()
     {
         showWrapper(*w.wrapper, za::round((w.main->value - defaultOf(*w.main)) * 100.f) / 100.f);
     }
+    for(const HolsterWrapper& w : holsterWrappers)
+    {
+        showWrapper(*w.wrapper, za::round(w.sign * (w.offset->value - defaultOf(*w.offset)) * 100.f) / 100.f);
+    }
+    showWrapper(vr_menu_bullettime, bulletTimeActivation());
     wrapperBusy = false;
 }
 
@@ -6193,6 +6736,29 @@ void onWrapperSet(cvar_t* var)
             Cvar_SetValueQuick(&vr_handcal_off_mirror, 1.f); // one set for both hands: the off hand mirrors the main one
         }
     }
+    for(const HolsterWrapper& w : holsterWrappers)
+    {
+        if(var == w.wrapper)
+        {
+            Cvar_SetValueQuick(w.offset, defaultOf(*w.offset) + w.sign * var->value);
+        }
+    }
+    if(var == &vr_menu_bullettime)
+    {
+        // A stick: its press alone (the gadget's tap and button do nothing then, as Combat > Bullet Time's Trigger).
+        // The gadget: its tap and its button. A config's own combination: as it was.
+        const int choice = static_cast<int>(var->value);
+        Cvar_SetValueQuick(&vr_bullettime_enabled, choice == 3 ? 0.f : 1.f);
+        if(choice != 3)
+        {
+            Cvar_SetValueQuick(&vr_bullettime_trigger, choice == 1 || choice == 2 ? static_cast<float>(choice) : 0.f);
+        }
+        if(choice == 0 || choice >= 4)
+        {
+            Cvar_SetValueQuick(&vr_bullettime_tap, choice == 0 || choice == 4 ? 1.f : 0.f);
+            Cvar_SetValueQuick(&vr_bullettime_button, choice == 0 || choice == 5 ? 1.f : 0.f);
+        }
+    }
     wrapperBusy = false;
 }
 
@@ -6207,8 +6773,21 @@ void resetHandOffsets()
     }
 }
 
+// Reset Holsters: every pair of holsters back to its shipped place (Holster Calibration).
+void resetHolsters()
+{
+    for(const HolsterWrapper& w : holsterWrappers)
+    {
+        Cvar_SetQuick(w.offset, w.offset->default_string);
+    }
+}
+
 // Reset All to Defaults keeps the config's bookkeeping (its versions, the tips seen, VR Calibration pending, where the
-// pages were left, Menu Detail) and VR on or off and its runtime.
+// pages were left, Menu Detail), VR on or off and its runtime, and what was measured or fitted to the player rather than
+// chosen (Vittorio, 2026-10-07): the height and the floor (Height Calibration), Body Calibration's measurements, its
+// seated flag and Undo (vr_bodycal_*, its preview excepted) and the tweaks on them (vr_body_tweak_*), the body's
+// proportions (arm length, eyes over the neck, torso back), and both hands' calibration (vr_handcal_*, the hands'
+// pitch and yaw: Reset Hand Offsets resets those). The world's scale is a choice: reset.
 [[nodiscard]] bool keptOnResetAll(const cvar_t& var)
 {
     const size_t n = strlen(var.name);
@@ -6216,8 +6795,14 @@ void resetHandOffsets()
     {
         return true;
     }
+    if((!q_strncasecmp(var.name, "vr_bodycal_", 11) && &var != &vr_bodycal_preview) ||
+        !q_strncasecmp(var.name, "vr_body_tweak_", 14) || !q_strncasecmp(var.name, "vr_handcal_", 11))
+    {
+        return true;
+    }
     for(const cvar_t* kept : {&vr_menu_level, &vr_menu_positions, &vr_tips_seen, &vr_setup_pending, &vr_enabled,
-            &vr_xr_runtime})
+            &vr_xr_runtime, &vr_height_calibration, &vr_floor_offset, &vr_body_arm_length, &vr_body_eye_forward,
+            &vr_body_eye_up, &vr_body_torso_back, &vr_gunangle, &vr_gunyaw, &vr_offhandpitch, &vr_offhandyaw})
     {
         if(&var == kept)
         {
@@ -6238,34 +6823,34 @@ void resetAll(); // (below: after the pages' building)
     return text;
 }
 
-void openSearchRow()
+// VR Settings' Reloading Mode (vr_reload_mode): Immersive (3), Simple (2, the hip holsters), Disabled (0); a config's
+// All Holsters (1) shown as such while it is set (not offered otherwise).
+[[nodiscard]] za::Vector<Choice> reloadChoices()
 {
-    qvr::menu::openSearch();
-}
-
-void advancedRow()
-{
-    qvr::menu::jumpToAdvanced();
+    za::Vector<Choice> out{{3.f, "Immersive"}, {2.f, "Simple"}};
+    if(static_cast<int>(vr_reload_mode.value) == 1)
+    {
+        out.pushBack({1.f, "Simple (all holsters)"});
+    }
+    out.pushBack({0.f, "Disabled"});
+    return out;
 }
 
 // VR Settings (Options > VR Settings, the main menu's VR Settings, the corner's): what a new player sets, each in a few
 // words, in the order they come to it. Every other setting is under Advanced VR Options (ROUND21.md, "VR Settings for
-// first-time players"), and so is each row here, on its topic's page.
+// first-time players"), and so is each row here, on its topic's page. No link to them here (nor to Search): the main
+// menu's Advanced VR row and the corner's Advanced VR and Search buttons open them, and the trees of Search and of the
+// boards' menu paths start at both pages (menuRoots).
 za::Vector<Item> pageMain()
 {
     const bool snap = vr_snap_turn.value > 0.f;
     mainPageSnap = snap ? 1 : 0;
     const char* handHelp = "Both hands, mirrored: moves or turns the drawn hands (and what they hold) on your controllers, "
                            "so they sit where your real hands are. Show Controller helps; 0 is the shipped calibration.";
+    const char* holsterHelp = "Both holsters of the pair, mirrored: moves them forward, inward (towards your middle) or up "
+                              "from their shipped place (0), in Quake's units (about 3 cm). Shown on your body while "
+                              "you choose here.";
     za::Vector<Item> list{
-        action("Search Settings", openSearchRow)
-            .help("Find any setting by its name or what it does: type, and pick one to go to it (also the corner's Search "
-                  "button in the headset)."),
-        menuLevel() >= LevelAdvanced
-            ? open("Advanced VR Options", PageAdvanced).help("Every gameplay, display and graphics setting, by topic.")
-            : action("Advanced VR Options", advancedRow)
-                  .help("Every gameplay, display and graphics setting, by topic (Menu Detail goes to Advanced)."),
-
         header("Height Calibration"),
         slider("Height", vr_height_calibration, 1.f, 2.2f, 0.01f, "%.2f m").extend(0.5f, 3.f)
             .help("Your real height: it puts your eyes at the right height in the game and fits the body to you. Set "
@@ -6296,6 +6881,29 @@ za::Vector<Item> pageMain()
             .help("Both hands' moves and turns back to the shipped calibration. Each hand's own values: Advanced VR "
                   "Options > Weapons > Hand/Gun Calibration."),
 
+        header("Holster Calibration"),
+        slider("Hip Holsters Forward", vr_menu_holster_hip_x, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        slider("Hip Holsters Inward", vr_menu_holster_hip_y, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        slider("Hip Holsters Up", vr_menu_holster_hip_z, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        slider("Chest Holsters Forward", vr_menu_holster_chest_x, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        slider("Chest Holsters Inward", vr_menu_holster_chest_y, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        slider("Chest Holsters Up", vr_menu_holster_chest_z, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        slider("Back Holsters Forward", vr_menu_holster_back_x, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        slider("Back Holsters Inward", vr_menu_holster_back_y, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        slider("Back Holsters Up", vr_menu_holster_back_z, -10.f, 10.f, 0.5f, "%+.1f").extend(-40.f, 40.f)
+            .help(holsterHelp),
+        action("Reset Holsters", resetHolsters)
+            .help("Every pair of holsters back to its shipped place. Each pair's own values (its turn and reach too): "
+                  "Advanced VR Options > Weapons > Hip Holsters, and > Hotspots."),
+
         header("Locomotion"),
         cycle("Move Towards", vr_menu_move_towards, {{1.f, "Head"}, {2.f, "Left Hand"}, {3.f, "Right Hand"}})
             .help("Where pushing the stick forward takes you: where you look (Head), or where that hand points, so you "
@@ -6307,6 +6915,9 @@ za::Vector<Item> pageMain()
                   "touching the stick."),
         toggle("Swap Stick Functions", vr_stick_swap)
             .help("Off: the left stick moves you and the right one turns. On: the right stick moves, the left turns."),
+        cycle("Swimming", vr_swim, {{1.f, "Immersive"}, {0.f, "Vanilla"}})
+            .help("Immersive: in water the stick slows and strokes of your hands move you. Vanilla: the stick swims as in "
+                  "Quake."),
 
         header("Comfort"),
         cycle("Vignette", vr_comfort_vignette, {{0.f, "Off"}, {1.f, "Moving and turning"}, {2.f, "Moving only"}, {3.f, "Turning only"}})
@@ -6314,6 +6925,9 @@ za::Vector<Item> pageMain()
                   "Your own steps in the room never do it."),
         slider("Vignette Strength", vr_comfort_vignette_strength, 0.1f, 1.f, 0.1f, "%.1f")
             .help("How dark and how wide the vignette is: at 1 you see through a narrow tunnel."),
+        slider("Fade on Scripted Teleports", vr_comfort_teleport_fade, 0.f, 2.f, 0.1f, "%.1f s")
+            .help("When the game moves you somewhere else at once (a boss sending you to another arena), your view goes "
+                  "black and comes back over this long. 0: no fade."),
 
         header("Teleportation"),
         toggle("Teleport", vr_teleport_enabled)
@@ -6357,12 +6971,27 @@ za::Vector<Item> pageMain()
         cycle("Two-Handed", vr_2h_mode, {{0.f, "Off"}, {1.f, "Basic"}, {2.f, "Virtual stock"}})
             .help("Hold a gun with both hands to steady it. Virtual stock: a gun brought near your shoulder also aims "
                   "from it, as against a real stock."),
+        cycle("Reloading Mode", vr_reload_mode, reloadChoices())
+            .help("Guns have magazines. Immersive: the shotgun is loaded a shell at a time from the ammo pouch on your "
+                  "belt, the other guns at the hip holsters. Simple: a gun held at a hip holster reloads. Disabled: no "
+                  "reloading. Only with the Immersive weapon mode."),
+
+        header("Bullet Time"),
+        cycle("Activation", vr_menu_bullettime, bulletTimeChoices())
+            .help("What starts and stops bullet time (the world slowed while the gadget's TIME meter lasts). Wrist "
+                  "Gadget: tap its wrist hard with your other hand, or press its inner button. A thumbstick press: that "
+                  "press does only this (never its bound key), and the gadget's tap and button do nothing. More: "
+                  "Advanced VR Options > Combat > Bullet Time."),
 
         header("Body"),
         cycle("Body Type", vr_body_mode, {{3.f, "Full"}, {2.f, "Torso and Arms"}, {0.f, "Only Hands"}})
             .help("How much of your body you see: all of it, legs and all; the torso and arms; or only the hands."),
         cycle("Wrist Gadget Arm", vr_gadget_arm, {{0.f, "Left"}, {1.f, "Right"}})
             .help("The arm the wrist gadget (health, armour and ammo) is on."),
+        cycle("Leaning Detection", vr_lean_detect, {{1.f, "On"}, {0.f, "Off"}})
+            .help("On: leaning over (your head lower and tilted, your hands by your hips) leaves your feet where they "
+                  "stand. Off: the body always slides back under your head. How readily: Advanced VR Options > Movement "
+                  "> Locomotion."),
         command("Reset Position", "vr_recenter")
             .help("Puts your body back under your head, and facing where you look, if it was left behind (after "
                   "leaning over something, or walking into a wall)."),
@@ -6422,8 +7051,8 @@ za::Vector<Item> pageMain()
 
         header("Reset"),
         action(resetAllArmed ? "Press Again to Reset All" : "Reset All to Defaults", resetAll)
-            .help("Every Quake VR setting back to as it shipped (your height, body and hand calibration too). Press it twice: "
-                  "the second time within 3 seconds.")
+            .help("Every Quake VR setting back to as it shipped, but not your calibration (height, floor, body and hands: "
+                  "Reset Hand Offsets for those). Press it twice: the second time within 3 seconds.")
     );
     return list;
 }
@@ -6595,6 +7224,18 @@ za::Vector<Item> pageWeaponEffects()
             .help("How far a shot kicks the weapon back, at a weapon's Recoil Strength 1."),
         slider("Muzzle Rise", vr_recoil_rise, 0.f, 15.f, 0.5f, "%.1f deg").extend(0.f, 45.f)
             .help("How far a shot tips the muzzle up, at a weapon's Recoil Strength 1."),
+        header("Shotgun Auto Pump"),
+        toggle("Auto Pump", vr_autopump)
+            .help("After each shot the shotgun cycles itself: its fore-end is driven back along the guide rods over the "
+                  "barrel and springs home, and the spent shell leaves the port as it reaches the back. Off: the fore-end "
+                  "stays and the shell leaves as before. Looks only: the fire rate is the same."),
+        slider("Auto Pump Time", vr_autopump_time, 0.15f, 0.45f, 0.01f, "%.2f s").extend(0.1f, 0.48f)
+            .help("How long the stroke takes, back and home (the shotgun fires again after 0.5 s)."),
+        slider("Auto Pump Travel", vr_autopump_travel, 0.5f, 3.2f, 0.1f, "%.1f units").extend(0.f, 3.2f)
+            .help("How far back the fore-end goes, in the gun model's units (about 3.8 cm each, as drawn)."),
+        slider("Auto Pump Sound", vr_autopump_sound, 0.f, 1.f, 0.1f, "%.1f").help("Volume of its two clacks (0: off)."),
+        slider("Auto Pump Haptics", vr_autopump_haptics, 0.f, 2.f, 0.1f, "%.1f")
+            .help("Strength of the light ticks in the hand at the back of the stroke and home (0: off)."),
         header("Muzzle Flash"),
         toggle("Programmatic Muzzle Flash", vr_muzzle_flash)
             .help("The shotgun's flash at the muzzle of the weapons whose Muzzle Flash is on (Weapon Offsets > Effects: the "
@@ -6659,6 +7300,7 @@ za::Vector<Item> pageWeaponsHub()
         open("Weight and Damage", pageIndex(pageWeightDamage)),
         open("Weapon Damage", pageIndex(pageWeaponDamage)).help("Every weapon's base damage, to balance them."),
         open("Immersion", pageIndex(pageImmersionSettings)).help("Holsters, reloading, throwing weapons, shell casings, haptics."),
+        open("Reloading", pageIndex(pageReloading)).help("Reloading's mode; the ammo pouch; a page per gun (its load point, its magazine, holding and pulling it)."),
         open("Lightning Gun in Water", pageIndex(pageLightningWater)).help("The shock fired under water, and electrified water."),
         open("Weapon Effects", pageIndex(pageWeaponEffects)).help("Recoil, muzzle flashes and bullet tracers."),
         header("Holsters"),
@@ -7615,7 +8257,103 @@ za::Vector<Item> pageWofsFlashlight()
 }
 
 int page = PageMain;
-int parentPage[pageCount]{};
+
+// Back (ROUND21.md, "Back where you came from"): the way the player came to the page shown, as a stack of places, the page
+// shown on top: VR pages (their numbers) and, below them, the menus outside the VR pages that they were entered from
+// (outsidePlace: the main menu's VR Settings or Advanced VR rows, Single Player > Official Campaigns, Options > VR
+// Settings, a corner button over any menu), and Ironwail's Levels entered from a VR page (the corner's Levels). Back pops
+// the page shown and goes to the place under it, the cursor where it was left (each page's and menu's own). A place
+// already on the stack is gone back to rather than added again (no loops). Nothing under the page: up the menus' tree
+// (homeOf), the VR Settings to Options. A Search result's page goes back up the tree, not to Search (openEntry).
+struct NavStack
+{
+    static constexpr int capacity = 48;
+    int places[capacity]{};
+    int count{0};
+};
+NavStack nav;
+bool navReturning = false; // leaving the VR pages by Back for an outside menu (VR_NavEntered: not a new way in)
+int navJumpPending = -1;    // the outside menu a jump (VR_NavJump) is opening
+
+[[nodiscard]] constexpr int outsidePlace(int state)
+{
+    return -1 - state;
+}
+
+[[nodiscard]] int navTop()
+{
+    return nav.count > 0 ? nav.places[nav.count - 1] : -1000;
+}
+
+void navReset()
+{
+    nav.count = 0;
+}
+
+// `place` on top: back to it where it already is on the stack (what was above it dropped), else added.
+void navPush(int place)
+{
+    for(int i = nav.count - 1; i >= 0; i--)
+    {
+        if(nav.places[i] == place)
+        {
+            nav.count = i + 1;
+            return;
+        }
+    }
+    if(nav.count == NavStack::capacity)
+    {
+        for(int i = 1; i < nav.count; i++)
+        {
+            nav.places[i - 1] = nav.places[i];
+        }
+        nav.count--;
+    }
+    nav.places[nav.count++] = place;
+}
+
+// The menu outside the VR pages the player is in now (m_none: none, or one not to come back to).
+[[nodiscard]] int outsideMenu()
+{
+    if(key_dest != key_menu)
+    {
+        return m_none;
+    }
+    switch(m_state)
+    {
+        case m_none:
+        case m_vr:
+        case m_credits:
+        case m_quit:
+        case m_help: return m_none;
+        default: return m_state;
+    }
+}
+
+// Coming to the VR pages from `outside` (outsideMenu): it at the stack's bottom (kept with what is under it when it is
+// on top already: the player came back to it by Back), or nothing when there is no menu to go back to.
+void navEnterFrom(int outside)
+{
+    if(outside == m_none)
+    {
+        navReset();
+        return;
+    }
+    if(navTop() != outsidePlace(outside))
+    {
+        navReset();
+        navPush(outsidePlace(outside));
+    }
+}
+
+// The page last shown, on top of the stack (made so when something else changed the page).
+void navSyncTop()
+{
+    if(navTop() != page)
+    {
+        navPush(page);
+    }
+}
 int cursors[pageCount]{};
 int scrolls[pageCount]{};
 
@@ -7891,6 +8629,11 @@ void addMenuDetail(za::Vector<Item>& list, int page)
     {
         done[page] = false; // light.exe found or not, a download started or ended: Download ericw-tools shown or not
     }
+    if(pages[page].build == pageCampaigns && campaignsBloodyShown >= 0 &&
+        campaignsBloodyShown != (vr_mg3_bn_discovered.value != 0.f ? 1 : 0))
+    {
+        done[page] = false; // Dawn of the Machine's Bloody Nightmare found (or reset): its row shown or not
+    }
     if(pages[page].build == pageBodyArms && armsPageCalibrated >= 0 && armsPageCalibrated != (bodycal::calibrated() ? 1 : 0))
     {
         done[page] = false; // calibrated (Apply) or not (Undo): Arm Length shown or not
@@ -8124,19 +8867,52 @@ HelpBox helpBox;
     return helpBox.lines;
 }
 
+// The console page's left and right edges (menu x; vr_menu_console.inc).
+void consoleEdges(float& left, float& right);
+
+// How far right a page draws anywhere (menu x): its rows' scrollbar's box, its help box at its widest (drawHelp: centred,
+// its paging bar right of it); Search's, the Map Library's and the console's keyboards and buttons.
+[[nodiscard]] float pageRight(za::Vector<Item> (*build)())
+{
+    if(build == pageConsole)
+    {
+        float left, right;
+        consoleEdges(left, right);
+        return right;
+    }
+    if(build == pageMaps || build == pageSearch)
+    {
+        return build == pageMaps ? 12.f + 460.f : 12.f + 440.f;
+    }
+    return za::fmax(static_cast<float>(midPos + 200), static_cast<float>((320 + 8 * helpColumns()) / 2 + 5));
+}
+
 [[nodiscard]] Layout layout()
 {
     const int height = menuui::menuHeight();
     const int top = (200 - height) / 2;
-    const int listTop = q_max(top + 36, static_cast<int>(za::ceil(menuui::toolbarBottom())) + 2); // below the corner's buttons
-    return {top, listTop, top + height - 4 - 8 * helpBoxLines(), top + height};
+    // The version label in the bottom right corner (vr_menubrand.cpp): where the page reaches under it (a flat screen's
+    // narrower canvas), the page ends above it.
+    int bottom = top + height;
+    if(float labelLeft, labelTop; menuui::versionLabelClearance(labelLeft, labelTop) && pageRight(pages[page].build) > labelLeft)
+    {
+        bottom = q_min(bottom, static_cast<int>(za::floor(labelTop)));
+    }
+    // Under the title, or below the corner's buttons where they are over the rows (not left of them: a narrow panel),
+    // and below the status box in the top right corner where the page reaches under it (Search and the Map Library,
+    // from x 12 440 and 460 across; the other pages to their scrollbar).
+    int listTop = menuui::toolbarBeside() ? top + 36 : q_max(top + 36, static_cast<int>(za::ceil(menuui::toolbarBottom())) + 2);
+    const auto build = pages[page].build;
+    const float right = build == pageMaps ? 12.f + 460.f : build == pageSearch ? 12.f + 440.f : midPos + 200.f;
+    listTop = q_max(listTop, static_cast<int>(za::ceil(menuui::statusBottom(right))) + 2);
+    return {top, listTop, bottom - 4 - 8 * helpBoxLines(), bottom};
 }
 
 [[nodiscard]] bool hasHelp(const za::Vector<Item>& list)
 {
     for(const Item& item : list)
     {
-        if(item.helpText || item.extendable)
+        if(item.helpText || item.extendable || item.kind == Item::Slider) // (a slider's help: its fine steps at least)
         {
             return true;
         }
@@ -8144,10 +8920,117 @@ HelpBox helpBox;
     return false;
 }
 
-[[nodiscard]] int visibleRows(const za::Vector<Item>& list)
+// A VR page's rows' leftmost text (menu x), for the corner's buttons (menu::contentLeft): each label right-aligned
+// to the values' column (drawItem: midPos - 28 - its width), headers and lines of information centred (these 40
+// characters at most). Kept per page and build.
+struct RowsLeft
+{
+    int page{-1};
+    int build{-1};
+    int left{0};
+};
+RowsLeft rowsLeft;
+
+[[nodiscard]] int pageRowsLeft()
+{
+    if(rowsLeft.page != page || rowsLeft.build != builds[page])
+    {
+        rowsLeft.page = page;
+        rowsLeft.build = builds[page];
+        int left = 0;
+        for(const Item& item : menuPages.built[page])
+        {
+            const int len = item.label ? static_cast<int>(strlen(item.label)) : 0;
+            const int x = item.kind == Item::Header ? (320 - 8 * len) / 2
+                          : item.kind == Item::Info ? 0
+                                                    : midPos - 28 - 8 * len;
+            left = q_min(left, x);
+        }
+        rowsLeft.left = left;
+    }
+    return rowsLeft.left;
+}
+
+// The rows' heights: 8 pixels each, a section's header (and the first, under the title) with a gap above it
+// (vr_menu_section_gap, in rows: 0 to 2). The list scrolls a row at a time, so how many rows show depends on where it is
+// scrolled to (the headers among them); each function below takes the gaps into account.
+[[nodiscard]] int sectionGap()
+{
+    return static_cast<int>(za::round(CLAMP(0.f, vr_menu_section_gap.value, 2.f) * 8.f));
+}
+
+[[nodiscard]] int rowGap(const za::Vector<Item>& list, int i)
+{
+    return list[i].kind == Item::Header ? sectionGap() : 0;
+}
+
+// The list's height (pixels from listTop): down to the help's box, or the menu's bottom.
+[[nodiscard]] int listSpace(const za::Vector<Item>& list)
 {
     const Layout l = layout();
-    return ((hasHelp(list) ? l.helpTop - 4 : l.bottom - 8) - l.listTop) / 8;
+    return (hasHelp(list) ? l.helpTop - 4 : l.bottom - 8) - l.listTop;
+}
+
+// How many rows show from row `first` on (as many as fit, at least one; 0 past the list's end).
+[[nodiscard]] int rowsFrom(const za::Vector<Item>& list, int first)
+{
+    const int space = listSpace(list);
+    const int n = static_cast<int>(list.size());
+    int y = 0;
+    int rows = 0;
+    for(int i = q_max(first, 0); i < n; i++)
+    {
+        y += rowGap(list, i) + 8;
+        if(y > space)
+        {
+            break;
+        }
+        rows++;
+    }
+    return first < n ? q_max(rows, 1) : 0;
+}
+
+// Row i's top (pixels below listTop) with the list scrolled to `first` (i >= first): its gap included.
+[[nodiscard]] int rowTop(const za::Vector<Item>& list, int first, int i)
+{
+    int y = 0;
+    for(int k = first; k < i; k++)
+    {
+        y += rowGap(list, k) + 8;
+    }
+    return y + rowGap(list, i);
+}
+
+// The scroll that shows row `last` at the list's bottom: the first row of as many as fit up to it.
+[[nodiscard]] int scrollShowing(const za::Vector<Item>& list, int last)
+{
+    const int space = listSpace(list);
+    int y = rowGap(list, last) + 8;
+    int first = last;
+    while(first > 0 && y + rowGap(list, first - 1) + 8 <= space)
+    {
+        first--;
+        y += rowGap(list, first) + 8;
+    }
+    return first;
+}
+
+// The furthest the list scrolls (0: it fits).
+[[nodiscard]] int maxScroll(const za::Vector<Item>& list)
+{
+    return list.empty() ? 0 : scrollShowing(list, static_cast<int>(list.size()) - 1);
+}
+
+// The rows shown on the page as it is scrolled now.
+[[nodiscard]] int visibleRows(const za::Vector<Item>& list)
+{
+    return rowsFrom(list, scrolls[page]);
+}
+
+// The rows the list's height holds (the scrollbar's track).
+[[nodiscard]] int trackRows(const za::Vector<Item>& list)
+{
+    return q_max(listSpace(list) / 8, 1);
 }
 
 [[nodiscard]] int firstSelectable(const za::Vector<Item>& list)
@@ -8198,8 +9081,6 @@ void closeDropDown(); // (the drop-down lists, below: a page shown closes the on
 
 // The page a Search result opened (vr_menu_search.inc): Back from it returns to the results (VR Settings' Back too);
 // -1 once elsewhere.
-int searchOpened = -1;
-
 void showPage(int target)
 {
     closeDropDown();
@@ -8217,10 +9098,6 @@ void showPage(int target)
     // changed now: Changed Settings; a state a builder reads) are as they are now, not as when the page was last built
     // (by Search, a menu path or Changed Settings, which build every page).
     menuPages.done[page] = false;
-    if(target != searchOpened && parentPage[target] != searchOpened && pages[target].build != pageSearch)
-    {
-        searchOpened = -1; // elsewhere now: Back as usual (vr_menu_search.inc)
-    }
     const auto& list = items(page);
     if(!selectable(list[cursors[page]]))
     {
@@ -8351,7 +9228,8 @@ za::Vector<Item> pageChanged()
 
 void openPage(int target)
 {
-    parentPage[target] = page;
+    navSyncTop();
+    navPush(target);
     showPage(target);
     S_LocalSound("misc/menu2.wav");
 }
@@ -8371,15 +9249,98 @@ void openInTree(int target)
     {
         chain.pushBack(p);
     }
+    navSyncTop();
     for(const int p : za::reversed(chain))
     {
-        parentPage[p] = page;
+        navPush(p);
         showPage(p);
     }
     if(!chain.empty())
     {
         S_LocalSound("misc/menu2.wav");
     }
+}
+
+// The VR pages shown (as from a key: the menu's sound as it is drawn).
+void enterVrMenu()
+{
+    IN_DeactivateForMenu();
+    key_dest = key_menu;
+    m_state = m_vr;
+    m_entersound = true;
+}
+
+// `target` from whatever is shown: a VR page (its place on the stack), another menu (Back returns to it) or none.
+void openFromAnywhere(int target)
+{
+    if(m_state == m_vr && key_dest == key_menu)
+    {
+        navSyncTop();
+        navPush(target);
+        showPage(target);
+        S_LocalSound("misc/menu2.wav");
+        return;
+    }
+    navEnterFrom(outsideMenu());
+    enterVrMenu();
+    navPush(target);
+    showPage(target);
+}
+
+// Leaving the VR pages by Back for `state` (an outside menu: vr_menuui.cpp opens it as its own Back would).
+void leaveTo(int state)
+{
+    navReturning = true;
+    menuui::openMenu(state);
+    navReturning = false;
+}
+
+// Back from the page shown (a key, a button): where the player came from (NavStack), else up the tree.
+void goBack()
+{
+    navSyncTop();
+    if(nav.count >= 2)
+    {
+        nav.count--;
+        const int dest = navTop();
+        if(dest >= 0)
+        {
+            showPage(dest);
+            S_LocalSound("misc/menu2.wav");
+        }
+        else
+        {
+            leaveTo(-1 - dest);
+        }
+        return;
+    }
+    navReset();
+    if(page == PageMain)
+    {
+        M_Menu_Options_f(); // (its sound as it is drawn)
+        return;
+    }
+    const int dest = homeOf(page);
+    navPush(dest);
+    showPage(dest);
+    S_LocalSound("misc/menu2.wav");
+}
+
+// Where Back goes from the page shown (menu_vr pos): a page's number, or -1 with `outside` the menu (m_none: Options).
+[[nodiscard]] int backTarget(int& outside)
+{
+    outside = m_none;
+    if(nav.count >= 2 && navTop() == page)
+    {
+        const int dest = nav.places[nav.count - 2];
+        if(dest < 0)
+        {
+            outside = -1 - dest;
+            return -1;
+        }
+        return dest;
+    }
+    return page == PageMain ? -1 : homeOf(page);
 }
 
 // A setting's value as shown: a server rule's is the remote server's (vr_serverrules.cpp), the rest their own.
@@ -8431,6 +9392,64 @@ struct SliderHold
 };
 SliderHold sliderHold; // (stepSlider: the menu's keys)
 
+// The sliders' fine adjustment: while either grip is held in the headset (a grip does nothing else in the menus), or
+// Shift on a flat screen, a slider steps by vr_menu_fine_step of its step (0.1: a tenth), and shows the decimals that
+// takes (sliderText).
+[[nodiscard]] bool fineHeld()
+{
+    return keydown[K_SHIFT] || keydown[K_LSHOULDER] || keydown[K_RSHOULDER];
+}
+
+[[nodiscard]] float sliderStep(const Item& item)
+{
+    return fineHeld() ? item.step * CLAMP(0.01f, vr_menu_fine_step.value, 1.f) : item.step;
+}
+
+// The decimals that show `x` (to 4 at most).
+[[nodiscard]] int decimalsOf(float x)
+{
+    int n = 0;
+    float scaled = za::fabs(x);
+    while(n < 4 && za::fabs(scaled - za::round(scaled)) > 0.001f * q_max(1.f, scaled))
+    {
+        scaled *= 10.f;
+        n++;
+    }
+    return n;
+}
+
+// A slider's value as its format shows it, with more decimals where the value has them (a fine step) or while the fine
+// steps are on (their size's).
+void sliderText(const Item& item, float value, char* buf, size_t size)
+{
+    const char* dot = strstr(item.format, "%");
+    while(dot && *dot && *dot != '.' && *dot != 'f')
+    {
+        dot++;
+    }
+    if(!dot || *dot != '.' || dot[1] < '0' || dot[1] > '9' || dot[2] != 'f')
+    {
+        q_snprintf(buf, size, item.format, value);
+        return;
+    }
+    const int own = dot[1] - '0';
+    int n = q_max(own, decimalsOf(value));
+    if(fineHeld())
+    {
+        n = q_max(n, decimalsOf(sliderStep(item)));
+    }
+    char format[32];
+    const size_t at = static_cast<size_t>(dot - item.format) + 1;
+    if(n == own || at + 2 >= sizeof(format) || strlen(item.format) + 1 >= sizeof(format))
+    {
+        q_snprintf(buf, size, item.format, value);
+        return;
+    }
+    q_strlcpy(format, item.format, sizeof(format));
+    format[at] = static_cast<char>('0' + n);
+    q_snprintf(buf, size, format, value);
+}
+
 float stepSlider(const Item& item, int dir, bool repeat)
 {
     constexpr double endHold = 0.6;
@@ -8451,7 +9470,7 @@ float stepSlider(const Item& item, int dir, bool repeat)
     const int past = pastEnd(item, cur);
     const bool atEnd = za::fabs(cur - end) <= eps;
 
-    float step = item.step;
+    float step = sliderStep(item);
     if(!repeat || !past)
     {
         outsideSince = realtime;
@@ -8461,7 +9480,9 @@ float stepSlider(const Item& item, int dir, bool repeat)
         const double held = realtime - outsideSince;
         step *= held < 1.0 ? 1.f : held < 2.0 ? 2.f : held < 3.0 ? 5.f : 10.f;
     }
-    float v = za::round((cur + dir * step) / step) * step;
+    // On the fine steps' grid (a value fine-tuned keeps its fine part on a whole step).
+    const float grid = item.step * CLAMP(0.01f, vr_menu_fine_step.value, 1.f);
+    float v = za::round((cur + dir * step) / grid) * grid;
 
     float lo = item.min;
     float hi = item.max;
@@ -8562,28 +9583,44 @@ void change(const Item& item, int dir, bool repeat = false)
 [[nodiscard]] int rowAt(float cy)
 {
     const auto& list = items(page);
-    const int row = static_cast<int>(za::floor((cy - layout().listTop) / 8.f));
-    const int i = scrolls[page] + row;
-    if(row < 0 || row >= visibleRows(list) || i >= static_cast<int>(list.size()))
+    const float yrel = cy - static_cast<float>(layout().listTop);
+    const int first = scrolls[page];
+    const int last = first + visibleRows(list);
+    int i = -1;
+    float y = 0.f;
+    for(int k = first; k < last && yrel >= y; k++)
     {
-        return -1;
+        y += static_cast<float>(rowGap(list, k));
+        if(yrel >= y && yrel < y + 8.f)
+        {
+            i = k;
+            break;
+        }
+        y += 8.f;
+    }
+    if(i < 0)
+    {
+        return -1; // above the list, below it, or in a section's gap
     }
     // A long text's next line: its first, while shown.
-    return i - list[i].partOf >= scrolls[page] ? i - list[i].partOf : -1;
+    return i - list[i].partOf >= first ? i - list[i].partOf : -1;
 }
 
 // A long list's scrollbar, right of the values (as far as the screen goes), as Ironwail's lists
 // have: its thumb's top (pixels below listTop) and height (rows). False when the list fits.
 int scrollbarX = midPos + 188; // where it was drawn
 
-[[nodiscard]] bool scrollbar(int n, int rows, int& y, int& height)
+[[nodiscard]] bool scrollbar(const za::Vector<Item>& list, int& y, int& height)
 {
-    if(n <= rows)
+    const int most = maxScroll(list);
+    if(most <= 0)
     {
         return false;
     }
-    height = q_max(static_cast<int>(rows * rows / static_cast<float>(n) + 0.5f), 2);
-    y = static_cast<int>(scrolls[page] * 8 / static_cast<float>(n - rows) * (rows - height) + 0.5f);
+    const int track = trackRows(list);
+    const int n = static_cast<int>(list.size());
+    height = CLAMP(2, static_cast<int>(track * visibleRows(list) / static_cast<float>(n) + 0.5f), track);
+    y = static_cast<int>(CLAMP(0, scrolls[page], most) * 8 / static_cast<float>(most) * (track - height) + 0.5f);
     return true;
 }
 
@@ -8605,20 +9642,51 @@ void keepCursorVisible()
     }
 }
 
+// menu_vr rows (tests, Debug > Tools): the VR page shown, its rows as drawn: MROW|row|top y|label (menu coordinates), then
+// MROWS with the rows shown, the scroll and its most, the section gap, and whether the mouse finds each row where it is
+// drawn (rowAt, the laser's and the desktop mouse's) and nothing in the gaps.
+void printRows()
+{
+    if(m_state != m_vr)
+    {
+        Con_Printf("menu_vr rows: not on a VR page\n");
+        return;
+    }
+    const auto& list = items(page);
+    const Layout l = layout();
+    const int first = scrolls[page];
+    const int shown = visibleRows(list);
+    int bad = 0;
+    for(int i = first; i < first + shown; i++)
+    {
+        const int top = l.listTop + rowTop(list, first, i);
+        Con_Printf("MROW|%d|%d|%s\n", i, top, list[i].label ? list[i].label : "");
+        const int hit = rowAt(static_cast<float>(top) + 4.f);
+        const int expected = i - list[i].partOf >= first ? i - list[i].partOf : -1;
+        bad += hit != expected;
+        if(rowGap(list, i) > 1 && rowAt(static_cast<float>(top - rowGap(list, i)) + 0.5f) != -1)
+        {
+            bad++;
+        }
+    }
+    Con_Printf("MROWS|%d shown from %d of %d|scroll most %d|gap %d px|bottom %d of %d|rowAt %s\n", shown, first,
+        static_cast<int>(list.size()), maxScroll(list), sectionGap(), shown > 0 ? l.listTop + rowTop(list, first, first + shown - 1) + 8 : l.listTop,
+        l.listTop + listSpace(list), bad ? "MISMATCH" : "agrees");
+}
+
 // The list scrolled to where the mouse holds the scrollbar, the cursor kept on a visible setting.
 void scrollTo(float cy)
 {
     const auto& list = items(page);
-    const int n = static_cast<int>(list.size());
-    const int rows = visibleRows(list);
     int y, height;
-    if(!scrollbar(n, rows, y, height))
+    if(!scrollbar(list, y, height))
     {
         return;
     }
+    const int most = maxScroll(list);
     const float yrel = cy - layout().listTop - height * 4.f;
-    const int range = (rows - height) * 8;
-    scrolls[page] = CLAMP(0, static_cast<int>(yrel * (n - rows) / range + 0.5f), n - rows);
+    const int range = q_max((trackRows(list) - height) * 8, 1);
+    scrolls[page] = CLAMP(0, static_cast<int>(yrel * most / range + 0.5f), most);
     keepCursorVisible();
 }
 
@@ -8632,7 +9700,7 @@ void setSliderAt(const Item& item, float cx)
     }
     const float frac = CLAMP(0.f, (cx - midPos - 4.f) / 72.f, 1.f);
     float v = item.min + frac * (item.max - item.min);
-    v = za::round(v / item.step) * item.step;
+    v = za::round(v / sliderStep(item)) * sliderStep(item);
     v = CLAMP(item.min, v, item.max);
     if(item.negativeLabel && v < item.negativeStart - item.step * 0.01f)
     {
@@ -8765,7 +9833,7 @@ void openDropDown(const Item& item, int row)
     }
 
     // Up and down: the current choice level with the row, the box inside the menu.
-    const int rowY = l.listTop + (row - scrolls[page]) * 8;
+    const int rowY = l.listTop + rowTop(items(page), scrolls[page], row);
     d.top = rowY - (cur - d.scroll) * 8;
     d.top = CLAMP(l.top + 12, d.top, q_max(l.top + 12, l.bottom - 12 - d.rows * 8));
     S_LocalSound("misc/menu3.wav");
@@ -9044,7 +10112,7 @@ void drawItem(const Item& item, int y, bool selected)
             }
             else
             {
-                q_snprintf(buf, sizeof(buf), item.format, value);
+                sliderText(item, value, buf, sizeof(buf));
             }
             // Past an end: the thumb stays there, marked, and the value (the real one) is white.
             const float range = (value - item.min) / (item.max - item.min);
@@ -9165,6 +10233,15 @@ const char* itemHelp(const Item& item)
     {
         help = extendableHelp(item, help);
     }
+    if(item.kind == Item::Slider && !lockedItem(item))
+    {
+        // The fine steps' modifier, last.
+        za::String& text = readouts.fineHelp;
+        text = help && help[0] ? help : "";
+        text += text.empty() ? "" : " ";
+        text += vrActive() ? "Hold a grip for fine steps." : "Hold Shift for fine steps.";
+        help = text.cStr();
+    }
     return help;
 }
 
@@ -9254,7 +10331,7 @@ void drawHelp(const char* text)
     }
 }
 
-// menu_vr dump: every page reached from the VR Settings through the pages' links (breadth first: its
+// menu_vr dump: every page reached from the VR Settings or the Advanced VR Options (menuRoots) through the pages' links (breadth first: its
 // depth, the page linking it first, its rows), each row (kind, header above, label, setting, page
 // opened), the links into each page, and the pages no link reaches. For the menus' coverage check
 // (docs/vr-port/menu_coverage.sh): each page is shown to be built for what the hands hold now.
@@ -9297,8 +10374,12 @@ void dumpPages()
         depth[p] = -1;
         from[p] = -1;
     }
-    za::Vector<int> queue{PageMain};
-    depth[PageMain] = 0;
+    za::Vector<int> queue;
+    for(const int root : menuRoots)
+    {
+        queue.pushBack(root);
+        depth[root] = 0;
+    }
     for(size_t q = 0; q < queue.size(); q++)
     {
         const int p = queue[q];
@@ -9405,7 +10486,8 @@ void helpCheck(int columnsAsked)
 }
 
 // The path to a page from Quake's main menu, by what the player reads on the way (menu::pathTo): the fewest links from
-// the VR Settings, each page as its link names it. False when no page has the title, no link reaches it, or (a row asked
+// the VR Settings ("Options > VR Settings > ...") or the Advanced VR Options ("Advanced VR > ...": the main menu's row
+// and the corner's button), each page as its link names it. False when no page has the title, no link reaches it, or (a row asked
 // for) the page has no row of that label.
 bool resolvePath(za::StringView spec, za::String& out)
 {
@@ -9443,7 +10525,7 @@ bool resolvePath(za::StringView spec, za::String& out)
         ~Restore() { levelOverride = was; }
     } restore{wasOverride};
     int needs = pages[target].level;
-    // The shortest way there through the pages' links (breadth first from the VR Settings, as menu_vr dump): each page
+    // The shortest way there through the pages' links (breadth first from the tree's roots, as Search): each page
     // named by the link that opens it.
     int from[pageCount];
     const char* link[pageCount]{};
@@ -9451,10 +10533,13 @@ bool resolvePath(za::StringView spec, za::String& out)
     {
         f = -1;
     }
-    from[PageMain] = PageMain;
     int queue[pageCount];
     int queued = 0;
-    queue[queued++] = PageMain;
+    for(const int root : menuRoots)
+    {
+        from[root] = root;
+        queue[queued++] = root;
+    }
     for(int q = 0; q < queued && from[target] < 0; q++)
     {
         for(const Item& item : items(queue[q]))
@@ -9473,12 +10558,14 @@ bool resolvePath(za::StringView spec, za::String& out)
         return false; // no link reaches it
     }
     za::Vector<const char*> names; // from the page up
-    for(int p = target; p != PageMain; p = from[p])
+    int root = target;
+    for(; !isMenuRoot(root); root = from[root])
     {
-        names.pushBack(link[p]);
-        needs = q_max(needs, pages[p].level);
+        names.pushBack(link[root]);
+        needs = q_max(needs, pages[root].level);
     }
-    out = za::String{"Options > "} + pages[PageMain].title;
+    needs = q_max(needs, pages[root].level);
+    out = root == PageMain ? za::String{"Options > "} + pages[PageMain].title : za::String{"Advanced VR"};
     for(const char* name : za::reversed(names))
     {
         out += " > ";
@@ -9503,7 +10590,8 @@ bool resolvePath(za::StringView spec, za::String& out)
         out += " > ";
         out += found;
     }
-    if(needs > shownLevel)
+    // (Advanced VR raises Menu Detail to Advanced itself: only a page or row above it says so on that way.)
+    if(needs > (root == PageAdvanced ? q_max(shownLevel, static_cast<int>(LevelAdvanced)) : shownLevel))
     {
         out += va(" (Menu Detail: %s)", levelName(needs));
     }
@@ -9642,20 +10730,10 @@ int qvr::menu::retroOverridePage()
     return pageIndex(pageRetroOverride);
 }
 
-// Whether the VR Settings were opened from the main menu's rows (Back from them goes back there, else to Options).
-namespace
-{
-bool openedFromMainMenu = false;
-}
-
+// Options > VR Settings (and menu_vr): the VR Settings; Back returns to the menu they were opened from (NavStack).
 extern "C" void VR_Menu_Open()
 {
-    IN_DeactivateForMenu();
-    key_dest = key_menu;
-    m_state = m_vr;
-    m_entersound = true;
-    openedFromMainMenu = false;
-    showPage(PageMain);
+    openFromAnywhere(PageMain);
 }
 
 // The main menu's VR Settings and Advanced VR rows (menu.c).
@@ -9669,14 +10747,68 @@ extern "C" void VR_Menu_OpenFromMain(int advanced)
     {
         VR_Menu_Open();
     }
-    openedFromMainMenu = true;
 }
 
 // Single Player > Map Library (menu.c): the map browser page, from Quake's own menu.
 extern "C" void VR_OpenCampaignSelector()
 {
-    VR_Menu_Open();
-    openInTree(pageIndex(pageCampaigns));
+    openFromAnywhere(pageIndex(pageCampaigns)); // (Back: Single Player, or up the tree from the hub's board)
+}
+
+// Ironwail's Levels opened by a jump (the main menu's Play Custom Map, the corner's Levels): Back from them returns
+// here (VR_NavBack).
+extern "C" void VR_NavJump(int state)
+{
+    if(m_state == m_vr && key_dest == key_menu)
+    {
+        navSyncTop();
+    }
+    else
+    {
+        navEnterFrom(outsideMenu());
+    }
+    navPush(outsidePlace(state));
+    navJumpPending = state;
+}
+
+// An outside menu opened (Ironwail's Levels; `previous` the menu shown before): by a jump or by Back into it, its place on
+// the stack kept; from its own way in (Single Player, a mod's), the stack started again (its Back its own).
+extern "C" void VR_NavEntered(int state, int previous)
+{
+    const bool kept = navJumpPending == state || navReturning || previous == m_skill || previous == state;
+    navJumpPending = -1;
+    if(!kept || navTop() != outsidePlace(state))
+    {
+        navReset();
+    }
+}
+
+// Back from an outside menu entered by a jump: where it came from (nonzero), else 0 (its own Back).
+extern "C" int VR_NavBack(int state)
+{
+    if(nav.count < 2 || navTop() != outsidePlace(state))
+    {
+        navReset();
+        return 0;
+    }
+    nav.count--;
+    const int dest = navTop();
+    if(dest >= 0)
+    {
+        enterVrMenu();
+        showPage(dest);
+        S_LocalSound("misc/menu2.wav");
+    }
+    else
+    {
+        leaveTo(-1 - dest);
+    }
+    return 1;
+}
+
+extern "C" int VR_MenuMainShowsMods()
+{
+    return vr_menu_main_mods.value != 0.f;
 }
 
 extern "C" void VR_OpenMapLibrary()
@@ -9703,6 +10835,11 @@ void qvr::menu::init()
     {
         Cvar_SetCallback(w.wrapper, onWrapperSet);
     }
+    for(const HolsterWrapper& w : holsterWrappers)
+    {
+        Cvar_SetCallback(w.wrapper, onWrapperSet);
+    }
+    Cvar_SetCallback(&vr_menu_bullettime, onWrapperSet);
 }
 
 void qvr::menu::command_f()
@@ -9725,6 +10862,11 @@ void qvr::menu::command_f()
         dumpPages();
         return;
     }
+    if(Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "rows"))
+    {
+        printRows();
+        return;
+    }
     if(Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "recent"))
     {
         searchRecentCommand(Cmd_Argc() > 2 && !q_strcasecmp(Cmd_Argv(2), "clear"));
@@ -9738,6 +10880,24 @@ void qvr::menu::command_f()
     if(Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "pos"))
     {
         const char* corner = menuui::toolbarFocused() ? ", corner buttons selected" : "";
+        if(key_dest == key_menu)
+        {
+            // The layout (menu coordinates): the corner's column left of the menu's text, the rows from the top.
+            Con_Printf("menu_vr pos: text from x %.0f, buttons to x %.0f (%s), y %.1f\n", menu::contentLeft(),
+                menuui::toolbarRight(), menuui::toolbarBeside() ? "beside" : "over", menuui::toolbarBottom());
+            if(m_state == m_vr)
+            {
+                Con_Printf("menu_vr pos: rows from y %d, %d shown\n", layout().listTop, visibleRows(items(page)));
+            }
+            float bx0, bx1, by0, by1;
+            menuui::bannerRect(bx0, bx1, by0, by1);
+            if(!menuui::active() && bx1 >= bx0)
+            {
+                Con_Printf("menu_vr pos: banner x %.0f..%.0f, y %.0f..%.0f (text from x %d)\n", bx0, bx1, by0, by1,
+                    m_state == m_vr ? static_cast<int>(menu::contentLeft()) : M_TextLeft());
+            }
+            menuui::printVersionLabel();
+        }
         if(key_dest != key_menu || m_state != m_vr)
         {
             const char* name = key_dest != key_menu      ? "closed"
@@ -9748,18 +10908,31 @@ void qvr::menu::command_f()
                                                            : "other";
             if(key_dest == key_menu && m_state == m_main)
             {
-                Con_Printf("menu_vr pos: menu %d (%s), row \"%s\"%s\n", static_cast<int>(m_state), name, M_Main_RowLabel(), corner);
+                int step, gap;
+                M_Main_Layout(&step, &gap);
+                Con_Printf("menu_vr pos: menu %d (%s), row \"%s\"%s (rows %d apart, groups %d more)\n", static_cast<int>(m_state),
+                    name, M_Main_RowLabel(), corner, step, gap);
                 menuui::printLaser();
                 return;
             }
-            Con_Printf("menu_vr pos: menu %d (%s)%s\n", static_cast<int>(m_state), name, corner);
+            Con_Printf("menu_vr pos: menu %d (%s)%s%s\n", static_cast<int>(m_state), name, corner,
+                key_dest == key_menu && m_state == m_singleplayer ? va(", row %d", m_singleplayer_cursor) : "");
             return;
         }
         const auto& list = items(page);
         const int cursor = cursors[page];
-        Con_Printf("menu_vr pos: page %d \"%s\" (back to %d), row %d \"%s\" under \"%s\", scroll %d of %d rows%s\n", page,
-            pages[page].title, page == PageMain ? -1 : parentPage[page], cursor, rowLabel(list[cursor]), rowSection(list, cursor),
+        int outside = m_none;
+        const int back = backTarget(outside);
+        Con_Printf("menu_vr pos: page %d \"%s\" (back to %d%s), row %d \"%s\" under \"%s\", scroll %d of %d rows%s\n", page,
+            pages[page].title, back, outside != m_none ? va(", menu %d", outside) : "", cursor, rowLabel(list[cursor]), rowSection(list, cursor),
             scrolls[page], static_cast<int>(list.size()), corner);
+        if(cursor < static_cast<int>(list.size()) && list[cursor].cvar && list[cursor].kind == Item::Slider)
+        {
+            char shown[64];
+            sliderText(list[cursor], list[cursor].cvar->value, shown, sizeof(shown));
+            Con_Printf("menu_vr pos: slider %s \"%s\" (shown %s), step %g%s\n", list[cursor].cvar->name,
+                list[cursor].cvar->string, shown, sliderStep(list[cursor]), fineHeld() ? " (fine)" : "");
+        }
         if(const Item* open = dropDownItem())
         {
             const DropDown& d = dropDown;
@@ -9856,16 +11029,7 @@ void qvr::menu::jumpToAdvanced()
         S_LocalSound("misc/menu1.wav");
         return;
     }
-    if(m_state == m_vr)
-    {
-        S_LocalSound("misc/menu2.wav");
-    }
-    else
-    {
-        VR_Menu_Open(); // (its sound as it is drawn)
-    }
-    parentPage[PageAdvanced] = PageMain;
-    showPage(PageAdvanced);
+    openFromAnywhere(PageAdvanced); // (Back: where it was pressed)
 }
 
 void qvr::menu::openSearch()
@@ -9919,6 +11083,50 @@ void qvr::menu::search_f()
     }
 }
 
+float qvr::menu::contentLeft()
+{
+    if(m_state != m_vr)
+    {
+        return static_cast<float>(M_ContentLeft());
+    }
+    const auto build = pages[page].build;
+    if(build == pageSearch || build == pageMaps || build == pageConsole)
+    {
+        return 0.f; // (Search and the Map Library from x 12 at least; the console's page right of the buttons)
+    }
+    return static_cast<float>(q_min(pageRowsLeft(), (320 - 8 * helpColumns()) / 2));
+}
+
+float qvr::menu::contentRightBelow(float y)
+{
+    if(m_state != m_vr)
+    {
+        float right, bottom;
+        M_ContentExtent(&right, &bottom);
+        return y < bottom ? right : -1e9f;
+    }
+    const auto build = pages[page].build;
+    const Layout l = layout();
+    if(build == pageConsole || build == pageSearch || build == pageMaps)
+    {
+        return y < static_cast<float>(l.bottom) ? pageRight(build) : -1e9f; // (their keyboards and buttons down to the bottom)
+    }
+    // The rows down to the help's box (or the bottom), as far right as their scrollbar's box (scrollbarX + 12); the help
+    // centred at its widest (helpColumns), its paging bar right of it (drawHelp).
+    const za::Vector<Item>& list = menuPages.built[page];
+    const bool help = hasHelp(list);
+    float right = -1e9f;
+    if(y < static_cast<float>(help ? l.helpTop - 4 : l.bottom - 8))
+    {
+        right = static_cast<float>(midPos + 200);
+    }
+    if(help && y < static_cast<float>(l.helpTop + 8 * helpBoxLines()))
+    {
+        right = za::fmax(right, static_cast<float>((320 + 8 * helpColumns()) / 2 + 5));
+    }
+    return right;
+}
+
 bool qvr::menu::developerLevel()
 {
     return menuLevel() >= LevelDeveloper;
@@ -9933,16 +11141,7 @@ void qvr::menu::jumpToChecklist()
         S_LocalSound("misc/menu1.wav");
         return;
     }
-    if(m_state == m_vr)
-    {
-        S_LocalSound("misc/menu2.wav");
-    }
-    else
-    {
-        VR_Menu_Open(); // (its sound as it is drawn)
-    }
-    parentPage[target] = PageMain;
-    showPage(target);
+    openFromAnywhere(target);
 }
 
 void qvr::menu::jumpToSettings()
@@ -9952,13 +11151,7 @@ void qvr::menu::jumpToSettings()
         S_LocalSound("misc/menu1.wav");
         return;
     }
-    if(m_state == m_vr)
-    {
-        S_LocalSound("misc/menu2.wav");
-        showPage(PageMain);
-        return;
-    }
-    VR_Menu_Open(); // (its sound as it is drawn)
+    openFromAnywhere(PageMain);
 }
 
 void qvr::menu::jumpToRelighting()
@@ -9973,20 +11166,7 @@ void qvr::menu::jumpToRelighting()
         S_LocalSound("misc/menu1.wav");
         return;
     }
-    if(m_state == m_vr)
-    {
-        S_LocalSound("misc/menu2.wav");
-    }
-    else
-    {
-        VR_Menu_Open(); // (its sound as it is drawn)
-    }
-    // Back walks up its place in the tree (Graphics, Advanced VR Options, VR Settings), as after the menus' own links.
-    for(int p = target; p != PageMain; p = homeOf(p))
-    {
-        parentPage[p] = homeOf(p);
-    }
-    showPage(target);
+    openFromAnywhere(target); // (Back: where it was pressed)
 }
 
 void qvr::menu::selectEnd(int dir)
@@ -10015,11 +11195,17 @@ void qvr::menu::selectEnd(int dir)
 
 void qvr::menu::reopen(int target)
 {
-    VR_Menu_Open();
-    if(target > PageMain && target < pageCount)
+    if(target < PageMain || target >= pageCount)
     {
-        showPage(target); // its cursor, scroll and way back as they were
+        target = PageMain;
     }
+    enterVrMenu();
+    if(navTop() != target)
+    {
+        navReset(); // (its way back gone: up the tree)
+        navPush(target);
+    }
+    showPage(target); // its cursor, scroll and way back as they were
 }
 
 bool qvr::menu::scroll(int rows)
@@ -10047,13 +11233,12 @@ bool qvr::menu::scroll(int rows)
         return true;
     }
     const auto& list = items(page);
-    const int n = static_cast<int>(list.size());
-    const int visible = visibleRows(list);
-    if(n <= visible)
+    const int most = maxScroll(list);
+    if(most <= 0)
     {
         return false;
     }
-    scrolls[page] = CLAMP(0, scrolls[page] + rows, n - visible);
+    scrolls[page] = CLAMP(0, scrolls[page] + rows, most);
     keepCursorVisible();
     return true;
 }
@@ -10160,17 +11345,17 @@ extern "C" void VR_Menu_Draw()
     const char* name = pages[page].title;
     M_PrintWhite((320 - 8 * static_cast<int>(strlen(name))) / 2, l.top + 28, name);
 
-    const int rows = visibleRows(list);
     const int n = static_cast<int>(list.size());
     if(cursor < scroll)
     {
         scroll = cursor > 0 && list[cursor - 1].kind == Item::Header ? cursor - 1 : cursor;
     }
-    if(cursor >= scroll + rows)
+    if(cursor < n && cursor >= scroll + rowsFrom(list, scroll))
     {
-        scroll = cursor - rows + 1;
+        scroll = scrollShowing(list, cursor);
     }
-    scroll = CLAMP(0, scroll, q_max(n - rows, 0));
+    scroll = CLAMP(0, scroll, maxScroll(list));
+    const int rows = visibleRows(list);
 
     // Where the page is, to keep (on a change only: no strings built every frame).
     int& notedPage = notedPlace.page;
@@ -10190,10 +11375,10 @@ extern "C" void VR_Menu_Draw()
     const bool rowSelected = !menuui::toolbarFocused();
     for(int i = scroll; i < n && i < scroll + rows; i++)
     {
-        drawItem(list[i], l.listTop + (i - scroll) * 8, rowSelected && i - list[i].partOf == cursor);
+        drawItem(list[i], l.listTop + rowTop(list, scroll, i), rowSelected && i - list[i].partOf == cursor);
     }
 
-    if(int y, height; scrollbar(n, rows, y, height))
+    if(int y, height; scrollbar(list, y, height))
     {
         scrollbarX = q_min(midPos + 188, static_cast<int>(glcanvas.right) - 16);
         M_DrawTextBox(scrollbarX - 4, l.listTop + y - 4, 0, height - 1);
@@ -10251,28 +11436,7 @@ extern "C" void VR_Menu_Key(int key, int repeat)
         case K_BBUTTON:
         case K_MOUSE2:
         case K_MOUSE4:
-            if(page == searchOpened)
-            {
-                searchOpened = -1; // a search result's page: back to the results
-                showPage(pageIndex(pageSearch));
-                S_LocalSound("misc/menu2.wav");
-            }
-            else if(page == PageMain)
-            {
-                if(openedFromMainMenu)
-                {
-                    M_Menu_Main_f(); // (its sound as it is drawn)
-                }
-                else
-                {
-                    M_Menu_Options_f();
-                }
-            }
-            else
-            {
-                page = parentPage[page];
-                S_LocalSound("misc/menu2.wav");
-            }
+            goBack();
             break;
 
         // Up from the first setting, or down from the last: the corner's buttons (where shown), before
@@ -10310,7 +11474,7 @@ extern "C" void VR_Menu_Key(int key, int repeat)
 
         case K_MOUSE1:
             // On the scrollbar: it is dragged.
-            if(int y, height; m_mousex >= scrollbarX - 8 && scrollbar(static_cast<int>(list.size()), visibleRows(list), y, height))
+            if(int y, height; m_mousex >= scrollbarX - 8 && scrollbar(list, y, height))
             {
                 scrollGrab = true;
                 scrollTo(m_mousey);

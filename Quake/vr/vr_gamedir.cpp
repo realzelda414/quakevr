@@ -10,6 +10,7 @@
 #include "vr_anchor.hpp"
 #include "vr_ao.hpp"
 #include "vr_bigfont.hpp"
+#include "vr_gadget.hpp"
 #include "vr_bodyblood.hpp"
 #include "vr_cvars.hpp"
 #include "vr_detail.hpp"
@@ -366,12 +367,14 @@ struct Campaign
     int status;
     char root[MAX_OSPATH];
 };
+// The installer mirrors nativeReady and soloOnly() (Installer/.../ExpansionDetector.cs, its "ready" labels); its
+// self-test "expansions: readiness matches the engine" fails until both agree.
 Campaign campaigns[] = {
     {"id1", "Quake", "start", 0, true, nullptr, 0, 1, {}},
     {"hipnotic", "Scourge of Armagon", "start", 1, true, nullptr, 0, 0, {}},
     {"rogue", "Dissolution of Eternity", "start", 2, true, nullptr, 0, 0, {}},
     {"dopa", "Dimension of the Past", "e5start", 3, true, dopaResources, countof(dopaResources), 0, {}},
-    {"mg1", "Dimension of the Machine", "start", 4, false, mg1Resources, countof(mg1Resources), 0, {}},
+    {"mg1", "Dimension of the Machine", "start", 4, true, mg1Resources, countof(mg1Resources), 0, {}},
     {"mg3", "Dawn of the Machine", "start", 5, false, mg3Resources, countof(mg3Resources), 0, {}},
 };
 int activeCampaign = 0;
@@ -529,6 +532,14 @@ constexpr const char* mg3LanguageKeys[] = {
 bool campaignMultiplayerRequested()
 {
     return Cvar_VariableValue("coop") || Cvar_VariableValue("deathmatch") || svs.maxclients > 1;
+}
+
+// The ready native campaigns accepted for single player only: Dimension of the Past and Dimension of the Machine
+// (its Horde coop passed two-process tests, not yet a session with two headsets). Their multiplayer stays on the
+// developer path (vr_campaign_native).
+[[nodiscard]] bool soloOnly(int index)
+{
+    return index == 3 || index == 4;
 }
 
 int missingLanguage(int index, const char** first = nullptr)
@@ -785,9 +796,9 @@ bool selectCampaign(int selected, bool developer, bool start)
             c.folder, campaignStatus(selected), c.folder, c.root[0] ? c.root : "none");
         return false;
     }
-    if(selected == 3 && campaignMultiplayerRequested())
+    if(soloOnly(selected) && campaignMultiplayerRequested())
     {
-        Con_Printf("VR: Dimension of the Past native readiness covers single-player. Multiplayer context/join/respawn behavior is not accepted; set coop 0, deathmatch 0 and maxplayers 1 before starting.\n");
+        Con_Printf("VR: %s native readiness covers single-player. Multiplayer context/join/respawn behavior is not accepted; set coop 0, deathmatch 0 and maxplayers 1 before starting.\n", c.title);
         if(!developer) { return false; }
     }
     const char* firstMissing = "none";
@@ -846,12 +857,13 @@ void campaignSelectCommand()
     selectCampaign(i, !q_strcasecmp(Cmd_Argv(0), "vr_campaign_native"), true);
 }
 
-// vr_campaign_hub [vrstart|vrtutorial|vrfiringrange]: Quake's campaign, then that VR map (the hub by default). A command
-// of its own: a changelevel there from another campaign cannot rebuild the game folders mid-spawn.
+// vr_campaign_hub [vrstart|vrstart2|vrtutorial|vrfiringrange]: Quake's campaign, then that VR map (the hub, vr_hub_map,
+// by default). A command of its own: a changelevel there from another campaign cannot rebuild the game folders
+// mid-spawn.
 void campaignHubCommand()
 {
-    const char* map = Cmd_Argc() > 1 ? Cmd_Argv(1) : "vrstart";
-    if(strcmp(map, "vrstart") && strcmp(map, "vrtutorial") && strcmp(map, "vrfiringrange")) { map = "vrstart"; }
+    const char* map = Cmd_Argc() > 1 ? Cmd_Argv(1) : VR_HubMap();
+    if(!VR_IsVrMap(map)) { map = VR_HubMap(); }
     if(selectCampaign(0, false, false)) { Cbuf_InsertText(va("map %s\n", map)); }
 }
 } // namespace
@@ -868,7 +880,7 @@ extern "C" const char* VR_CampaignHelp(int index)
     const Campaign& c = campaigns[index];
     return va("%s. Data: %s. %s", c.title, c.root[0] ? c.root : "configured basedirs",
         c.status != 1 ? "Supply complete owned campaign files to play." :
-        index == 3 && campaignMultiplayerRequested() ? "Accepted for single-player: set coop 0, deathmatch 0, maxplayers 1; multiplayer context/join/respawn is not accepted." :
+        soloOnly(index) && campaignMultiplayerRequested() ? "Accepted for single-player: set coop 0, deathmatch 0, maxplayers 1; multiplayer context/join/respawn is not accepted." :
         index >= 3 && missingLanguage(index) ? "Language data incomplete: supply updated owned rerelease id1 tables, or enable store discovery." :
         c.nativeReady ? "Starts a new single-player campaign and resets level progress." : "Native gameplay is being ported; campaign play is unavailable.");
 }
@@ -876,7 +888,7 @@ extern "C" void VR_SelectCampaign(int index)
 { selectCampaign(index, false, true); }
 extern "C" int VR_CampaignUnavailable(int index)
 { return index < 0 || index >= int(countof(campaigns)) || campaigns[index].status != 1 || !campaigns[index].nativeReady || (index >= 3 && missingLanguage(index)) ||
-    (index == 3 && campaignMultiplayerRequested()); }
+    (soloOnly(index) && campaignMultiplayerRequested()); }
 
 extern "C" void VR_BeforeAddGameDirectory(const char* dir)
 {
@@ -1058,6 +1070,7 @@ extern "C" void VR_OnGameDirChanged()
     qvr::avatar::reset();
     qvr::flashlight::onGameDirChanged();
     qvr::bigfont::onGameDirChanged();
+    qvr::gadget::onGameDirChanged();
     qvr::mem::on(qvr::mem::GameDirChange); // the registered caches that name it (vr_mem.hpp)
     Con_DPrintf("VR: game directory changed: model and game file caches emptied\n");
 }
@@ -1101,10 +1114,23 @@ int campaignForMap(const char* map, int current)
 }
 } // namespace
 
+// Quake VR's own maps: they run in Quake's campaign (a map or a changelevel there from another campaign first
+// switches back to it). vrstart2 is the island hub (Misc/quakevr/maps/vrstart2_gen.py).
+extern "C" int VR_IsVrMap(const char* map)
+{
+    return !strcmp(map, "vrstart") || !strcmp(map, "vrstart2") || !strcmp(map, "vrtutorial") || !strcmp(map, "vrfiringrange");
+}
+
+// The hub: vr_hub_map when it names one of the two, else the classic vrstart.
+extern "C" const char* VR_HubMap()
+{
+    return !strcmp(qvr::vr_hub_map.string, "vrstart2") ? "vrstart2" : "vrstart";
+}
+
 extern "C" int VR_CanLoadCampaignMap(const char* map)
 {
     if(!gameDirAlreadyAdded(vrGameDir)) { return 1; }
-    if(!strcmp(map, "vrstart") || !strcmp(map, "vrtutorial") || !strcmp(map, "vrfiringrange"))
+    if(VR_IsVrMap(map))
     { return activeCampaign == 0 || selectCampaign(0, false, false); }
     int requested = campaignForMap(map, activeCampaign);
     if(!strcmp(map, "start") && activeCampaign <= 2)
@@ -1115,7 +1141,7 @@ extern "C" int VR_CanLoadCampaignMap(const char* map)
         requested = legacy;
     }
     if(campaigns[requested].status != 1 || requested != activeCampaign ||
-        (requested >= 3 && !developerNative && (!campaigns[requested].nativeReady || missingLanguage(requested) || (requested == 3 && campaignMultiplayerRequested()))))
+        (requested >= 3 && !developerNative && (!campaigns[requested].nativeReady || missingLanguage(requested) || (soloOnly(requested) && campaignMultiplayerRequested()))))
     { return selectCampaign(requested, developerNative, false); }
     char source[MAX_OSPATH] = {};
     if(COM_FileExists(va("maps/%s.bsp", map), nullptr))
@@ -1140,7 +1166,7 @@ extern "C" void VR_CheckSpawnCampaignMap(const char* map)
         const int legacy = static_cast<int>(qvr::vr_activestartpaknameidx.value);
         requested = legacy >= 0 && legacy <= 2 ? legacy : activeCampaign;
     }
-    if(!strcmp(map, "vrstart") || !strcmp(map, "vrtutorial") || !strcmp(map, "vrfiringrange")) { requested = 0; }
+    if(VR_IsVrMap(map)) { requested = 0; }
     if(requested != activeCampaign)
     {
         if(requested <= 2 && activeCampaign <= 2 && campaigns[requested].status == 1)
@@ -1154,8 +1180,8 @@ extern "C" void VR_CheckSpawnCampaignMap(const char* map)
                 map, campaigns[requested].title, campaigns[activeCampaign].title);
         }
     }
-    if(activeCampaign == 3 && !developerNative && campaignMultiplayerRequested())
-    { Host_Error("VR: Dimension of the Past is single-player only; set coop 0, deathmatch 0 and maxplayers 1"); }
+    if(soloOnly(activeCampaign) && !developerNative && campaignMultiplayerRequested())
+    { Host_Error("VR: %s is single-player only; set coop 0, deathmatch 0 and maxplayers 1", campaigns[activeCampaign].title); }
     char source[MAX_OSPATH] = {};
     if(COM_FileExists(va("maps/%s.bsp", map), nullptr))
     { gameFolderName(com_filesource, source, sizeof(source)); }
@@ -1221,7 +1247,7 @@ extern "C" int VR_ShouldMountCampaignDirectory(const char* dir)
 extern "C" int VR_CanChangeCampaignMap(const char* map)
 {
     if(!gameDirAlreadyAdded(vrGameDir)) { return 1; }
-    if((!strcmp(map, "vrstart") || !strcmp(map, "vrtutorial") || !strcmp(map, "vrfiringrange")) && activeCampaign != 0)
+    if(VR_IsVrMap(map) && activeCampaign != 0)
     { Cbuf_InsertText(va("vr_campaign_hub %s\n", map)); return 0; }
     int requested = activeCampaign;
     if(!strcmp(map, "start") && activeCampaign <= 2)
@@ -1258,6 +1284,111 @@ extern "C" int VR_CampaignDataAvailable(const char* dir)
 {
     const int i = campaignIndex(dir);
     return i >= 3 && campaigns[i].status == 1;
+}
+
+// A file of an owned pack read in place without mounting it (MG3_PLAN.md, "Decisions": an expansion's weapons usable
+// in any campaign when its data is there): "owned/<folder>/<path>" names <path> in that discovered Dopa/MG1/MG3 folder
+// (its loose file, else its highest pak that has it), whichever campaign is active; the pack's own files never shadow
+// Quake VR's (its progs/v_hammer.mdl is the Super Axe, Quake VR's the Hipnotic Mjolnir). Nothing is copied or written.
+// Returns 0 when `name` is not such a name, -1 when it is but the file is not there, 1 when found: `out` the pak or
+// the loose file, `*offset`/`*length` the file inside it, `*packed` whether `out` is a pak. Any thread (a worker's
+// image lookups): it reads only what discovery found at startup, never discovering itself. A sound's name is the
+// same under sound/ ("sound/owned/mg3/rogre/ogwake.wav": precache_sound("owned/mg3/rogre/ogwake.wav"), as S_LoadSound
+// puts sound/ before it): its pack's sound/rogre/ogwake.wav.
+extern "C" int VR_OwnedFile(const char* name, char* out, int size, int* offset, int* length, int* packed)
+{
+    constexpr char soundPrefix[] = "sound/owned/";
+    const bool sound = !q_strncasecmp(name, soundPrefix, sizeof(soundPrefix) - 1);
+    if(sound) { name += sizeof("sound/") - 1; }
+    constexpr char prefix[] = "owned/";
+    if(q_strncasecmp(name, prefix, sizeof(prefix) - 1)) { return 0; }
+    const char* folderStart = name + sizeof(prefix) - 1;
+    const char* slash = strchr(folderStart, '/');
+    if(!slash || slash == folderStart || !slash[1] || strstr(name, "..") || strchr(name, ':') || strchr(name, '\\'))
+    { return -1; }
+    char folder[MAX_QPATH];
+    const size_t folderLength = static_cast<size_t>(slash - folderStart);
+    if(folderLength >= sizeof(folder)) { return -1; }
+    q_strlcpy(folder, folderStart, folderLength + 1);
+    const int c = campaignIndex(folder);
+    if(c < 3 || !discoveredCampaigns || campaigns[c].status != 1 || !campaigns[c].root[0]) { return -1; }
+    char soundFile[MAX_QPATH];
+    const char* file = slash + 1;
+    if(sound)
+    {
+        q_snprintf(soundFile, sizeof(soundFile), "sound/%s", slash + 1);
+        file = soundFile;
+    }
+
+    char path[MAX_OSPATH];
+    q_snprintf(path, sizeof(path), "%s/%s/%s", campaigns[c].root, campaigns[c].folder, file);
+    if(Sys_FileType(path) == FS_ENT_FILE)
+    {
+        FILE* loose = fopen(path, "rb");
+        if(loose)
+        {
+            fseek(loose, 0, SEEK_END);
+            const long n = ftell(loose);
+            fclose(loose);
+            if(n >= 0)
+            {
+                q_strlcpy(out, path, size);
+                *offset = 0;
+                *length = static_cast<int>(n);
+                *packed = 0;
+                return 1;
+            }
+        }
+    }
+    int last = -1;
+    for(int pak = 0; pak < 64; ++pak)
+    {
+        q_snprintf(path, sizeof(path), "%s/%s/pak%d.pak", campaigns[c].root, campaigns[c].folder, pak);
+        if(Sys_FileType(path) != FS_ENT_FILE) { break; }
+        last = pak;
+    }
+    za::Vector<PackEntry> entries; // (a few lookups a model: not kept)
+    for(int pak = last; pak >= 0; --pak)
+    {
+        q_snprintf(path, sizeof(path), "%s/%s/pak%d.pak", campaigns[c].root, campaigns[c].folder, pak);
+        FILE* f = fopen(path, "rb");
+        if(!f) { continue; }
+        fseek(f, 0, SEEK_END);
+        const long fileSize = ftell(f);
+        rewind(f);
+        struct { char id[4]; int32_t dirofs; int32_t dirlen; } header{};
+        bool found = false;
+        if(fread(&header, sizeof(header), 1, f) == 1 && !memcmp(header.id, "PACK", 4))
+        {
+            const long dirOffset = LittleLong(header.dirofs), dirLength = LittleLong(header.dirlen);
+            const long count = dirLength / static_cast<long>(sizeof(PackEntry));
+            if(dirOffset >= 12 && dirLength >= 0 && dirLength % static_cast<long>(sizeof(PackEntry)) == 0 && count <= 65536 &&
+                dirOffset <= fileSize && dirLength <= fileSize - dirOffset && !fseek(f, dirOffset, SEEK_SET))
+            {
+                entries.resize(static_cast<za::SizeT>(count));
+                if(count > 0 && fread(entries.data(), sizeof(PackEntry), static_cast<size_t>(count), f) == static_cast<size_t>(count))
+                {
+                    for(const PackEntry& e : entries)
+                    {
+                        if(!memchr(e.name, 0, sizeof(e.name)) || q_strcasecmp(e.name, file)) { continue; }
+                        const long pos = LittleLong(e.offset), len = LittleLong(e.length);
+                        if(pos >= 12 && len >= 0 && pos <= fileSize && len <= fileSize - pos)
+                        {
+                            q_strlcpy(out, path, size);
+                            *offset = static_cast<int>(pos);
+                            *length = static_cast<int>(len);
+                            *packed = 1;
+                            found = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        fclose(f);
+        if(found) { return 1; }
+    }
+    return -1;
 }
 
 // Read-in-place sources for vr_music.cpp. The active campaign's folder while the quakevr folder is mounted (its music

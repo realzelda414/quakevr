@@ -136,6 +136,77 @@ void(float xType) VR_Dummy_Type =
         vr_dt_snd1 = "eel/epain3.wav";
         return;
     }
+    // Dawn of the Machine's own (vr_dt_pack 3: its data, read in place): from 19.
+    if(xType == 19)
+    {
+        vr_dt_class = "monster_ogre_rocket"; vr_dt_name = "Rocket Ogre"; vr_dt_pack = 3; // (vr_mg3_ogre.qc: the ogre's frames)
+        vr_dt_stand = 0; vr_dt_stands = 9; vr_dt_pain = 67; vr_dt_pains = 5; vr_dt_atk = 33; vr_dt_atks = 14;
+        vr_dt_snd1 = "owned/mg3/armagon/pain.wav";
+        return;
+    }
+    if(xType == 20)
+    {
+        vr_dt_class = "monster_demodog"; vr_dt_name = "Demo Dog"; vr_dt_pack = 3; // (vr_mg3_demodog.qc: the rottweiler's frames)
+        vr_dt_stand = 69; vr_dt_stands = 9; vr_dt_pain = 26; vr_dt_pains = 6; vr_dt_atk = 0; vr_dt_atks = 8;
+        vr_dt_snd1 = "dog/dpain1.wav";
+        return;
+    }
+    if(xType == 21)
+    {
+        vr_dt_class = "monster_ranged_knight"; vr_dt_name = "Ranged Knight"; vr_dt_pack = 3; // (vr_mg3_rknight.qc: the death knight's frames)
+        vr_dt_stand = 0; vr_dt_stands = 9; vr_dt_pain = 37; vr_dt_pains = 5; vr_dt_atk = 155; vr_dt_atks = 11; // (magicc)
+        vr_dt_snd1 = "owned/mg3/rknight/pain_01.wav"; vr_dt_snd2 = "owned/mg3/rknight/pain_02.wav";
+        return;
+    }
+    // Dawn of the Machine's, from 30 (19..29 left to its other monsters), read in place from the owned pack.
+    if(xType == 30)
+    {
+        vr_dt_class = "monster_orb"; vr_dt_name = "Orb"; vr_dt_pack = 3;
+        vr_dt_stand = 0; vr_dt_stands = 1; vr_dt_pain = 2; vr_dt_pains = 1; vr_dt_atk = 1; vr_dt_atks = 2; // (three frames: hover, two blinks)
+        vr_dt_snd1 = "owned/mg3/orb/orb_pain.wav";
+        return;
+    }
+    if(xType == 33)
+    {
+        vr_dt_class = "monster_super_shambler"; vr_dt_name = "Super Shambler"; vr_dt_pack = 3; // (the shambler's frames)
+        vr_dt_stand = 0; vr_dt_stands = 17; vr_dt_pain = 77; vr_dt_pains = 6; vr_dt_atk = 35; vr_dt_atks = 12;
+        vr_dt_snd1 = "shambler/shurt2.wav";
+        return;
+    }
+    if(xType == 32)
+    {
+        vr_dt_class = "monster_lava_man"; vr_dt_name = "Lava Man"; vr_dt_pack = 3; // (Dawn of the Machine's: MG3's model)
+        vr_dt_stand = 17; vr_dt_stands = 5; vr_dt_pain = 80; vr_dt_pains = 10; vr_dt_atk = 57; vr_dt_atks = 23;
+        vr_dt_snd1 = "boss1/pain.wav";
+        return;
+    }
+    if(xType == 40)
+    {
+        vr_dt_class = "monster_boss_final"; vr_dt_name = "Chthon"; vr_dt_pack = 3; // (id's model; MG3's spheres: its data)
+        vr_dt_stand = 17; vr_dt_stands = 31; vr_dt_pain = 80; vr_dt_pains = 10; vr_dt_atk = 57; vr_dt_atks = 23;
+        vr_dt_snd1 = "boss1/pain.wav";
+        return;
+    }
+    if(xType == 31)
+    {
+        vr_dt_class = "monster_tarbaby"; vr_dt_name = "Slime"; // (the spawn's model: no MG3 data needed; killed, it splits)
+        vr_dt_stand = 0; vr_dt_stands = 1; vr_dt_pain = 0; vr_dt_pains = 0; vr_dt_atk = 50; vr_dt_atks = 6; // (no pain)
+        return;
+    }
+    // Dawn of the Machine's Shub (vr_mg3_shub.qc), from 50: her loop, her thrash; an eye of hers (one frame).
+    if(xType == 50)
+    {
+        vr_dt_class = "monster_oldone_new"; vr_dt_name = "Shub-Niggurath"; vr_dt_pack = 3;
+        vr_dt_stand = 0; vr_dt_stands = 46; vr_dt_pain = 46; vr_dt_pains = 15; vr_dt_atk = 46; vr_dt_atks = 15;
+        vr_dt_snd1 = "owned/mg3/orb/orb_pain.wav";
+        return;
+    }
+    if(xType == 51)
+    {
+        vr_dt_class = "monster_shub_eye"; vr_dt_name = "Shub's Eye"; vr_dt_pack = 3;
+        vr_dt_stand = 0; vr_dt_stands = 1; vr_dt_pain = 0; vr_dt_pains = 0; vr_dt_atk = 0; vr_dt_atks = 1; // (no pain)
+        return;
+    }
     vr_dt_class = "monster_army"; vr_dt_name = "Grunt";
     vr_dt_stand = 0; vr_dt_stands = 8; vr_dt_pain = 40; vr_dt_pains = 6; vr_dt_atk = 81; vr_dt_atks = 9;
     vr_dt_snd1 = "soldier/pain1.wav"; vr_dt_snd2 = "soldier/pain2.wav";
@@ -162,6 +233,16 @@ void(float xType) VR_Dummy_TypeSpawn =
     if(xType == 16) { monster_wrath(); return; }
     if(xType == 17) { monster_super_wrath(); return; }
     if(xType == 18) { monster_eel(); return; }
+    if(xType == 19) { monster_ogre_rocket(); return; }
+    if(xType == 20) { monster_demodog(); return; }
+    if(xType == 21) { monster_ranged_knight(); return; }
+    if(xType == 30) { monster_orb(); return; }
+    if(xType == 31) { monster_slime(); return; }
+    if(xType == 32) { monster_lava_man_mg3(); return; }
+    if(xType == 33) { monster_super_shambler(); return; }
+    if(xType == 50) { monster_oldone_new(); self.mg3_shub_free = TRUE; return; } // (killed, she ends nothing)
+    if(xType == 51) { monster_shub_eye(); return; }
+    if(xType == 40) { monster_boss_final(); if(self.classname == "monster_boss") { MG3_Chthon_Body(); } return; } // (risen)
     monster_army();
 };
 
@@ -195,7 +276,9 @@ float(float xType) VR_Dummy_Make =
 };
 
 nosave float vr_dummy_tried;     // types tried on a stand-in this map (bits): whether they can be made here,
-nosave float vr_dummy_available; // and which can
+nosave float vr_dummy_available; // and which can (types 0..23; 24 on: the second pair, bit xType - 24: a float's exact bits)
+nosave float vr_dummy_tried2, vr_dummy_available2;
+nosave float vr_dummy_tried3, vr_dummy_available3; // (48 on: the third pair, bit xType - 48)
 
 // Whether `xType` can be made here (its pack's files present): tried once a map, on a stand-in (VR_Dummy_Make).
 float(float xType) VR_Dummy_Available =
@@ -204,19 +287,26 @@ float(float xType) VR_Dummy_Available =
     {
         return xType == 0;
     }
-    float bit = pow(2, xType);
-    if(!(vr_dummy_tried & bit))
+    float pair = floor(xType / 24); // (0, 1, 2: which pair of floats holds its bit, 24 to a float)
+    float bit = pow(2, xType - pair * 24);
+    float tried = (pair == 2) ? vr_dummy_tried3 : ((pair == 1) ? vr_dummy_tried2 : vr_dummy_tried);
+    if(!(tried & bit))
     {
-        vr_dummy_tried = vr_dummy_tried | bit;
+        if(pair == 2) { vr_dummy_tried3 = vr_dummy_tried3 | bit; }
+        else if(pair == 1) { vr_dummy_tried2 = vr_dummy_tried2 | bit; }
+        else { vr_dummy_tried = vr_dummy_tried | bit; }
         entity oldSelf = self;
         self = spawn();
         entity probe = self;
         if(VR_Dummy_Make(xType))
         {
-            vr_dummy_available = vr_dummy_available | bit;
+            if(pair == 2) { vr_dummy_available3 = vr_dummy_available3 | bit; }
+            else if(pair == 1) { vr_dummy_available2 = vr_dummy_available2 | bit; }
+            else { vr_dummy_available = vr_dummy_available | bit; }
             remove(probe);
         }
         self = oldSelf;
     }
-    return (vr_dummy_available & bit) != 0;
+    float available = (pair == 2) ? vr_dummy_available3 : ((pair == 1) ? vr_dummy_available2 : vr_dummy_available);
+    return (available & bit) != 0;
 };

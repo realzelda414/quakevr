@@ -9,6 +9,7 @@ using QuakeVR.Installer.Core;
 using QuakeVR.Installer.Core.Detection;
 using QuakeVR.Installer.Core.Packaging;
 using QuakeVR.Installer.Core.Platform;
+using QuakeVR.Installer.Core.Prerequisites;
 using QuakeVR.Installer.Core.Shortcuts;
 
 namespace QuakeVR.Installer.ViewModels;
@@ -16,6 +17,8 @@ namespace QuakeVR.Installer.ViewModels;
 public enum Page
 {
     Welcome,
+    /// <summary>The author's statement on AI usage: four YES/NO answers, all YES to go on.</summary>
+    Statement,
     Detect,
     Options,
     Install,
@@ -55,6 +58,32 @@ public sealed class StartupOptions
     public bool Silent { get; set; }
     /// <summary>The harness also writes a strip of flame frames and a sheet of Quake's textures.</summary>
     public bool Extras { get; set; }
+    /// <summary>Never install the VC++ runtime (it is only detected).</summary>
+    public bool NoPrerequisites { get; set; }
+    /// <summary>Say what the VC++ runtime's install would do; download and run nothing (tests; the harness always).</summary>
+    public bool VcRedistDryRun { get; set; }
+    /// <summary>Remove the install in --target (Apps &amp; Features' Uninstall): the Remove dialogs, or none with --quiet.</summary>
+    public bool Uninstall { get; set; }
+    public bool Quiet { get; set; }
+    /// <summary>This is the copy an uninstall started from %TEMP% (so the install's own copy can be removed).</summary>
+    public bool FromTemp { get; set; }
+    /// <summary>The Apps &amp; Features entry goes into this made-up registry root (a JSON file) instead of HKCU (tests).</summary>
+    public string? RegistryFile { get; set; }
+
+    /// <summary>The arguments an uninstall passes on to its copy in %TEMP%.</summary>
+    public List<string> UninstallArguments(string target)
+    {
+        var args = new List<string> { "--uninstall", "--target", target, "--from-temp" };
+        if (Quiet)
+        {
+            args.Add("--quiet");
+        }
+        if (RegistryFile is { } f)
+        {
+            args.AddRange(["--registry-file", f]);
+        }
+        return args;
+    }
 
     public static StartupOptions Parse(string[] args)
     {
@@ -76,11 +105,19 @@ public sealed class StartupOptions
                 case "--reduce-motion": o.ReduceMotion = true; break;
                 case "--silent": o.Silent = true; break;
                 case "--extras": o.Extras = true; break;
+                case "--no-prerequisites": o.NoPrerequisites = true; break;
+                case "--vcredist-dry-run": o.VcRedistDryRun = true; break;
+                case "--uninstall": o.Uninstall = true; break;
+                case "--quiet": o.Quiet = true; break;
+                case "--from-temp": o.FromTemp = true; break;
+                case "--registry-file": o.RegistryFile = Next(); break;
             }
         }
         o.Package = o.Package is { } pk ? PathUtil.TryNormalize(pk) ?? pk : null;
         o.Textures = o.Textures is { } tx ? PathUtil.TryNormalize(tx) ?? tx : null;
         o.ShortcutsDir = o.ShortcutsDir is { } sc ? PathUtil.TryNormalize(sc) ?? sc : null;
+        o.Target = o.Target is { } tg ? PathUtil.TryNormalize(tg) ?? tg : null;
+        o.RegistryFile = o.RegistryFile is { } rg ? PathUtil.TryNormalize(rg) ?? rg : null; // (passed on to a copy in %TEMP%, which runs elsewhere)
         // A package beside the installer (an offline download: QuakeVR.zip, the unzipped QuakeVR folder, or another
         // QuakeVR*.zip with a manifest inside): installed from there without any network.
         var here = AppContext.BaseDirectory;
@@ -133,7 +170,17 @@ public sealed class MainViewModel : ObservableObject
         }
         DefaultInstallDir = Path.Combine(probe.GetFolder(KnownFolder.LocalAppData) ?? @"C:\QuakeVR", "Programs", "QuakeVR");
         _installDir = (options.Target is { } t ? PathUtil.TryNormalize(t) : null) ?? DefaultInstallDir;
-        Steps = [new(1, "Welcome"), new(2, "Your PC"), new(3, "Options"), new(4, "Install"), new(5, "Play"), new(6, "Thanks")];
+        Steps = [new(1, "Welcome"), new(2, AiStatement.Title), new(3, "Your PC"), new(4, "Options"), new(5, "Install"), new(6, "Play"), new(7, "Thanks")];
+        StatementChoices = [.. Enumerable.Range(0, AiStatement.Claims.Count).Select(i => new StatementChoice(Statement, i))];
+        Statement.Changed += () =>
+        {
+            foreach (var c in StatementChoices)
+            {
+                c.Refresh();
+            }
+            Raise(nameof(FooterHint));
+            CommandManager.InvalidateRequerySuggested();
+        };
 
         NextCommand = new RelayCommand(Next, CanNext);
         BackCommand = new RelayCommand(Back, () => ShowBack);
@@ -151,6 +198,7 @@ public sealed class MainViewModel : ObservableObject
         UninstallCommand = new RelayCommand(() => _ = UninstallAsync(), () => _existing is not null && !Installing);
         OpenUrlCommand = new RelayCommand(p => OpenUrl(p as string ?? ""));
         OpenKofiCommand = new RelayCommand(() => OpenUrl(KofiUrl));
+        OpenDiscordCommand = new RelayCommand(() => OpenUrl(DiscordUrl));
         ShowCreditsCommand = new RelayCommand(() => new Views.CreditsWindow(Application.Current.MainWindow).ShowDialog());
         RetryFeedCommand = new RelayCommand(() => _ = CheckFeedAsync(), () => !HasLocalPackage && _feedState != FeedState.Checking);
         PickPackageAndInstallCommand = new RelayCommand(() =>
@@ -170,6 +218,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public const string KofiUrl = "https://ko-fi.com/vittorioromeovee";
+    public const string DiscordUrl = "https://discord.me/quakevr";
     public const string ProductName = "Quake VR: Unleashed";
     public SoundSettings Sound => UiSounds.Settings;
 
@@ -186,23 +235,25 @@ public sealed class MainViewModel : ObservableObject
         {
             if (Set(ref _page, value))
             {
-                Raise(nameof(IsWelcome), nameof(IsDetect), nameof(IsOptions), nameof(IsInstall), nameof(IsDone), nameof(IsSupport), nameof(NextText), nameof(ShowBack), nameof(FooterHint));
+                Raise(nameof(IsWelcome), nameof(IsStatement), nameof(IsDetect), nameof(IsOptions), nameof(IsInstall), nameof(IsDone), nameof(IsSupport), nameof(NextText), nameof(ShowBack), nameof(FooterHint));
             }
         }
     }
 
     public bool IsWelcome => Page == Page.Welcome;
+    public bool IsStatement => Page == Page.Statement;
     public bool IsDetect => Page == Page.Detect;
     public bool IsOptions => Page == Page.Options;
     public bool IsInstall => Page == Page.Install;
     public bool IsDone => Page == Page.Done;
     public bool IsSupport => Page == Page.Support;
-    public bool ShowBack => Page is Page.Detect or Page.Options or Page.Support || (Page == Page.Install && !Installing);
+    public bool ShowBack => Page is Page.Statement or Page.Detect or Page.Options or Page.Support || (Page == Page.Install && !Installing);
     public bool ShowNext => !(Page == Page.Install);
 
     public string NextText => Page switch
     {
         Page.Welcome => _existing is null ? "Get started" : "Update",
+        Page.Statement => "Continue",
         Page.Options => _existing is null ? "Install" : "Update",
         Page.Done => "Next",
         Page.Support => "Finish",
@@ -212,6 +263,7 @@ public sealed class MainViewModel : ObservableObject
     public string FooterHint => Page switch
     {
         Page.Welcome => $"Nothing is changed until you press {(_existing is null ? "Install" : "Update")}.",
+        Page.Statement => Statement.AllYes ? "Your answers are not saved or sent anywhere." : "Continue needs YES to all four.",
         Page.Detect => "Your Quake files are only read, never changed.",
         Page.Options => "Free and open source. No telemetry: nothing is sent about you.",
         Page.Support => "Quake VR: Unleashed is free, and it stays free.",
@@ -234,6 +286,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand UninstallCommand { get; }
     public ICommand OpenUrlCommand { get; }
     public ICommand OpenKofiCommand { get; }
+    public ICommand OpenDiscordCommand { get; }
     public ICommand ShowCreditsCommand { get; }
     public ICommand RetryFeedCommand { get; }
     public ICommand PickPackageAndInstallCommand { get; }
@@ -246,10 +299,13 @@ public sealed class MainViewModel : ObservableObject
             Steps[i].State = i < (int)page ? StepState.Done : i == (int)page ? StepState.Current : StepState.Upcoming;
         }
         Raise(nameof(ShowNext));
+        // The buttons' enabled state follows the new page at once (the Statement page's Continue starts disabled).
+        CommandManager.InvalidateRequerySuggested();
     }
 
     bool CanNext() => Page switch
     {
+        Page.Statement => Statement.AllYes,
         Page.Detect => !Detecting && SelectedQuake is { Playable: true },
         Page.Options => InstallDirError is null && SelectedQuake is not null && PackageReady,
         Page.Install => false,
@@ -261,6 +317,13 @@ public sealed class MainViewModel : ObservableObject
         switch (Page)
         {
             case Page.Welcome:
+                GoTo(Page.Statement);
+                break;
+            case Page.Statement:
+                if (!Statement.AllYes)
+                {
+                    break;
+                }
                 GoTo(Page.Detect);
                 _ = EnsureDetectedAsync();
                 break;
@@ -288,6 +351,18 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    // ---- Statement: the author's statement on AI usage ------------------------------------------------------------
+    // The answers are only in memory for this run of Setup: never saved, never sent.
+
+    public AiStatement Statement { get; } = new();
+    public IReadOnlyList<StatementChoice> StatementChoices { get; }
+    public string StatementTitle => AiStatement.Title;
+    public string StatementSubtitle => AiStatement.Subtitle;
+    public IReadOnlyList<string> StatementParagraphs => AiStatement.Paragraphs;
+
+    /// <summary>Whether the forward button is enabled now (tests and the screenshot harness).</summary>
+    public bool CanGoNext => NextCommand.CanExecute(null);
+
     // ---- Welcome: an existing install ----------------------------------------------------------------------------
 
     public bool HasExisting => _existing is not null;
@@ -307,10 +382,40 @@ public sealed class MainViewModel : ObservableObject
         Raise(nameof(HasExisting), nameof(ExistingText), nameof(NextText), nameof(FooterHint));
     }
 
+    /// <summary>The Apps &amp; Features entry's registry: a made-up root (--registry-file), the real HKCU for a real install,
+    /// none for test installs (--shortcuts-dir) and the screenshot harness.</summary>
+    public static IRegistryWriter? RegistryFor(StartupOptions o) =>
+        o.RegistryFile is { } f ? new JsonFileRegistry(f) : o.Screenshots is null && o.ShortcutsDir is null ? new WindowsRegistryWriter() : null;
+
+    /// <summary>This Setup's own files, for its copy in the install (SetupCopy).</summary>
+    // IL3000 (the single-file publish's analyser): an empty Location is exactly the test here, "am I a single file?".
+#pragma warning disable IL3000
+    public static IReadOnlyList<(string Source, string Relative)> OwnSetupFiles() =>
+        Environment.ProcessPath is { } exe ? SetupCopy.FilesOf(exe, string.IsNullOrEmpty(typeof(MainViewModel).Assembly.Location)) : [];
+#pragma warning restore IL3000
+
+    /// <summary>Started as Apps &amp; Features' Uninstall (--uninstall): the Remove dialogs at once; the window closes
+    /// when the install is gone (cancelled: it stays, for an update).</summary>
+    public async Task RemoveFromCommandLineAsync()
+    {
+        await UninstallAsync();
+        if (_existing is null)
+        {
+            Application.Current.Shutdown();
+        }
+    }
+
     async Task UninstallAsync()
     {
         if (_existing is null)
         {
+            return;
+        }
+        // This Setup is the install's own copy: the uninstall restarts from a copy in %TEMP%, so this one can be removed.
+        if (!_options.FromTemp && Environment.ProcessPath is { } self && PathUtil.IsInside(self, InstallDir))
+        {
+            SetupRelaunch.Start(_options.UninstallArguments(InstallDir));
+            Application.Current.Shutdown();
             return;
         }
         if (MessageBox.Show($"Remove Quake VR: Unleashed from {InstallDir}?\n\nYour settings, saves, screenshots and relit maps are kept, and your Quake folder is not touched.",
@@ -323,7 +428,8 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             var dir = InstallDir;
-            var result = await Task.Run(() => Uninstaller.Uninstall(dir, new UninstallOptions { RemoveHdTextures = textures }));
+            var registry = RegistryFor(_options);
+            var result = await Task.Run(() => Uninstaller.Uninstall(dir, new UninstallOptions { RemoveHdTextures = textures, Registry = registry }));
             var left = result.PlayerFilesLeft.Count > 0 ? $"\n\n{result.PlayerFilesLeft.Count} of your own files are still in {dir} (settings, saves...): delete the folder yourself if you no longer want them." : "";
             MessageBox.Show($"Quake VR: Unleashed was removed: {result.FilesRemoved} files and {result.ShortcutsRemoved} shortcuts.{left}", "Remove Quake VR: Unleashed",
                 MessageBoxButton.OK, MessageBoxImage.Information);
@@ -500,9 +606,8 @@ public sealed class MainViewModel : ObservableObject
             : new CheckItem(CheckStatus.Absent, "SteamVR", "Not installed (optional)."));
         SystemChecks.Add(r.VcRuntime.Ok
             ? new CheckItem(CheckStatus.Ok, "Visual C++ runtime", $"{r.VcRuntime.Installed} installed.")
-            : new CheckItem(CheckStatus.Error, "Visual C++ runtime",
-                r.VcRuntime.Installed is null ? "Not installed." : $"{r.VcRuntime.Installed} is too old (Quake VR needs {r.VcRuntime.Required} or later).",
-                "Install Microsoft's Visual C++ Redistributable (x64), then check again.")
+            : new CheckItem(CheckStatus.Warning, "Visual C++ runtime", r.VcRuntime.Describe(),
+                "Setup installs Microsoft's Visual C++ Redistributable (x64) with Quake VR: Windows asks for permission once.")
             {
                 ActionText = "Get it from Microsoft",
                 Action = new RelayCommand(() => OpenUrl(VcRuntimeInfo.DownloadUrl)),
@@ -851,6 +956,8 @@ public sealed class MainViewModel : ObservableObject
                 HdTexturesZip = textures,
                 VisPatchArchives = visPatch,
                 OwnedPacks = owned,
+                SetupFiles = OwnSetupFiles(),
+                Registry = RegistryFor(_options),
                 Shortcuts = new ShortcutOptions
                 {
                     Desktop = DesktopShortcut,
@@ -871,6 +978,7 @@ public sealed class MainViewModel : ObservableObject
                 }
             });
             Record = await new InstallEngine().InstallAsync(plan, progress, ct);
+            await EnsureVcRuntimeAsync(http, ct);
             LoadExisting();
             BuildDoneNotes();
             GoTo(Page.Done);
@@ -894,6 +1002,45 @@ public sealed class MainViewModel : ObservableObject
             CommandManager.InvalidateRequerySuggested();
         }
     }
+
+    /// <summary>Microsoft's VC++ runtime when it is missing or too old (VcRedist): a signed copy beside the installer, or
+    /// a download checked by its Microsoft signature, run with one administrator prompt. Never fatal: the files are in
+    /// place, and the Play page says what is left to do. The screenshot harness and --vcredist-dry-run only log it.</summary>
+    async Task EnsureVcRuntimeAsync(HttpClient http, CancellationToken ct)
+    {
+        VcResult = null;
+        if (_options.NoPrerequisites)
+        {
+            return;
+        }
+        var info = VcRuntimeDetector.Detect(_probe);
+        if (info.Ok)
+        {
+            return;
+        }
+        StatusText = "Visual C++ runtime";
+        AddLog(LogLevel.Info, $"Visual C++ runtime: {info.Describe()}");
+        var dir = _options.Downloads ?? Path.Combine(_probe.GetFolder(KnownFolder.LocalAppData) ?? Path.GetTempPath(), "QuakeVR-Installer", "downloads");
+        var progress = new Progress<InstallProgress>(p =>
+        {
+            StatusText = p.Status;
+            if (p.Log is not null)
+            {
+                AddLog(p.Level, p.Log);
+            }
+        });
+        VcResult = await VcRedist.ForWindows(http).EnsureAsync(info, new VcRedistOptions
+        {
+            DryRun = _options.VcRedistDryRun || _options.Screenshots is not null,
+            Offline = _options.Offline,
+            LocalCopies = [Path.Combine(AppContext.BaseDirectory, VcRedist.FileName)],
+            DownloadDir = dir,
+        }, progress, ct);
+        AddLog(VcResult.RuntimeReady ? LogLevel.Success : VcResult.Outcome == VcRedistOutcome.DryRun ? LogLevel.Info : LogLevel.Warning, VcResult.Message);
+    }
+
+    /// <summary>What the last install did about the VC++ runtime (null: nothing needed).</summary>
+    public VcRedistResult? VcResult { get; private set; }
 
     async Task<string?> DownloadAsync(HttpClient http, string what, Func<ReleaseFeed, FeedFile?> pick, double from, double to, CancellationToken ct)
     {
@@ -1000,8 +1147,23 @@ public sealed class MainViewModel : ObservableObject
         if (Record?.RelightPending == true)
         {
             DoneNotes.Add(new CheckItem(CheckStatus.Info, "Relit maps",
-                "Start with Play in VR below: the game relights every map with the HD textures (about a minute; the wrist gadget shows its progress). " +
+                "At its first start (Play below, a shortcut or Steam) the game relights every map with the HD textures (about a minute; the wrist gadget shows its progress). " +
                 "Later: Graphics > Relighting."));
+        }
+        if (VcResult is { } vc && vc.Outcome != VcRedistOutcome.AlreadyInstalled)
+        {
+            DoneNotes.Add(vc.Outcome switch
+            {
+                VcRedistOutcome.Installed => new CheckItem(CheckStatus.Ok, "Visual C++ runtime", vc.Message),
+                VcRedistOutcome.RebootRequired => new CheckItem(CheckStatus.Info, "Visual C++ runtime", vc.Message),
+                VcRedistOutcome.DryRun => new CheckItem(CheckStatus.Info, "Visual C++ runtime", vc.Message),
+                _ => new CheckItem(CheckStatus.Warning, "Visual C++ runtime", vc.Message,
+                    "The game needs it to start: install Microsoft's Visual C++ Redistributable (x64), or run Setup again.")
+                {
+                    ActionText = "Get it from Microsoft",
+                    Action = new RelayCommand(() => OpenUrl(VcRuntimeInfo.DownloadUrl)),
+                },
+            });
         }
         if (_report?.Vr.SuggestVdxr == true)
         {
@@ -1017,14 +1179,9 @@ public sealed class MainViewModel : ObservableObject
         {
             return;
         }
-        string? extra = null;
-        if (variant == LaunchVariant.Vr && Record.RelightPending)
-        {
-            extra = LaunchCommand.FirstRunRelight;
-            Record.RelightPending = false;
-            Record.Save(InstallDir);
-        }
-        Process.Start(new ProcessStartInfo(Path.Combine(InstallDir, LaunchCommand.Exe), LaunchCommand.Arguments(quake, InstallDir, variant, extra))
+        // (The relight at the first start needs no argument: the game starts it from the installer's marker,
+        // FirstStartRelight, however it is started.)
+        Process.Start(new ProcessStartInfo(Path.Combine(InstallDir, LaunchCommand.Exe), LaunchCommand.Arguments(quake, InstallDir, variant))
         {
             WorkingDirectory = InstallDir,
             UseShellExecute = false,

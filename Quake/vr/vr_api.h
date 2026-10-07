@@ -62,6 +62,7 @@ int VR_SkipScreen (void);	// SCR_UpdateScreen: nonzero to skip this frame's draw
 void VR_HeadlessView (void);	// ... and instead: the eyes' views and view entities set up (what the game reads), no GL
 int VR_SkipSwap (void);		// GL_EndRendering: nonzero to leave this frame unpresented (unpaced frames present
 							// ten a second: a present waits for the display's refresh, the bulk of such a frame)
+void VR_FrameDrawn (void);	// GL_EndRendering, before the present: vr_screenshot_frames's screenshot of it
 int VR_ModalMessageFrame (void); // SCR_ModalMessage's loop: with a headset, a frame showing the
 							// dialog (the runtime paces it); zero without one (the loop sleeps)
 double VR_HostFrameTime (double time);	// start of _Host_Frame: the frame's time (a motion take's own while
@@ -101,7 +102,9 @@ typedef struct
 const char *VR_ParseToken (const char *data, const char **token); // Cmd_TokenizeString: COM_Parse for an argument of any length
 
 // Automated test runs (QVR_NO_ERROR_DIALOG; vr_crash.cpp, Windows only).
-const char *VR_BuildVersion (void);	// vr_crash.cpp: this build, the last commit's date and short hash ("2026-10-06 9460b8e1"; "-dirty": changed files)
+const char *VR_BuildVersion (void);	// vr_crash.cpp: this build: its version, the last commit's date and short hash ("0.9.0-dev (2026-10-07 9460b8e1)"; "-dirty": changed files)
+const char *VR_Version (void);		// vr_crash.cpp: the version, the repository's VERSION file ("0.9.0"; docs/vr-port/RELEASING.md, "Versions")
+int VR_VersionIsDev (void);		// vr_crash.cpp: 1 unless the release script built this (Misc/release/make_release.ps1)
 void VR_InstallCrashHandler (void);	// main, first: a crash writes qvr_crash.txt (the stack, the map) and qvr_crash.dmp (test runs and players' alike); Zancle's asserts reported (vr_zancle.cpp)
 int VR_ErrorDialogSuppressed (const char *errorMsg);	// PL_ErrorDialog: nonzero if written to qvr_error.txt instead
 
@@ -134,6 +137,8 @@ const char *VR_RelightIndicator (float *fraction);
 unsigned char *VR_ImagePrefetchTake (const char *name, FILE *f, int length, int *width, int *height);
 void VR_ImagePrefetchNote (const char *name, double seconds);
 void VR_ImagePrefetchEnd (void);	// the first map load's end: the workers joined, the rest freed, the list written
+unsigned char *VR_ImageCacheFind (const char *name, FILE *f, int length, int *width, int *height, unsigned char *(*alloc) (int bytes, const char *what), const char *what); // decoded before (vr_imgcache.cpp): a copy from alloc, or NULL
+int VR_ImageCachePut (const char *name, FILE *f, int length, unsigned char *pixels, int width, int height); // ... and kept now (1: the cache frees pixels)
 
 // The normal maps made from skins, kept on disk (vr_texcache.cpp; gl_texmgr.c TexMgr_LoadImage32).
 int VR_NormalCacheMode (void);	// vr_normalmap_cache: 0 off, 1 on, 2 check
@@ -155,6 +160,7 @@ void VR_AddonForSave (const char *savepath, const char *map);	// Host_Loadgame_f
 void VR_AddonOnSave (const char *savepath);	// Host_Savegame_f: the active map package noted beside the save
 void VR_NoteMapSpawn (const char *map);	// SV_SpawnServer: the map and the map package mounted, the crash report's context line
 void VR_SetCrashContext (const char *what);	// vr_crash.cpp: that line (qvr_crash.txt's second)
+unsigned VR_DescribeCallers (char *out, int outSize, int skip, int depth);	// vr_crash.cpp: the caller's stack as one line ("fn (file.c:12) < caller ..."); a hash of it (0: none; not Windows)
 const char *VR_ModelFile (const char *name);	// Mod_LoadModel, Mod_LoadLighting: the file to load a model from (relit maps)
 int VR_ModelReplacementOk (const char *name, const char *md5mesh);	// loadMd5Replacement: 0 refuses a jointed hand the rig can't use (vr_handrig.cpp)
 void VR_AliasPosesLoaded (const char *name, void *aliashdr, const stvert_t *stverts, const dtriangle_t *tris, trivertx_t **poses); // Mod_LoadAliasModel, after the frames
@@ -182,6 +188,7 @@ void VR_SaveFlashlightState (void); // before a save snapshot or changelevel par
 void VR_OnFreshStart (void);			// Host_Map_f, Host_Loadgame_f: a game started afresh or loaded, not a changelevel (the flashlight off)
 void VR_StoreSpawnParms (int client);	// after parm1..16 are copied from globals into a client_t
 void VR_RestoreSpawnParms (int client);	// after parm1..16 are copied from a client_t into globals
+int VR_ProbeRandom (void);			// QC's random() while the kinds that can appear are made as a map loads (vr_progs.cpp): its own numbers, 0..0x7fff; -1 otherwise
 int VR_AllowLatePrecache (void);		// nonzero if precaches are allowed after map load
 int VR_LatePrecacheModel (const char *name); // precache index for setmodel, or -1 if not allowed
 int VR_DropToFloor (void);				// start of PF_droptofloor: nonzero if it handled the call
@@ -241,6 +248,16 @@ void VR_BeamLights (int index, struct qmodel_s *model, const float *start, const
 void VR_BeamDrawn (int index, struct qmodel_s *model, const float *start, const float *end); // CL_UpdateTEnts: a lightning beam's ends as drawn this frame: Quad Damage's arcs along it (vr_beam_arcs)
 void VR_WallTorchFlames (void);							// CL_ReadFromServer, after the temp entities: the taken wall torches' flames (vr_walltorch.cpp)
 #include "vr_modelmetadata.h" // shared model identities/traits and loader invalidation
+// A campaign switch keeps the alias models whose files are the same in its game folders (vr_modelkeep.cpp)
+void VR_ModelSourcesBegin (struct qmodel_s *mod, const char *file); // Mod_LoadModel, an alias model's: its lookups recorded (its own file, just found, first)
+void VR_ModelSourcesEnd (struct qmodel_s *mod);			// ... to its loader's end
+void VR_ModelSourcesForget (const struct qmodel_s *mod);	// its slot reloaded or emptied
+void VR_FileLookupNoted (const char *name, int found);		// COM_FindFile, while com_lookups_noted: a lookup (com_filesource, file_from_pak, com_fileoffset its file)
+void VR_ModelsKeepBefore (int campaign);				// COM_SwitchGame, before the game folders change: the palette's and colormap's files noted
+void VR_ModelsKeepDecide (void);					// ... after: the alias models every lookup of which finds the same file again, kept
+int VR_ModelKept (const struct qmodel_s *mod);			// nonzero: kept (Mod_ResetAll, Cache_FlushExcept, TexMgr_NewGame, GLMesh_DeleteVertexBuffers leave it)
+qboolean VR_ModelCacheKept (cache_user_t *c);			// Cache_FlushExcept's test: a kept model's cache entry
+void VR_ModelsKeepEnd (void);						// ... the switch done: none kept any more (their records stay)
 int VR_SyntheticModel (struct qmodel_s *mod);				// Mod_LoadModel: a model made in memory from another ("<model>#rag": a ragdoll's skinned body, vr_ragdoll.cpp); nonzero if made
 void VR_RagdollSwap (void);								// end of CL_RelinkEntities: the server's ragdolls drawn with their skinned models (vr_ragdoll.cpp)
 void VR_RagdollRestore (void);							// CL_ReadFromServer, first: their own models back before the server's messages
@@ -264,6 +281,8 @@ void VR_ReliableSent (void);								// SV_SendClientMessages, before sv.reliable
 int VR_RunThink2 (struct edict_s *ent);				// start of SV_RunThink: 0 if the entity was freed
 void VR_ClientPreMove (struct edict_s *ent);			// SV_Physics_Client: hand and weapon touches
 void VR_ClimbPreThink (struct edict_s *ent);			// SV_Physics_Client, before PlayerPreThink: ledge holds taken and let go (vr_climb.cpp)
+int VR_PortalLerpFrom (const float older[3], const float newer[3], float from[3], float *yaw); // CL_RelinkEntities: 1 when
+							// the older place carried through a slipgate (from; the gate's yaw) lands by the newer
 int VR_ClientSpecialMove (struct edict_s *ent);		// SV_Physics_Client, before the move: 1 teleported, hung or mantled instead (to the post-think), -1 freed
 int VR_ClimbHangsFrom (struct edict_s *check, struct edict_s *pusher);	// SV_PushMove: nonzero for a player hanging from (or mantling onto) the pusher: it rides it
 int VR_ClimbCarryBlocked (struct edict_s *check, struct edict_s *pusher, const float *from, const float *move); // SV_PushMove: its ride stopped short: nonzero blocks the pusher (vr_climb_mover_crush), else it lets go
@@ -334,6 +353,11 @@ int VR_GameSound (int entnum, struct sfx_s *sfx);		// CL_ParseStartSoundPacket: 
 // Menu (menu.c).
 void VR_Menu_Open (void);								// Options > VR Settings
 void VR_Menu_OpenFromMain (int advanced);				// the main menu's VR Settings (advanced: Advanced VR) row: Back returns there
+void VR_NavJump (int state);							// a jump to Ironwail's menu `state` (Levels: Play Custom Map, the corner's): Back from it returns here
+void VR_NavEntered (int state, int previous);			// M_Menu_Maps_f: opened by a jump or by Back (kept), else from its own way in
+int VR_NavBack (int state);								// its Back: nonzero if it went back where the jump came from
+int VR_MenuMainShowsMods (void);
+int VR_MenuMouseOnButtons (float x, float y);			// M_Mousemove: the spot (menu x, y) on one of the corner's buttons (the menu's rows left alone)						// M_Main_Draw: the main menu's Mods row asked for (vr_menu_main_mods)
 void VR_OpenMapLibrary (void);							// Single Player > Map Library: the map browser page (vr_menu_maps.inc)
 void VR_Menu_Draw (void);								// M_Draw, m_vr
 void VR_Menu_Key (int key, int repeat);				// M_Keydown, m_vr (repeat: the key's auto-repeat)
@@ -353,9 +377,10 @@ int VR_MenuHidesPlaque (void);							// M_DrawTransPic: the options pages' verti
 // The menus' branding (vr_menubrand.cpp): the Quake VR banner in place of Quake's plaque, and their browns turned red.
 int VR_MenuDrawBanner (int x, int y);					// M_DrawPlaque: the banner where the plaque's top left would be; nonzero if drawn (0: no image, draw the plaque)
 void VR_MenuDrawBannerColumn (void);					// M_Draw, before the page: the VR menu style's banner, in the left column under the corner's buttons
+void VR_MenuDrawVersion (void);						// M_Draw, before the page: "Quake VR: Unleashed - v0.9" / "by Vittorio Romeo" in the bottom right corner (vr_menu_version)
 void VR_MenuRecolor (float *params);					// Draw_SetMenuRecolor: the gui shader's MenuRecolor (vr_menu_recolor; x 0: off)
 int VR_MenuKey (int key, int repeat);					// M_Keydown: nonzero if the buttons took the key (a click on one, the sticks' selection on them)
-void VR_MenuBounds (int *top, int *height);				// M_UpdateBounds: the menus laid out from the canvas's bounds start below the buttons
+void VR_MenuBounds (int *left, int *top, int *width, int *height);	// M_UpdateBounds: the menus laid out from the canvas's bounds beside the corner's buttons
 void VR_MenuSavePositions (void);						// Host_WriteConfigurationToFile: each VR page's selection and scroll into vr_menu_positions
 void VR_ConfigMergeOthers (const char *path);			// Host_WriteConfigurationToFile, the game folder's config: another copy's changes in it kept (vr_cvars.cpp)
 void VR_ConfigWritten (const char *path);				// and after writing it
@@ -386,6 +411,7 @@ void VR_NetStatsEntities (edict_t *clent, int sent, int insight, int bytes, int 
 // except the listener (the head, in VR) and the hands' and moving sounds (VR_SndSpatialize).
 void VR_SndListener (float *origin, float *forward, float *right, float *up);	// S_Update: the listener (in VR, the head)
 int VR_SndSpatialize (channel_t *ch);				// start of SND_Spatialize: nonzero if it set the volumes (a hand's sound); moves a sound following its entity
+int VR_SndHandOf (const channel_t *ch, float *hand);	// snd_show 2: the hand (0 main, 1 off; -1 not a hand's) a channel plays from, `hand` its place
 void VR_SndStarted (channel_t *ch);					// end of S_StartSound: a new sound on the channel
 int VR_SndKeepStatics (void);						// S_Update: nonzero: the static sounds of one sample not combined (each has its place)
 int VR_SndMixEnd (int paintedtime, int endtime);	// S_Update_: the mix-ahead's end, rounded down to whole frames of the voices
@@ -409,6 +435,8 @@ int VR_PortalReachMove(struct edict_s* player, const float* start, const float* 
 
 void VR_RegisterPackStatus(void);
 int VR_CanLoadCampaignMap(const char *map);
+int VR_IsVrMap(const char *map);			// vrstart, vrstart2, vrtutorial, vrfiringrange: Quake VR's own maps, run in Quake's campaign
+const char *VR_HubMap(void);				// the hub the game starts in and returns to: vr_hub_map (vrstart or vrstart2)
 int VR_CanChangeCampaignMap(const char *map);
 int VR_CanLoadCampaignSave(const char *text);
 
@@ -417,6 +445,8 @@ const char *VR_GameDirectoryRoot(const char *dir, int index);
 void VR_PrepareCampaignDirectories(const char *paths);
 void VR_InitCampaignDirectories(void);
 char *VR_LoadOwnedLocalization(const char *file);
+// "owned/<folder>/<path>": a file of a discovered Dopa/MG1/MG3 folder read in place, unmounted (COM_FindFile).
+int VR_OwnedFile(const char *name, char *out, int size, int *offset, int *length, int *packed);
 int VR_IsNativeCampaignLaunch(void);
 int VR_IsNewCampaignDirectory(const char *dir);
 int VR_ShouldMountCampaignDirectory(const char *dir);

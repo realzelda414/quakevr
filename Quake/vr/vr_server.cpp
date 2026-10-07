@@ -516,6 +516,24 @@ extern "C" void VR_ReliableSent()
     broadcastRoom.peakReliable = q_max(broadcastRoom.peakReliable, sv.reliable_datagram.cursize);
 }
 
+namespace
+{
+
+// The magazine box of hand `h`'s gun (VrMove::magBox) into its fields (.magbox*, .offmagbox*), carried through a portal
+// along the hand as its loading port is (all zero: none).
+void setMagBox(edict_t* ent, int h, const glm::vec3& origin, const glm::vec3& handPos, const glm::vec3 (&box)[4])
+{
+    const FieldOffsets& f = fields();
+    const bool none = box[1] == glm::vec3{0.f};
+    const portals::Reach gate = portals::reachAlong(origin, handPos, box[0]);
+    setFieldVec(ent, h ? f.magboxpos : f.offmagboxpos, none ? glm::vec3{0.f} : gate.position);
+    setFieldVec(ent, h ? f.magboxx : f.offmagboxx, none ? glm::vec3{0.f} : gate.turn * box[1]);
+    setFieldVec(ent, h ? f.magboxy : f.offmagboxy, none ? glm::vec3{0.f} : gate.turn * box[2]);
+    setFieldVec(ent, h ? f.magboxz : f.offmagboxz, none ? glm::vec3{0.f} : gate.turn * box[3]);
+}
+
+} // namespace
+
 extern "C" void VR_ReadMoveExtras(client_t* client)
 {
     if(!vrProtocol())
@@ -575,6 +593,9 @@ extern "C" void VR_ReadMoveExtras(client_t* client)
         angles.y = anglemod(angles.y + gate.yaw);
         setFieldVec(ent, h ? f.muzzlepos : f.offmuzzlepos, gate.position);
         setFieldVec(ent, h ? f.shotrot : f.offshotrot, angles);
+        setFieldVec(ent, h ? f.loadportpos : f.offloadportpos,
+            portals::reachAlong(move.origin, move.hands[h].pos, move.loadPort[h]).position);
+        setMagBox(ent, h, move.origin, move.hands[h].pos, move.magBox[h]);
     }
     if(clientNum >= static_cast<int>(clientBits.size()))
     {
@@ -662,6 +683,7 @@ extern "C" void VR_CalcStats(client_t* client, int* statsi, float* statsf)
     stat(STAT_QVR_WEAPONFLAGS, f.weaponflags);
     stat(STAT_QVR_WEAPONFLAGS2, f.weaponflags2);
     stat(STAT_QVR_AMMO2, f.currentammo2);
+    statsf[STAT_QVR_AMMOTYPE] = ent->v.currentammo; // (the VR progs' main hand's ammo type: VRGetCurrentAmmo)
     stat(STAT_QVR_AMMOCOUNTER, f.ammocounter);
     stat(STAT_QVR_AMMOCOUNTER2, f.ammocounter2);
     statsf[STAT_QVR_WEAPONCLIP] = clip(f.weaponinst);
@@ -671,6 +693,9 @@ extern "C" void VR_CalcStats(client_t* client, int* statsi, float* statsf)
     stat(STAT_QVR_WEAPONCLIPSIZE, f.weaponclipsize);
     stat(STAT_QVR_WEAPONCLIPSIZE2, f.weaponclipsize2);
     stat(STAT_QVR_MELEE, f.vr_melee_hud);
+    statsi[STAT_QVR_RELOADMODE] = vr_holster_mode.value == 0.f ? static_cast<int>(vr_reload_mode.value) : 0;
+    stat(STAT_QVR_POUCHKIND, f.vr_pouch_kind);
+    stat(STAT_QVR_POUCHCOUNT, f.vr_pouch_count);
 
     const int holsterWeapon[numHolsters] = {f.holsterweapon0, f.holsterweapon1,
         f.holsterweapon2, f.holsterweapon3, f.holsterweapon4, f.holsterweapon5};
@@ -723,6 +748,9 @@ extern "C" void VR_CalcStats(client_t* client, int* statsi, float* statsf)
     }
 }
 
+// QC's QVR_WPNFLAG_NOMAG (vr_defs.qc): a magazine gun with no magazine in (vr_reload.qc).
+constexpr int weaponFlagNoMag = 16;
+
 extern "C" int VR_EntityUpdateBits(edict_t* ent)
 {
     if(!vrProtocol())
@@ -756,6 +784,10 @@ extern "C" int VR_EntityUpdateBits(edict_t* ent)
     if(NUM_FOR_EDICT(ent) > svs.maxclients && weaponUid(weaponInst(ent, f.weaponinst)) != 0)
     {
         bits |= U_QVR_WEAPONUID; // a weapon prop (not a player: his .weaponinst is his main hand's, sent as a stat)
+        if(static_cast<int>(fieldFloatOr(ent, f.weaponflags, 0.f)) & weaponFlagNoMag)
+        {
+            bits |= U_QVR_NOMAG; // its magazine out (immersive reloading: the client draws none on it)
+        }
     }
     return bits;
 }
@@ -912,6 +944,15 @@ void rebaseHands(edict_t* player)
     }
     move.muzzlePos[0] += delta;
     move.muzzlePos[1] += delta;
+    move.loadPort[0] += delta;
+    move.loadPort[1] += delta;
+    for(auto& box : move.magBox)
+    {
+        if(box[1] != glm::vec3{0.f})
+        {
+            box[0] += delta;
+        }
+    }
     move.headPos += delta;
     // Re-evaluate crossing after walking, including a crossing on a release frame.
     for(int h = 0; h < 2; h++)
@@ -932,6 +973,9 @@ void rebaseHands(edict_t* player)
         angles.y = anglemod(angles.y + muzzle.yaw);
         setFieldVec(player, h ? f.muzzlepos : f.offmuzzlepos, muzzle.position);
         setFieldVec(player, h ? f.shotrot : f.offshotrot, angles);
+        setFieldVec(player, h ? f.loadportpos : f.offloadportpos,
+            portals::reachAlong(origin, hand.pos, move.loadPort[h]).position);
+        setMagBox(player, h, origin, hand.pos, move.magBox[h]);
     }
 }
 
@@ -990,6 +1034,31 @@ void sendCatchBlend(edict_t* player, int hand, int ent, const float origin[3], c
     MSG_WriteByte(msg, QVR_SVC_CATCHBLEND);
     MSG_WriteByte(msg, hand);
     MSG_WriteShort(msg, ent);
+    for(int i = 0; i < 3; i++)
+    {
+        MSG_WriteFloat(msg, origin[i]);
+    }
+    for(int i = 0; i < 3; i++)
+    {
+        MSG_WriteFloat(msg, angles[i]);
+    }
+}
+
+void sendCollect(edict_t* player, int hand, int hotspot, int ent, int modelIndex, const float origin[3],
+    const float angles[3])
+{
+    sizebuf_t* msg = clientMessage(player);
+    if(!msg || msg->cursize > msg->maxsize - 64)
+    {
+        return;
+    }
+
+    MSG_WriteByte(msg, svc_quakevr);
+    MSG_WriteByte(msg, QVR_SVC_COLLECT);
+    MSG_WriteByte(msg, CLAMP(0, hand, 255));
+    MSG_WriteByte(msg, CLAMP(0, hotspot, 255));
+    MSG_WriteShort(msg, ent);
+    MSG_WriteShort(msg, modelIndex);
     for(int i = 0; i < 3; i++)
     {
         MSG_WriteFloat(msg, origin[i]);

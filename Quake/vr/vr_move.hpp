@@ -45,6 +45,12 @@ struct VrMove
     // Where each hand's shots go (angles): its aim turned by the held weapon's Shot Pitch and Yaw (weapons::shotAngles);
     // -> .offshotrot, .shotrot (QC VRGetWeaponFireRot).
     glm::vec3 shotRot[2]{glm::vec3{0.f}, glm::vec3{0.f}}; // [0] off hand, [1] main hand
+    // Each held gun's loading port as drawn (immersive reloading; vr_view.cpp loadPorts; the hand's position when it has
+    // none); -> .offloadportpos, .loadportpos (QC vr_reload.qc).
+    glm::vec3 loadPort[2]{glm::vec3{0.f}, glm::vec3{0.f}}; // [0] off hand, [1] main hand
+    // The magazine attached to each hand's gun as drawn (hands::State::magBox: its middle, then its three half-axes; all
+    // zero: none); -> .offmagbox*, .magbox* (QC vr_reload.qc: grips and hits on its whole shape).
+    glm::vec3 magBox[2][4]{};
 };
 
 void writeVrMove(sizebuf_t* buf, const VrMove& move);

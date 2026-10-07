@@ -5,7 +5,7 @@
 
 - Misc/trenchbroom/QuakeVR/Icon.png: the icon in TrenchBroom's game list (32x32).
 - quakevr/wads/quakevr_dev.wad: the example map's textures, drawn here (grids at Quake VR's scale, trims, panels, a
-  glowing strip, and the compiler's special textures). Neither id's textures nor any other game's data: a map made
+  glowing strip, and the compiler's special textures), and the calibration room's spot (qvrc_pad). Neither id's textures nor any other game's data: a map made
   of them can be committed and shipped, and so can its .bsp (which embeds its textures).
 
 The WAD's pixels are indices into Quake's palette, which is id's data: it is read from the player's own
@@ -189,6 +189,76 @@ def tex_water(w, h, seed=5):
     return img
 
 
+# ---- The calibration room's spot (qvrc_pad: Misc/quakevr/make_vrcalibration_map.py; the room's other textures are
+# id's, from Misc/trenchbroom/make_id_wad.py).
+
+def tex_pad(w, h, base, ring, seed):
+    """The calibration spot: a dark disc with a glowing ring, a fainter inner ring and four ticks."""
+    g = noise_field(w, h, seed, 0.06)
+    cx = cy = (w - 1) / 2
+    img = []
+    for y in range(h):
+        row = []
+        for x in range(w):
+            d = math.hypot(x - cx, y - cy) / (w / 2)
+            a = math.atan2(y - cy, x - cx)
+            c, full = shade(base, g[y][x] * (1.0 + 0.10 * (1 - d))), False
+            if 0.80 <= d <= 0.87:
+                c, full = ring, True
+            elif 0.78 <= d < 0.80 or 0.87 < d <= 0.89:
+                c = shade(ring, 0.45)
+            elif 0.50 <= d <= 0.52:
+                c, full = shade(ring, 0.75), True
+            elif 0.56 <= d <= 0.74 and min(abs(math.sin(a)), abs(math.cos(a))) < 0.035:
+                c, full = shade(ring, 0.85), True
+            row.append((c, full))
+        img.append(row)
+    return img
+
+
+def tex_target(w, h, seed=7):
+    """A shooting target: a paper bullseye (rings, a red centre) pinned on a weathered board."""
+    n = noise_field(w, h, seed, 0.12)
+    img = []
+    cx, cy = (w - 1) / 2, (h - 1) / 2
+    for y in range(h):
+        row = []
+        for x in range(w):
+            r = math.hypot(x - cx, y - cy) / (w / 2)
+            if r > 0.88:
+                grain = 0.85 + 0.15 * math.sin(y * 0.9 + math.sin(x * 0.3) * 2)
+                c = shade((96, 72, 44), n[y][x] * grain)
+            elif r < 0.12:
+                c = shade((190, 30, 24), n[y][x])
+            else:
+                ring = int(r / 0.152)
+                c = shade((222, 214, 190) if ring % 2 == 0 else (40, 36, 34), n[y][x])
+                if abs(r - 0.152 * round(r / 0.152)) < 0.012:
+                    c = (30, 28, 26)
+            row.append((c, False))
+        img.append(row)
+    return img
+
+
+def tex_lantern(w, h, seed=9):
+    """A lantern's glass: warm flame light (fullbright, brightest low in the middle, where the flame is) behind an iron
+    frame round the edge and a cross bar (lit metal)."""
+    n = noise_field(w, h, seed, 0.10)
+    img = []
+    for y in range(h):
+        row = []
+        for x in range(w):
+            e = min(x, y, w - 1 - x, h - 1 - y)
+            if e < 2 or abs(y - h * 0.38) < 1:
+                row.append((shade((70, 62, 54), (0.8 + 0.15 * e) * n[y][x]), False))
+                continue
+            r = math.hypot((x - (w - 1) / 2) / w, (y - h * 0.62) / h)
+            k = max(0.55, 1.15 - 1.4 * r) * n[y][x]
+            row.append((shade((255, 196, 110), k), True))
+        img.append(row)
+    return img
+
+
 TEXTURES = [
     # name, builder
     ("qvr_floor", lambda: tex_grid(64, 64, (74, 72, 70), (60, 58, 56), (96, 88, 70), seed=11)),
@@ -204,6 +274,11 @@ TEXTURES = [
     ("trigger", lambda: tex_special(64, 64, (220, 130, 40), (180, 100, 30))),
     ("hint", lambda: tex_special(64, 64, (60, 140, 200), (40, 110, 170))),
     ("origin", lambda: tex_special(64, 64, (60, 160, 90), (40, 120, 70))),
+    # the calibration room (Misc/quakevr/make_vrcalibration_map.py)
+    ("qvrc_pad", lambda: tex_pad(128, 128, (47, 47, 47), (171, 231, 255), 26)),
+    ("qvr_target", lambda: tex_target(64, 64)),
+    # vrstart2's lanterns (Misc/quakevr/maps/vrstart2_gen.py)
+    ("qvr_lantern", lambda: tex_lantern(32, 32)),
 ]
 
 
@@ -296,8 +371,11 @@ def main():
     with open(WAD, "wb") as f:
         f.write(build_wad(pal))
     print("wrote %s (%d textures)" % (os.path.relpath(WAD, ROOT), len(TEXTURES)))
-    build_icon()
-    print("wrote %s" % os.path.relpath(ICON, ROOT))
+    try:
+        build_icon()
+        print("wrote %s" % os.path.relpath(ICON, ROOT))
+    except ImportError:
+        print("no PIL: %s left as it is" % os.path.relpath(ICON, ROOT))
 
 
 if __name__ == "__main__":

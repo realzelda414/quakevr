@@ -41,6 +41,7 @@
 #include "vr_cvars.hpp"
 #include "vr_handpose.hpp"
 #include "vr_held.hpp"
+#include "vr_main.hpp"
 #include "vr_protocol.hpp"
 #include "vr_units.hpp"
 #include "vr_weapons.hpp"
@@ -50,6 +51,8 @@
 #include "Zancle/Math/Cos.hpp"
 #include "Zancle/Math/MinMax.hpp"
 #include "Zancle/Math/Sin.hpp"
+#include "Zancle/Chrono/Clock.hpp"
+#include "Zancle/Random/FastNonCryptoRng.hpp"
 
 
 namespace qvr::twohand
@@ -93,7 +96,7 @@ enum GripKind : int
 int grip[2]{GRIP_FOREGRIP, GRIP_FOREGRIP}; // per holding hand: the grip held (or last held, while letting go)
 float gripLength[2]{0.f, 0.f};             // per holding hand: the hand-to-tip length when the blade was taken
 
-constexpr float foregripTake = 5.5f;  // units from the grip point to take hold
+constexpr float foregripTake = gripTakeUnits; // units from the grip point to take hold
 constexpr float foregripKeep = 20.f;  // and to keep it
 constexpr float bladeTake = 6.f;      // units from the blade's outer part (TwoHBladeGrip -0.3 .. the tip)
 constexpr float bladeKeepMin = 0.25f; // the hands kept this share of the blade's length apart,
@@ -167,6 +170,8 @@ FreeGrip freeGrips[2];
 bool freeCandidate[2]{false, false}; // the view's (setFreeCandidate), at candidateTime
 double candidateTime[2]{-1.0, -1.0};
 bool grabWas[2]{false, false};
+bool gripArmed[2]{false, false};       // each hand's grip closed on a two-handed hotspot (applyHotspots: vr_2h_grip_edge)
+bool gripRefusedSaid[2]{false, false}; // vr_debug_2h_grip: a closed fist on a hotspot reported
 double grabStart[2]{-1.0, -1.0}; // when each hand last started gripping
 double carryLast[2]{-1.0, -1.0}; // the last frame each hand carried a weapon
 double retakeFrom[2]{-1.0, -1.0}; // the carry (its carryLast) a retake was last tried for (startRetake: once)
@@ -177,6 +182,11 @@ double retakeFrom[2]{-1.0, -1.0}; // the carry (its carryLast) a retake was last
 // next gun's foregrip a blade grip: the helping hand slid along the whole gun, turned as on a blade).
 int heldWas[2]{-1, -1};
 bool carriedWas[2]{false, false};
+
+// The grip's feedback (gripFeedback): each hand's helping last frame, and when it last clicked (cl.time; -1 never).
+bool helpingWas[2]{false, false};
+double gripClickLast[2]{-1.0, -1.0};
+za::FastNonCryptoRng gripRng{static_cast<za::U64>(za::Clock::nowNanoseconds())};
 
 [[nodiscard]] RelPose relativeTo(const glm::vec3& basePos, const glm::vec3& baseRot, const glm::vec3& pos,
     const glm::vec3& rot)
@@ -785,7 +795,24 @@ void applyHotspots(hands::State& s, const glm::vec3 (&originalRots)[2], int hold
     const float dotNeed = wasHeld ? heldDot(vr_2h_angle_threshold.value, stick) : vr_2h_angle_threshold.value;
     const bool goodDot = cup || dotNeed <= -1.f || glm::dot(handDir, origDir) > dotNeed;
 
-    shouldAim[holding] = canGrab && goodDistance && goodDot;
+    // A grip takes hold only closed on the weapon (the author: a fist moving onto a two-handed hotspot must not attach;
+    // vr_2h_grip_edge): its rising edge with the hand there then arms it, until it opens. Held, it keeps hold as before.
+    if(!client::grabbing(helping))
+    {
+        gripArmed[helping] = false;
+    }
+    else if(grabStart[helping] == vr_gametime)
+    {
+        gripArmed[helping] = goodDistance && goodDot;
+    }
+    const bool edgeOk = wasHeld || !vr_2h_grip_edge.value || gripArmed[helping];
+    if(vr_debug_2h_grip.value && !wasHeld && canGrab && goodDistance && goodDot && !edgeOk && !gripRefusedSaid[helping])
+    {
+        Con_Printf("2h grip: %s hand on the grip already closed: no hold (vr_2h_grip_edge)\n",
+            helping == HAND_MAIN ? "main" : "off");
+    }
+    gripRefusedSaid[helping] = !wasHeld && canGrab && goodDistance && goodDot && !edgeOk;
+    shouldAim[holding] = canGrab && goodDistance && goodDot && edgeOk;
     cupHeld[holding] = shouldAim[holding] && fixedMode && s.grip2HPalm[holding]; // (a cup hotspot itself: grip2HPalm)
     if(vr_debug_2h_grip.value && fixedMode && !wasHeld && shouldAim[holding])
     {
@@ -896,6 +923,50 @@ void applyHand(hands::State& s, const glm::vec3 (&originalRots)[2], int holding,
     }
 }
 
+// The other hand closing on a weapon's foregrip (a gun's, a sword's grip or blade, a weapon carried off its handle, a
+// free grip): a short metal click from that hand (vr/phys/grab_metal1..3, the climbing hand's and the explosive
+// box's grabs; on the hand's own channel, SND_CHAN_HAND: from the hand) at vr_2h_grip_sound, a little higher or lower
+// each time (vr_snd_pitch_jitter), and a short pulse in it; letting go, the click at half that and no pulse. At most
+// one every 0.25 s per hand (a grip held at the edge of its reach, taken and lost). `developer` prints each.
+void gripFeedback(const hands::State& s)
+{
+    for(int h = 0; h < 2; h++)
+    {
+        const bool now = helpingHand[h];
+        if(now == helpingWas[h])
+        {
+            continue;
+        }
+        helpingWas[h] = now;
+        const float vol = za::clamp(vr_2h_grip_sound.value, 0.f, 1.f) * (now ? 1.f : 0.5f);
+        if(cl.time - gripClickLast[h] < 0.25 && gripClickLast[h] >= 0.0)
+        {
+            continue;
+        }
+        gripClickLast[h] = cl.time;
+        Con_DPrintf("2h click: %s hand %s\n", h == HAND_MAIN ? "main" : "off", now ? "takes hold" : "lets go");
+        if(now && !vr_disablehaptics.value)
+        {
+            if(Backend* be = backend())
+            {
+                be->haptic(h, 0.03f, 160.f, 0.45f);
+            }
+        }
+        if(vol <= 0.f || cl.viewentity <= 0)
+        {
+            continue;
+        }
+        static constexpr const char* clicks[3]{"vr/phys/grab_metal1.wav", "vr/phys/grab_metal2.wav", "vr/phys/grab_metal3.wav"};
+        if(sfx_t* sfx = S_PrecacheSound(clicks[gripRng.getI(0, 2)]))
+        {
+            vec3_t org{s.pos[h].x, s.pos[h].y, s.pos[h].z};
+            const float pct = za::clamp(vr_snd_pitch_jitter.value, 0.f, 25.f) * 0.01f;
+            S_StartSoundPitch(cl.viewentity, h == HAND_MAIN ? SND_CHAN_HAND : SND_CHAN_HAND2, sfx, org, vol, 1.f,
+                1.f + gripRng.getF(-pct, pct));
+        }
+    }
+}
+
 } // namespace
 
 void apply(hands::State& s)
@@ -946,6 +1017,7 @@ void apply(hands::State& s)
     }
     applyHand(s, originalRots, HAND_MAIN, HAND_OFF, mode);
     applyHand(s, originalRots, HAND_OFF, HAND_MAIN, mode);
+    gripFeedback(s);
 }
 
 bool aiming()
@@ -1061,6 +1133,7 @@ void reset()
         gripLength[h] = 0.f;
         heldWas[h] = -1;
         carriedWas[h] = false;
+        helpingWas[h] = false;
     }
     lastTime = -1.0;
     fastShare = 0.f;
@@ -1354,6 +1427,12 @@ void updateHotspots(hands::State& s)
             glm::distance(s.pos[hand], handle[other]) < carriedGripRadius)
         {
             s.hotspot[hand] = body::HS_CARRIED_GRIP;
+        }
+        // On the other gun's magazine (immersive reloading; the view's last frame: nearer it than the carried gun's
+        // handle, the held gun's other grips): gripping there holds it (QC vr_reload.qc).
+        if(s.onMagazine[hand] && held::handEmpty(hand))
+        {
+            s.hotspot[hand] = body::HS_MAGAZINE;
         }
     }
 }

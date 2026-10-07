@@ -106,6 +106,15 @@ void() button_fire =
     {
         dprint(sprintf("button: %s (target \"%s\") pressed by %s: %s\n", self.model, self.target, self.enemy.classname,
             vr_button_how != NULLSTR ? vr_button_how : "used or shot"));
+        if(self.enemy.classname == "player")
+        {
+            // Where the hand was (a hand far from the button, or from the player, is a stray press).
+            float h = VRGetTouchingHand(self.enemy);
+            vector hp = h == cVR_OffHand ? self.enemy.offhandpos : self.enemy.handpos;
+            dprint(sprintf("button:   hand %g at %v, %.0f from the button's middle %v, %.0f from the player %v (time %.2f)\n",
+                h, hp, vlen(hp - realorigin(self)), realorigin(self), vlen(hp - self.enemy.origin), self.enemy.origin,
+                time));
+        }
     }
     vr_button_how = NULLSTR;
     particle2(realorigin(self), '0 0 0', QVR_PARTICLE_PRESET_SPARKS, 64);
@@ -546,9 +555,24 @@ void() func_button =
         vector dir = self.movedir;
         vector ang = vectoangles(dir);
 
+        // Its board's half height (vr_text3d.cpp's boards: 8 units a character at scale 1, half a character a row,
+        // 1.2 characters of margin and bezel). On a button shorter than 24 (vrstart2's) just over the button, its board
+        // 2 above the top; on the others 12 over its centre, as always.
+        float sc = self.worldtext_scale != 0 ? self.worldtext_scale : 1;
+        float rows = 1;
+        float n = strlen(self.worldtext);
+        for(float i = 0; i < n; i++)
+        {
+            if(str2chr(self.worldtext, i) == 10) rows++;
+        }
+        float half = 8 * sc * (rows * 0.5 + 1.2);
+        float up = 12;
+        if(self.size_z < 24) up = self.size_z * 0.5 + 2 + half;
+        self.vr_button_label_top = up + half - self.size_z * 0.5;
+
         float wth = worldtext_hmake();
         worldtext_hsettext(wth, self.worldtext);
-        worldtext_hsetpos(wth, realorigin(self) + '0 0 12' - dir * 6.0);
+        worldtext_hsetpos(wth, realorigin(self) + '0 0 1' * up - dir * 6.0);
         worldtext_hsetangles(wth, ang);
         worldtext_hsethalign(wth, self.worldtext_halign);
         
@@ -751,7 +775,15 @@ void() func_weapon_grabbable =
 //   12 gremlin, 13 centroid (Scourge of Armagon), 14 mummy, 15 phantom swordsman, 16 wrath,
 //   17 overlord (Dissolution of Eternity).
 // Tests only (impulse 241's vr_test_spawn; no button): 18 the Guardian (Dissolution of Eternity's monster_morph, its
-// Egyptian look), 19 the dragon (Dissolution of Eternity), 20 the marksman ogre (Honey's model, progs/mogre.mdl).
+// Egyptian look), 19 the dragon (Dissolution of Eternity), 20 the marksman ogre (Honey's in a Honey map, else Dimension of the
+// Machine's: id's ogre; honey_mon_ogre.qc);
+// Dawn of the Machine's from 30: 30 an infected grunt, 31 knight, 32 enforcer, 33 death knight (vr_mg3_infected.qc),
+// 34 the rocket ogre (vr_mg3_ogre.qc), 35 the demo dog (vr_mg3_demodog.qc), 36 the ranged knight (vr_mg3_rknight.qc).
+// Dawn of the Machine's (read in place from the owned pack: owned/mg3/), from 40: 40 the orb, 41 the slime, 42 a ghost,
+// 43 a hanging sacrifice (misc_sacrifice: gibbed when struck or used), 44 the lava man (MG3's: monster_lava_man_mg3),
+// 45 the super shambler; from 60 (vr_mg3_shub.qc): 60 Shub-Niggurath (free: killed, she ends nothing), 61 a shub zombie
+// (rising: vr_mg3_shub_zombie.qc), 62 an eye of hers that spirals spheres at you, 63 her seeker eye.
+// 45 the super shambler; from 50 its bosses: 50 Chthon (monster_boss_final, killable, woken at you; vr_mg3_chthon.qc).
 // The model of the second row's monsters: the mission packs' (and the registered game's) may not be
 // installed, and precaching a missing model is an error.
 string(float choice) VR_EnemyDispenser_Model =
@@ -771,9 +803,75 @@ string(float choice) VR_EnemyDispenser_Model =
     else if(choice == 17) { return "progs/s_wrath.mdl"; }
     else if(choice == 18) { return "progs/morph_eg.mdl"; }
     else if(choice == 19) { return "progs/dragon.mdl"; }
-    else if(choice == 20) { return "progs/mogre.mdl"; }
+    else if(choice == 20) { return "progs/ogre.mdl"; } // (Honey's model only in its maps: monster_ogre_marksman)
+    // Dawn of the Machine's (30..: vr_mg3_*.qc). The infected: the registered game's models they turn into.
+    else if(choice == 30) { return "progs/zombie.mdl"; }
+    else if(choice == 31) { return "progs/zombie.mdl"; }
+    else if(choice == 32) { return "progs/demon.mdl"; }
+    else if(choice == 33) { return "progs/demon.mdl"; }
+    else if(choice == 34) { return "owned/mg3/progs/ogre_rocket.mdl"; } // (MG3's own: its pack's, read in place)
+    else if(choice == 35) { return "owned/mg3/progs/dog_explosive.mdl"; }
+    else if(choice == 36) { return "owned/mg3/progs/rknight.mdl"; }
+    else if(choice == 40) { return "owned/mg3/progs/teleporter_eye_blink.mdl"; }
+    else if(choice == 41) { return "progs/tarbaby.mdl"; }
+    else if(choice == 42) { return "progs/player.mdl"; }
+    else if(choice == 43) { return "owned/mg3/progs/player_hanging_animated.mdl"; }
+    else if(choice == 44) { return "owned/mg3/progs/lavaman.mdl"; }
+    else if(choice == 45) { return "owned/mg3/progs/shambler_blood.mdl"; }
+    else if(choice == 60) { return "owned/mg3/progs/teleporter_eye.mdl"; } // (Shub: the registered game's model, her eyes MG3's)
+    else if(choice == 61) { return "progs/zombie.mdl"; }
+    else if(choice == 62) { return "owned/mg3/progs/teleporter_eye.mdl"; }
+    else if(choice == 63) { return "owned/mg3/progs/teleporter_eye.mdl"; }
+    else if(choice == 50) { return "progs/boss.mdl"; } // (id's: MG3's spheres too, its spawn checks)
 
     return NULLSTR;
+};
+
+// The monster `choice` (a dispenser's "weapon") spawned on self: its classname and its spawn function, as a map's
+// (VR_Probe_Kinds makes each kind the map's dispensers can make this way as the map loads, then removes it).
+void(float choice) VR_EnemyDispenser_Spawn =
+{
+    // The classname a map's monster has: sight sounds, obituaries and the like go by it.
+         if(choice == 0)  { self.classname = "monster_army";        monster_army(); }
+    else if(choice == 1)  { self.classname = "monster_ogre";        monster_ogre(); }
+    else if(choice == 2)  { self.classname = "monster_zombie";      monster_zombie(); }
+    else if(choice == 3)  { self.classname = "monster_shambler";    monster_shambler(); }
+    else if(choice == 4)  { self.classname = "monster_wizard";      monster_wizard(); }
+    else if(choice == 5)  { self.classname = "monster_knight";      monster_knight(); }
+    else if(choice == 6)  { self.classname = "monster_hell_knight"; monster_hell_knight(); }
+    else if(choice == 7)  { self.classname = "monster_dog";         monster_dog(); }
+    else if(choice == 8)  { self.classname = "monster_enforcer";    monster_enforcer(); }
+    else if(choice == 9)  { self.classname = "monster_demon1";      monster_demon1(); }
+    else if(choice == 10) { self.classname = "monster_shalrath";    monster_shalrath(); }
+    else if(choice == 11) { self.classname = "monster_tarbaby";     monster_tarbaby(); }
+    else if(choice == 12) { self.classname = "monster_gremlin";     monster_gremlin(); }
+    else if(choice == 13) { self.classname = "monster_scourge";     monster_scourge(); }
+    else if(choice == 14) { self.classname = "monster_mummy";       monster_mummy(); }
+    else if(choice == 15) { self.classname = "monster_sword";       monster_sword(); }
+    else if(choice == 16) { self.classname = "monster_wrath";       monster_wrath(); }
+    else if(choice == 17) { self.classname = "monster_super_wrath"; monster_super_wrath(); }
+    else if(choice == 18) { self.classname = "monster_morph";       self.spawnflags = 4 /* MORPH_EGYPT */; monster_morph(); }
+    else if(choice == 19) { self.classname = "monster_dragon";      monster_dragon(); }
+    else if(choice == 20) { self.classname = "monster_ogre_marksman"; monster_ogre_marksman(); }
+    else if(choice == 30) { self.classname = "monster_army_infected"; monster_army_infected(); }
+    else if(choice == 31) { self.classname = "monster_knight_infected"; monster_knight_infected(); }
+    else if(choice == 32) { self.classname = "monster_enforcer_infected"; monster_enforcer_infected(); }
+    else if(choice == 33) { self.classname = "monster_hell_knight_infected"; monster_hell_knight_infected(); }
+    else if(choice == 34) { self.classname = "monster_ogre_rocket"; monster_ogre_rocket(); }
+    else if(choice == 35) { self.classname = "monster_demodog"; monster_demodog(); }
+    else if(choice == 36) { self.classname = "monster_ranged_knight"; monster_ranged_knight(); }
+    else if(choice == 40) { self.classname = "monster_orb";         monster_orb(); }
+    else if(choice == 41) { self.classname = "monster_slime";       monster_slime(); }
+    else if(choice == 42) { self.classname = "monster_ghost";       monster_ghost(); }
+    else if(choice == 43) { self.classname = "misc_sacrifice";      misc_sacrifice(); }
+    else if(choice == 44) { self.classname = "monster_lava_man";    monster_lava_man_mg3(); }
+    else if(choice == 45) { self.classname = "monster_super_shambler"; monster_super_shambler(); }
+    else if(choice == 60) { self.classname = "monster_oldone_new"; monster_oldone_new(); self.mg3_shub_free = TRUE; }
+    else if(choice == 61) { self.classname = "monster_szombie"; monster_szombie(); }
+    else if(choice == 62) { self.classname = "monster_shub_eye"; monster_shub_eye(); }
+    else if(choice == 63) { self.classname = "monster_shub_seeker"; monster_shub_seeker(); }
+    else if(choice == 50) { MG3_Chthon_FromSpawner(activator); }
+
 };
 
 void() func_enemy_dispenser_use =
@@ -787,9 +885,17 @@ void() func_enemy_dispenser_use =
     {
         if(activator.classname == "player")
         {
-            if(choice == 20)
+            if(choice >= 40 && substring(mdl, 0, 6) == "owned/")
             {
-                centerprint(activator, "Needs Honey's marksman ogre (progs/mogre.mdl)");
+                centerprint(activator, "Needs Dawn of the Machine (mg3)");
+            }
+            else if(choice >= 30 && choice <= 33)
+            {
+                centerprint(activator, "Needs the registered Quake (pak1.pak)");
+            }
+            else if(choice >= 30)
+            {
+                centerprint(activator, "Needs Dawn of the Machine (its rerelease folder, mg3)");
             }
             else if(choice >= 14)
             {
@@ -815,28 +921,7 @@ void() func_enemy_dispenser_use =
         self.targetname = "vr_test_statue"; // (a statue wakes when used: woken below, as its map's trigger would)
     }
 
-    // The classname a map's monster has: sight sounds, obituaries and the like go by it.
-         if(choice == 0)  { self.classname = "monster_army";        monster_army(); }
-    else if(choice == 1)  { self.classname = "monster_ogre";        monster_ogre(); }
-    else if(choice == 2)  { self.classname = "monster_zombie";      monster_zombie(); }
-    else if(choice == 3)  { self.classname = "monster_shambler";    monster_shambler(); }
-    else if(choice == 4)  { self.classname = "monster_wizard";      monster_wizard(); }
-    else if(choice == 5)  { self.classname = "monster_knight";      monster_knight(); }
-    else if(choice == 6)  { self.classname = "monster_hell_knight"; monster_hell_knight(); }
-    else if(choice == 7)  { self.classname = "monster_dog";         monster_dog(); }
-    else if(choice == 8)  { self.classname = "monster_enforcer";    monster_enforcer(); }
-    else if(choice == 9)  { self.classname = "monster_demon1";      monster_demon1(); }
-    else if(choice == 10) { self.classname = "monster_shalrath";    monster_shalrath(); }
-    else if(choice == 11) { self.classname = "monster_tarbaby";     monster_tarbaby(); }
-    else if(choice == 12) { self.classname = "monster_gremlin";     monster_gremlin(); }
-    else if(choice == 13) { self.classname = "monster_scourge";     monster_scourge(); }
-    else if(choice == 14) { self.classname = "monster_mummy";       monster_mummy(); }
-    else if(choice == 15) { self.classname = "monster_sword";       monster_sword(); }
-    else if(choice == 16) { self.classname = "monster_wrath";       monster_wrath(); }
-    else if(choice == 17) { self.classname = "monster_super_wrath"; monster_super_wrath(); }
-    else if(choice == 18) { self.classname = "monster_morph";       self.spawnflags = 4 /* MORPH_EGYPT */; monster_morph(); }
-    else if(choice == 19) { self.classname = "monster_dragon";      monster_dragon(); }
-    else if(choice == 20) { self.classname = "monster_ogre_marksman"; monster_ogre_marksman(); }
+    VR_EnemyDispenser_Spawn(choice);
 
     setorigin(self, org);
     if(self.targetname == "vr_test_statue" && self.use)
@@ -858,7 +943,7 @@ void() func_enemy_dispenser =
     else
     {
         // The model now, if installed (no hitch at the first press); the monster's other models and
-        // its sounds are precached (late) when it first spawns.
+        // its sounds as the map ends spawning (vr_probe.qc: one made then removed).
         string mdl = VR_EnemyDispenser_Model(self.weapon);
         if(mdl != NULLSTR && fileexists(mdl))
         {

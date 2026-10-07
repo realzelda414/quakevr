@@ -38,6 +38,15 @@ QVR_MODEL_ID(VKsword, "progs/v_ksword.mdl")
 QVR_MODEL_ID(VHksword, "progs/v_hksword.mdl")
 QVR_MODEL_ID(VHammer, "progs/v_hammer.mdl")
 QVR_MODEL_ID(VCrowbar, "progs/v_crowbar.mdl")
+// Dawn of the Machine's Super Axe, read from the owned MG3 pack in place (vr_gamedir.cpp VR_OwnedFile; vr_mg3models.cpp
+// takes its arm away and lays it as Quake VR's axe): its own weapon (QC WID_SUPERAXE), apart from Hipnotic's Mjolnir.
+QVR_MODEL_ID(Mg3SuperAxe, "owned/mg3/progs/v_hammer.mdl")
+QVR_MODEL_ID(Mg3SuperAxeGlow, "owned/mg3/progs/v_hammer_glow.mdl")
+// Dawn of the Machine's monsters, read from the owned MG3 pack in place (QC vr_mg3_*.qc): their ragdoll rigs
+// (vr_ragdoll.cpp seedTables).
+QVR_MODEL_ID(Mg3OgreRocket, "owned/mg3/progs/ogre_rocket.mdl")
+QVR_MODEL_ID(Mg3DogExplosive, "owned/mg3/progs/dog_explosive.mdl")
+QVR_MODEL_ID(Mg3Rknight, "owned/mg3/progs/rknight.mdl")
 QVR_MODEL_ID(Soldier, "progs/soldier.mdl")
 QVR_MODEL_ID(Enforcer, "progs/enforcer.mdl")
 QVR_MODEL_ID(Knight, "progs/knight.mdl")
@@ -52,6 +61,8 @@ QVR_MODEL_ID(Shambler, "progs/shambler.mdl")
 QVR_MODEL_ID(Mummy, "progs/mummy.mdl")
 QVR_MODEL_ID(Shalrath, "progs/shalrath.mdl")
 QVR_MODEL_ID(Scor, "progs/scor.mdl")
+// Dawn of the Machine's super shambler, read from the owned MG3 pack in place (its ragdoll rig: vr_ragdoll.cpp).
+QVR_MODEL_ID(Mg3ShamblerBlood, "owned/mg3/progs/shambler_blood.mdl")
 QVR_MODEL_ID(Legholster, "progs/legholster.mdl")
 QVR_MODEL_ID(Vrflashlight, "progs/vrflashlight.mdl")
 QVR_MODEL_ID(BulletDecal, "progs/s_bullet.spr")
@@ -85,6 +96,8 @@ QVR_MODEL_TRAIT(AmmoBox, Prefix, "maps/b_")
 QVR_MODEL_TRAIT(ExplosiveBox, Prefix, "maps/b_explob")
 QVR_MODEL_TRAIT(ExplosiveCrate, Prefix, "maps/b_exbox")
 QVR_MODEL_TRAIT(ShellBox, Prefix, "maps/b_shell")
+QVR_MODEL_TRAIT(LiveShell, Prefix, "progs/vr_shell_") // a shell from the ammo pouch, and a taped pair (QC vr_reload.qc)
+QVR_MODEL_TRAIT(Magazine, Prefix, "progs/vr_mag_")    // a magazine from the ammo pouch or out of a gun (QC vr_reload.qc), and as drawn in one
 QVR_MODEL_TRAIT(NailBox, Prefix, "maps/b_nail")
 QVR_MODEL_TRAIT(RocketBox, Prefix, "maps/b_rock")
 QVR_MODEL_TRAIT(BatteryBox, Prefix, "maps/b_batt")

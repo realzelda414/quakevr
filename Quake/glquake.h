@@ -406,6 +406,7 @@ extern float r_matproj[16];
 extern float r_matviewproj[16];
 
 void R_NewGame (void);
+void R_FreePlayerTextures (void); // QVR: the players' coloured skins freed (a campaign switch)
 
 #define LIGHT_TILES_X			32
 #define LIGHT_TILES_Y			16
@@ -482,6 +483,8 @@ void R_MarkSurfaces (void);
 qboolean R_CullBox (vec3_t emins, vec3_t emaxs);
 qboolean R_CullModelForEntity (entity_t *e);
 void R_EntityMatrix (float matrix[16], vec3_t origin, vec3_t angles, unsigned char scale);
+float R_MoveLerpBlend (const entity_t *e); // QVR: how far along its move from previousorigin to currentorigin a stepping entity is drawn now
+float R_FrameLerpFinish (const entity_t *e); // QVR: when its frame lerp (from lerpstart) ends, with LERP_FINISH
 
 void R_InitParticles (void);
 void R_DrawParticles (qboolean alpha);

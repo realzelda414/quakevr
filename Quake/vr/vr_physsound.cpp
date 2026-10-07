@@ -54,6 +54,7 @@ constexpr int materialCount = static_cast<int>(Material::Count);
 constexpr float lightMass = 1.5f;  // kg: lighter plays the light recordings
 constexpr float heavyMass = 10.f;  // kg: this and heavier the heavy ones
 constexpr int maxImpactsAFrame = 6;
+constexpr float bodyIntervals = 2.f; // a body (a ragdoll, a corpse) knocks at most every this many vr_physsound_interval
 constexpr double bounceWindow = 3.0; // intervals (vr_physsound_interval) after a knock: a hit this soon is a bounce's
 constexpr float bounceShare = 0.35f; // tail, silent unless at least this share of the knock's volume
 constexpr int maxGrainsAFrame = 8;
@@ -61,7 +62,15 @@ constexpr float scrapeStartVolume = 0.05f; // a scrape starts this loud at least
 constexpr double scrapeDelay = 0.08; // s: a prop scrapes once it has slid this long (not a bounce's graze)
 constexpr double grainLength = 0.5; // s (make_physics_sounds.py GRAIN)
 constexpr double grainFade = 0.08;  // s: the next grain starts this long before one ends (FADE)
-constexpr int scrapeChannels[2] = {5, 7}; // the prop's own channels for its scrape (QC's props use 0 to 4)
+constexpr int scrapeChannels[2] = {5, 7}; // the prop's own channels for its scrape (QC's props use 0 to 4; a burning
+                                           // body's crackle 6: QC CHAN_BURN)
+constexpr float bodyScrapeGain = 0.7f;     // a body's drag (soft flesh on the floor): under a prop's scrape of its weight
+// A body's drag (its parts bump, roll and flop: their contacts come and go): it starts once it has slid this long, a
+// slide this short apart still in a row, and it stops only after that long without one; never again this soon after it
+// stopped (a falling ragdoll's limbs flopping: one shuffle, not a stutter).
+constexpr double bodyScrapeDelay = 0.15;
+constexpr double bodySlideGrace = 0.2;
+constexpr double bodyScrapeGap = 0.6;
 
 // The recordings: impacts by material and weight (light, medium, heavy), scrapes and grabs by material. The names are
 // literals: they outlive the server's precache list that points at them.
@@ -132,6 +141,8 @@ struct Body
     bool scraping{false};
     int channel{0};         // the next grain's (scrapeChannels)
     double nextGrain{0.0};
+    double lastSlide{-1e9};     // a body's (slide's `body`): the server's time it last slid
+    double scrapeStopped{-1e9}; // the server's time its last scrape stopped
 };
 
 struct Hit
@@ -141,6 +152,7 @@ struct Hit
     float mass, speed;
     glm::vec3 at;
     float volume;
+    bool body; // a ragdoll's or a corpse's (hit)
 };
 
 struct Slide
@@ -149,6 +161,7 @@ struct Slide
     Material material;
     float mass, slip, press;
     glm::vec3 at;
+    bool body;
 };
 
 // The server's state (the main thread): the precache indices, the props' sound state, this frame's hits and slides.
@@ -239,72 +252,29 @@ void precacheSet(const Set& set, Indices& out)
     return ind.index[k];
 }
 
-// A sound from entity `ent` on `channel` (0: any free one) at `at`, as SV_StartSound sends it (by precache index).
-bool emit(int ent, int channel, int index, float volume, float attenuation, const glm::vec3& at)
+// A sound from entity `ent` on `channel` (0: any free one) at `at`, as SV_StartSound sends it (by precache index), at
+// playback rate `pitch` (1 as recorded).
+bool emit(int ent, int channel, int index, float volume, float attenuation, const glm::vec3& at, float pitch = 1.f)
 {
     const int vol = static_cast<int>(za::lround(za::clamp(volume, 0.f, 1.f) * 255.f));
-    if(index <= 0 || vol <= 0 || sv.datagram.cursize > MAX_DATAGRAM - 24)
+    if(index <= 0 || vol <= 0)
     {
         return false;
     }
-    int mask = 0;
-    if(vol != DEFAULT_SOUND_PACKET_VOLUME)
+    const vec3_t origin{at.x, at.y, at.z};
+    if(!SV_WriteSound(&sv.datagram, ent, channel, index, vol, attenuation, origin, pitch))
     {
-        mask |= SND_VOLUME;
-    }
-    if(attenuation != DEFAULT_SOUND_PACKET_ATTENUATION)
-    {
-        mask |= SND_ATTENUATION;
-    }
-    if(ent >= 8192)
-    {
-        if(sv.protocol == PROTOCOL_NETQUAKE)
-        {
-            return false;
-        }
-        mask |= SND_LARGEENTITY;
-    }
-    if(index >= 256)
-    {
-        if(sv.protocol == PROTOCOL_NETQUAKE)
-        {
-            return false;
-        }
-        mask |= SND_LARGESOUND;
-    }
-    MSG_WriteByte(&sv.datagram, svc_sound);
-    MSG_WriteByte(&sv.datagram, mask);
-    if(mask & SND_VOLUME)
-    {
-        MSG_WriteByte(&sv.datagram, vol);
-    }
-    if(mask & SND_ATTENUATION)
-    {
-        MSG_WriteByte(&sv.datagram, static_cast<int>(attenuation * 64.f));
-    }
-    if(mask & SND_LARGEENTITY)
-    {
-        MSG_WriteShort(&sv.datagram, ent);
-        MSG_WriteByte(&sv.datagram, channel);
-    }
-    else
-    {
-        MSG_WriteShort(&sv.datagram, (ent << 3) | channel);
-    }
-    if(mask & SND_LARGESOUND)
-    {
-        MSG_WriteShort(&sv.datagram, index);
-    }
-    else
-    {
-        MSG_WriteByte(&sv.datagram, index);
-    }
-    for(int i = 0; i < 3; i++)
-    {
-        MSG_WriteCoord(&sv.datagram, at[i], sv.protocolflags);
+        return false;
     }
     VR_BroadcastMessageEnd(); // a boundary (vr_server.cpp)
     return true;
+}
+
+// A random playback rate within vr_snd_pitch_jitter percent of 1 (the impacts: one recording less alike each time).
+[[nodiscard]] float jitter()
+{
+    const float pct = za::clamp(vr_snd_pitch_jitter.value, 0.f, 25.f);
+    return 1.f + (static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 2.f - 1.f) * pct * 0.01f;
 }
 
 // What entity `ent` plays on `channel` stopped (svc_stopsound: an entity under 8192).
@@ -362,6 +332,7 @@ void stop(int ent, int channel)
 void stopScrape(int num, Body& b, const char* why)
 {
     b.scraping = false;
+    b.scrapeStopped = qcvm->time;
     for(const int ch : scrapeChannels)
     {
         stop(num, ch);
@@ -470,6 +441,14 @@ Material materialOf(edict_t* ent, const qmodel_t* model)
     {
         return Material::None; // (QC vr_grenade.qc's bounce: weapons/bounce.wav)
     }
+    if(info.has(modelmeta::Trait::LiveShell))
+    {
+        return Material::None; // (QC vr_reload.qc's tink: the spent shells' vr/shell_tink*.wav)
+    }
+    if(info.has(modelmeta::Trait::Magazine))
+    {
+        return Material::Metal; // a magazine: a steel box (a cell: a steel can)
+    }
     if(info.has(modelmeta::Trait::Rock))
     {
         return Material::Stone;
@@ -556,9 +535,10 @@ int precacheOne(const char* name)
     return progs::bindings().isVrProgs && sv.state == ss_loading ? precacheName(name) : 0;
 }
 
-void hit(int num, Material material, float mass, float speed, const glm::vec3& at)
+void hit(int num, Material material, float mass, float speed, const glm::vec3& at, bool body)
 {
-    if(material == Material::None || master() <= 0.f || speed < vr_physsound_min_speed.value)
+    if(material == Material::None || master() <= 0.f || speed < vr_physsound_min_speed.value ||
+        (body && (vr_physsound_bodies.value <= 0.f || speed < vr_physsound_body_min_speed.value)))
     {
         return;
     }
@@ -566,15 +546,17 @@ void hit(int num, Material material, float mass, float speed, const glm::vec3& a
     {
         if(h.num == num)
         {
-            if(speed > h.speed)
+            // The loudest (a ragdoll's: of its parts, the heavier part's at a like speed; a prop's: the hardest).
+            if(impactVolume(material, mass, speed) > impactVolume(h.material, h.mass, h.speed))
             {
                 h.speed = speed;
+                h.mass = mass;
                 h.at = at;
             }
             return;
         }
     }
-    state.hits.pushBack({num, material, mass, speed, at, 0.f});
+    state.hits.pushBack({num, material, mass, speed, at, 0.f, body});
 }
 
 bool scrapesWanted()
@@ -582,11 +564,11 @@ bool scrapesWanted()
     return master() > 0.f && vr_physsound_scrape.value > 0.f;
 }
 
-void slide(int num, Material material, float mass, float slip, float press, const glm::vec3& at)
+void slide(int num, Material material, float mass, float slip, float press, const glm::vec3& at, bool body)
 {
     if(material != Material::None)
     {
-        state.slides.pushBack({num, material, mass, slip, press, at});
+        state.slides.pushBack({num, material, mass, slip, press, at, body});
     }
 }
 
@@ -600,7 +582,7 @@ void frameEnd()
     za::Vector<Hit>& hits = state.hits;
     for(Hit& h : hits)
     {
-        h.volume = impactVolume(h.material, h.mass, h.speed);
+        h.volume = impactVolume(h.material, h.mass, h.speed) * (h.body ? za::clamp(vr_physsound_bodies.value, 0.f, 2.f) : 1.f);
     }
     za::quickSort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) { return a.volume > b.volume || (a.volume == b.volume && a.num < b.num); });
     int played = 0;
@@ -614,7 +596,8 @@ void frameEnd()
         // Too soon after its last knock (unless twice as loud); or, a little later, a bounce's tail (a small hop after a
         // landing: far quieter than the knock).
         const double since = now - b.lastHit;
-        const float interval = za::max(vr_physsound_interval.value, 0.f);
+        // (A body: longer, for all its parts: a pile settling, a ragdoll's limbs flopping, knock once.)
+        const float interval = za::max(vr_physsound_interval.value, 0.f) * (h.body ? bodyIntervals : 1.f);
         const bool soon = since < interval && h.volume < 2.f * b.lastVolume;
         const bool bounce = since < bounceWindow * interval && h.volume < bounceShare * b.lastVolume;
         if(played >= maxImpactsAFrame || soon || bounce)
@@ -632,7 +615,7 @@ void frameEnd()
         const char* name = "";
         const int index = pick(impactSets[m][w], state.impacts[m][w], &name);
         const float attenuation = h.volume > 0.35f ? 1.f : 1.5f;
-        if(!emit(h.num, 0, index, h.volume, attenuation, h.at))
+        if(!emit(h.num, 0, index, h.volume, attenuation, h.at, jitter()))
         {
             continue;
         }
@@ -642,8 +625,8 @@ void frameEnd()
         b.lastVolume = h.volume;
         if(debug())
         {
-            Con_Printf("physsound: %.2f %d %s impact %s (%.1f kg, %s) at %.2f m/s: volume %.2f\n", qcvm->time, h.num,
-                PR_GetString(EDICT_NUM(h.num)->v.classname), materialName(h.material), h.mass,
+            Con_Printf("physsound: %.2f %d %s impact %s%s (%.1f kg, %s) at %.2f m/s: volume %.2f\n", qcvm->time, h.num,
+                PR_GetString(EDICT_NUM(h.num)->v.classname), materialName(h.material), h.body ? " body" : "", h.mass,
                 w == 0 ? "light" : w == 1 ? "medium" : "heavy", h.speed, h.volume);
         }
     }
@@ -654,12 +637,17 @@ void frameEnd()
     for(const Slide& s : state.slides)
     {
         Body& b = bodyOf(s.num);
-        if(b.slideFrame + 1 != frame)
+        if(b.slideFrame + 1 != frame && !(s.body && now - b.lastSlide <= bodySlideGrace))
         {
             b.slideSince = now;
         }
         b.slideFrame = frame;
-        const float volume = scrapeVolume(s.material, s.mass, s.slip, s.press);
+        if(s.body)
+        {
+            b.lastSlide = now;
+        }
+        const float volume = scrapeVolume(s.material, s.mass, s.slip, s.press) *
+                             (s.body ? za::clamp(vr_physsound_bodies.value, 0.f, 2.f) * bodyScrapeGain : 1.f);
         if(volume <= 0.01f)
         {
             b.slideFrame = 0; // (not sliding enough: as if it didn't)
@@ -667,7 +655,8 @@ void frameEnd()
         }
         if(!b.scraping)
         {
-            if(now - b.slideSince < scrapeDelay - 1e-4 || volume < scrapeStartVolume)
+            if(now - b.slideSince < (s.body ? bodyScrapeDelay : scrapeDelay) - 1e-4 || volume < scrapeStartVolume ||
+               (s.body && now - b.scrapeStopped < bodyScrapeGap))
             {
                 continue;
             }
@@ -708,7 +697,13 @@ void frameEnd()
         {
             continue;
         }
-        if(b.slideFrame != frame || num >= qcvm->num_edicts || EDICT_NUM(num)->free || master() <= 0.f)
+        const bool gone = num >= qcvm->num_edicts || EDICT_NUM(num)->free || master() <= 0.f;
+        if(!gone && b.slideFrame != frame && qcvm->time - b.lastSlide <= bodySlideGrace)
+        {
+            still.pushBack(num); // (a body: its parts' contacts come and go)
+            continue;
+        }
+        if(b.slideFrame != frame || gone)
         {
             stopScrape(num, b, b.slideFrame != frame ? "not sliding" : "gone");
             continue;

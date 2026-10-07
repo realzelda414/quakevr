@@ -16,6 +16,7 @@ Use mangle instead of angle, so you can set pitch or roll as well as yaw.  'pitc
 */
 void() info_intermission =
 {
+    MG3_RuneRemoved(); // Dawn of the Machine: a view only with so many runes (vr_mg3_defs.qc)
 };
 
 void() SetChangeParms =
@@ -36,6 +37,7 @@ void() SetChangeParms =
     if(MG1_Hub()) { SetNewParms(); return; }
 
     VR_HandGrenade_LevelEnd(); // an unarmed hand grenade in a hand: its rocket goes on with you (vr_grenade.qc)
+    VR_Reload_LevelEnd(); // a round in a hand back into the reserve (vr_reload.qc)
 
     VR_ItemUtil_EntDelItem(self, IID_KEY1);
     VR_ItemUtil_EntDelItem(self, IID_KEY2);
@@ -273,6 +275,14 @@ void() SetNewParms =
     parm36 = 0;
     parm37 = 0;
     parm38 = 0;
+    // Immersive reloading (vr_reload.qc): the shotgun you start with (in the right hip holster) comes loaded from your
+    // shells, as a map's pickup does; after that its magazine is loaded by hand from the ammo pouch. (The holsters'
+    // reload filled it as it was first drawn.)
+    if(VR_Reload_ManualFor(parm14))
+    {
+        parm36 = min(WeaponIdToBaseClipSize(parm14), parm4);
+        parm4 = parm4 - parm36;
+    }
     parm41 = 0; // (new weapons: new ids)
     parm42 = 0;
     parm43 = 0;
@@ -347,6 +357,10 @@ void() DecodeLevelParms =
     parm29 = VR_Pack_WeaponFlags(parm15, parm29);
     if(!VR_Pack_WeaponAvailable(parm16)) { parm16 = WID_FIST; }
     parm30 = VR_Pack_WeaponFlags(parm16, parm30);
+
+    // Dawn of the Machine: boss2 on skill 3 is Bloody Nightmare, whose levels start with the axe and shotgun only.
+    MG3_BloodyNightmareLevel();
+    MG3_BloodyNightmareStrip();
 
     self.items = parm1;
     self.health = parm2;
@@ -505,7 +519,7 @@ void() ExitIntermission =
             MG_intermissiontext = "";
             return;
         }
-        if((cvar("vr_campaign") == 3 || cvar("vr_campaign") == 4) && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
+        if((cvar("vr_campaign") >= 3 && cvar("vr_campaign") <= 5) && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
         if(world.model == "maps/e1m7.bsp")
         {
             WriteByte(MSG_ALL, SVC_CDTRACK);
@@ -599,7 +613,7 @@ void() ExitIntermission =
 
     if(intermission_running == 3)
     {
-        if((cvar("vr_campaign") == 3 || cvar("vr_campaign") == 4) && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
+        if((cvar("vr_campaign") >= 3 && cvar("vr_campaign") <= 5) && nextmap == "start" && !coop) { localcmd("disconnect\nmenu_credits\n"); return; }
         if(!cvar_hget(cvarh_registered))
         {    // shareware episode has been completed, go to sell screen
             WriteByte(MSG_ALL, SVC_SELLSCREEN);
@@ -736,6 +750,12 @@ void() changelevel_touch =
     }
 
     nextmap = self.map;
+    // Dawn of the Machine: the new game Bloody Nightmare starts leaves the hub for Shub (boss2), not secret2.
+    if(MG3_Campaign() && mapname == "hub" && nextmap == "secret2"
+        && (serverflags & MG3_SF_BN_NEWGAME) && (serverflags & MG3_SF_BN_ACTIVE))
+    {
+        nextmap = "boss2";
+    }
     if(MG_WorldCampaign()) MG_intermissiontext = self.endtext;
     // Dimension of the Machine finished: its runes cleared, as upstream (the hub's final gate closed again: a coop game,
     // which keeps serverflags, would otherwise start with it open).
@@ -1052,6 +1072,7 @@ void() PutClientInServer =
     self.dmg = 2;           // initial water damage
     self.super_damage_finished = 0;
     self.radsuit_finished = 0;
+    self.lavasuit_finished = 0;
     self.invisible_finished = 0;
     self.invincible_finished = 0;
     self.effects = 0;
@@ -1144,6 +1165,15 @@ void() PutClientInServer =
 
     self.handpos = self.origin;
     self.offhandpos = self.origin;
+    // VR: the muzzles and loading ports with them, until the first move places them (left at the world's origin, the
+    // engine's line from each hand to its muzzle crossed the map on the first frames, pressing a button on the way:
+    // ROUND21.md, "A far button pressed at a map load").
+    self.muzzlepos = self.origin;
+    self.offmuzzlepos = self.origin;
+    self.loadportpos = self.origin;
+    self.offloadportpos = self.origin;
+    self.magboxx = self.magboxy = self.magboxz = '0 0 0'; // (no magazine, until a move says)
+    self.offmagboxx = self.offmagboxy = self.offmagboxz = '0 0 0';
 
     self.handvel = '0 0 0';
     self.offhandvel = '0 0 0';
@@ -1504,7 +1534,7 @@ void() WaterMove =
 
     if(self.watertype == CONTENT_LAVA)
     {    // do damage
-        if(self.dmgtime < time)
+        if(self.dmgtime < time && self.lavasuit_finished <= time) // (the lava suit: none, MG3)
         {
             if(self.radsuit_finished > time)
                 self.dmgtime = time + 1;
@@ -1516,7 +1546,7 @@ void() WaterMove =
     }
     else if(self.watertype == CONTENT_SLIME)
     {    // do damage
-        if(self.dmgtime < time && self.radsuit_finished < time)
+        if(self.dmgtime < time && self.radsuit_finished < time && self.lavasuit_finished < time) // (the lava suit too)
         {
             self.dmgtime = time + 1;
             T_Damage(self, world, world, 4*self.waterlevel);
@@ -1912,6 +1942,33 @@ void() CheckPowerups =
         }
     }
 
+// lava suit (Dawn of the Machine, vr_mg3_items.qc)
+    if(self.lavasuit_finished)
+    {
+        self.air_finished = time + VR_AirSupply();        // don't drown
+        if(self.lavasuit_finished < time + 3)
+        {
+            if(self.lavasuit_time == 1)
+            {
+                sprint(self, "$mg3_qc_lavasuit_wearing_out");
+                stuffcmd(self, "bf\n");
+                sound(self, CHAN_AUTO, "items/suit2.wav", 1, ATTN_NORM);
+                self.lavasuit_time = time + 1;
+            }
+            if(self.lavasuit_time < time)
+            {
+                self.lavasuit_time = time + 1;
+                stuffcmd(self, "bf\n");
+            }
+        }
+        if(self.lavasuit_finished < time)
+        {    // just stopped
+            if(self.radsuit_finished < time) VR_ItemUtil_EntDelItem(self, IID_SUIT);
+            self.lavasuit_time = 0;
+            self.lavasuit_finished = 0;
+        }
+    }
+
 //JIM
 // wetsuit
     if(self.wetsuit_finished)
@@ -2049,6 +2106,8 @@ void() PlayerPostThink =
     // FRIKBOT
     if(BotPostFrame())
         return;
+
+    MG3_LorePostThink(); // QVR: a trigger_lore's text, gone a while after leaving it (vr_mg3_triggers.qc)
 
     if(self.view_ofs == '0 0 0')
     {
@@ -2498,7 +2557,7 @@ void(entity targ, entity attacker) ClientObituary =
                 if(attacker.classname == "monster_demon1")
                     bprint(" was eviscerated by a Fiend\n");
                 if(attacker.classname == "monster_dog")
-                    bprint(" was mauled by a Rottweiler\n");
+                    bprint(attacker.vr_mg3_mon ? " was blown up by a demo dog\n" : " was mauled by a Rottweiler\n"); // (QVR: MG3's demo dog)
                 if(attacker.classname == "monster_dragon")
                     bprint(" was annihilated by the Dragon\n");
                 if(attacker.classname == "monster_dragon_dead")
@@ -2507,20 +2566,25 @@ void(entity targ, entity attacker) ClientObituary =
                     bprint(" was blasted by an Enforcer\n");
                 if(attacker.classname == "monster_fish")
                     bprint(" was fed to the Rotfish\n");
-                if(attacker.classname == "monster_hell_knight")
+                if(attacker.classname == "monster_hell_knight" || attacker.classname == "monster_ranged_knight") // (QVR: MG3's too)
                     bprint(" was slain by a Death Knight\n");
                 if(attacker.classname == "monster_knight")
                     bprint(" was slashed by a Knight\n");
                 if(attacker.classname == "monster_ogre")
-                    bprint(" was destroyed by an Ogre\n");
-                if(attacker.classname == "monster_oldone")
+                    bprint(attacker.vr_mg3_mon ? " rode a rocket to hell\n" : " was destroyed by an Ogre\n"); // (QVR: MG3's rocket ogre)
+                if(attacker.classname == "monster_oldone" || MG3_Shub_Is(attacker) || MG3_Shub_IsChild(attacker)) // (QVR: MG3's and her eyes)
                     bprint(" became one with Shub-Niggurath\n");
                 if(attacker.classname == "monster_shalrath")
                     bprint(" was exploded by a Vore\n");
                 if(attacker.classname == "monster_shambler")
                     bprint(" was smashed by a Shambler\n");
                 if(attacker.classname == "monster_tarbaby")
-                    bprint(" was slimed by a Spawn\n");
+                {
+                    if(attacker.mg3_slimekin)
+                        bprint(" was slimed\n"); // (Dawn of the Machine's slime: $mg3_qc_obit_slime)
+                    else
+                        bprint(" was slimed by a Spawn\n");
+                }
                 if(attacker.classname == "monster_vomit")
                     bprint(" was vomited on by a Vomitus\n");
                 if(attacker.classname == "monster_wizard")
@@ -2546,7 +2610,18 @@ void(entity targ, entity attacker) ClientObituary =
                 if(attacker.classname == "monster_sword")
                     bprint(" was slit open by a Phantom Swordsman\n");
                 if(attacker.classname == "monster_lava_man")
-                    bprint(" fries in Hephaestus' fury\n");
+                {
+                    if(attacker.mg3_lavaman)
+                        bprint(" was burned to a crisp\n"); // (Dawn of the Machine's: $mg3_qc_obit_lavaman)
+                    else
+                        bprint(" fries in Hephaestus' fury\n");
+                }
+
+                // Dawn of the Machine
+                if(attacker.classname == "monster_super_shambler")
+                    bprint(" met the blood shambler\n"); // ($mg3_qc_obit_supershambler)
+                if(attacker.classname == "monster_orb")
+                    bprint(" was blasted by an Orb\n"); // (upstream has none)
                 if(attacker.classname == "monster_morph")
                     bprint(" was crushed by a Guardian\n");
                 if(attacker.classname == "monster_mummy")
@@ -2786,6 +2861,7 @@ void(float xHand, float xInMelee, float* xOutMeleeAttackFinished, float* xOutInM
                     if(!DoXHandMelee(xHand, WID_SWORD, "", W_SwordMelee))
                     if(!DoXHandMelee(xHand, WID_CHAINSAW, "", W_ChainsawMelee))
                     if(!DoXHandMelee(xHand, WID_CROWBAR, "", W_CrowbarMelee))
+                    if(!DoXHandMelee(xHand, WID_SUPERAXE, "", W_SuperAxeMelee)) // vr_mg3_weapons.qc
                         DoXHandMeleeImpl(xHand, "", W_GunMelee);
             vr_melee_blunt = FALSE;
             vr_sgib_at = '0 0 0';
@@ -2862,7 +2938,8 @@ void(float xThreshold) VR_Headbutt_Hit =
 
     self.in_headbutt = FALSE;
     self.headbutt_start_time = time + 0.4;
-    sound(self, CHAN_OTHER, "fisthit.wav", 1.0, ATTN_NORM);
+    VR_SoundVaried(self, CHAN_OTHER, "fisthit.wav", 1.0, ATTN_NORM);
+    VR_Blunt_HitLayer(self, CHAN_AUTO, victim);
     VRGunHaptic(cVR_OffHand, 0.15, 100, 1.0);
     VRGunHaptic(cVR_MainHand, 0.15, 100, 1.0);
 

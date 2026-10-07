@@ -553,11 +553,14 @@ cvar_t sv_gameplayfix_random = {"sv_gameplayfix_random", "1", CVAR_ARCHIVE};
 static void PF_random (void)
 {
 	float		num;
+	int		r = VR_ProbeRandom (); // QVR: the probes' own numbers (the C library's left as they were)
 
+	if (r < 0)
+		r = rand ();
 	if (sv_gameplayfix_random.value)
-		num = ((rand() & 0x7fff) + 0.5f) * (1.f / 0x8000);
+		num = ((r & 0x7fff) + 0.5f) * (1.f / 0x8000);
 	else
-		num = (rand() & 0x7fff) / ((float)0x7fff);
+		num = (r & 0x7fff) / ((float)0x7fff);
 
 	G_FLOAT(OFS_RETURN) = num;
 }
@@ -680,7 +683,11 @@ static void PF_sound (void)
 	volume = G_FLOAT(OFS_PARM3) * 255;
 	attenuation = G_FLOAT(OFS_PARM4);
 
-	SV_StartSound (entity, channel, sample, volume, attenuation);
+	// QVR: a sixth argument, the pitch in percent (DP's and FTE's speedpct: 100 as recorded; 0 the same)
+	if (qcvm->argc > 5 && G_FLOAT(OFS_PARM5) > 0.f)
+		SV_StartSoundPitch (entity, channel, sample, volume, attenuation, G_FLOAT(OFS_PARM5) * 0.01f);
+	else
+		SV_StartSound (entity, channel, sample, volume, attenuation);
 }
 
 /*

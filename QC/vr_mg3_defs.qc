@@ -90,3 +90,129 @@ float(float kind) MG3_Capacity = {
     else if(kind == AID_CELLS) base = MG3_BASE_CELLS;
     return base + MG3_UPGRADE_AMOUNT * MG3_BitCount(MG3_UpgradeMask(kind));
 };
+
+// ----------------------------------------------------------------------------
+// serverflags in campaign 5 (upstream items_runes.qc SIGIL_E1..4, mg3_items.qc): the four runes and the Bloody
+// Nightmare bits (ACTIVE: this game is one; DISCOVERED: the hell knight's head found; NEWGAME: the new game it starts;
+// TETTE: an easter egg).
+float MG3_SF_RUNE1 = 1;
+float MG3_SF_RUNE2 = 2;
+float MG3_SF_RUNE3 = 4;
+float MG3_SF_RUNE4 = 8;
+float MG3_SF_RUNES = 15;
+float MG3_SF_BN_ACTIVE = 64;
+float MG3_SF_BN_DISCOVERED = 128;
+float MG3_SF_BN_NEWGAME = 256;
+float MG3_SF_TETTE = 512;
+
+// Keys only MG3's boss maps and editor leave (no behaviour of their own here): the finales' waves and teleport target
+// (monster_boss_final, monster_oldone_new: their tasks), a mapper's note, a light compiler key; KEX's worldspawn sky
+// fog factor, which the engine reads as Ironwail's "skyfog" (gl_sky.c).
+.string wave1, wave2, wave3, tele_target;
+.string comment;
+.float dirt;
+.float fog_sky_factor;
+
+// The runes brought home (upstream RemovedRuneCheck's count).
+float() MG3_RuneCount = {
+    float n = 0;
+    if(serverflags & MG3_SF_RUNE1) n++;
+    if(serverflags & MG3_SF_RUNE2) n++;
+    if(serverflags & MG3_SF_RUNE3) n++;
+    if(serverflags & MG3_SF_RUNE4) n++;
+    return n;
+};
+// Upstream RemovedRuneCheck: campaign 5's maps are played again after runes come home (map1 first and later), and
+// an entity whose spawnflag NOT_IF_<n>_RUNES (262144 << n, n = 0..4) matches the count is not there (removed: TRUE).
+// Items, monsters, triggers, corpses and intermission views ask (StartItem and the monsters' and triggers' starts
+// through MG_MonsterInhibited/MG_MonsterPrepare, misc_corpse, info_intermission).
+float MG3_NOT_IF_0_RUNES = 262144;
+float() MG3_RuneRemoved = {
+    if(!MG3_Campaign() || self.spawnflags < MG3_NOT_IF_0_RUNES) return FALSE;
+    float bit = MG3_NOT_IF_0_RUNES, n = MG3_RuneCount();
+    while(n > 0) { bit = bit * 2; n--; }
+    if(!(self.spawnflags & bit)) return FALSE;
+    remove(self);
+    return TRUE;
+};
+
+// ----------------------------------------------------------------------------
+// Bloody Nightmare (MG3_PLAN.md M3-09; upstream client.qc DecodeLevelParms, combat.qc T_Damage, triggers.qc
+// setskill_use). Campaign 5 only: skill 3 with serverflags MG3_SF_BN_ACTIVE.
+float() MG3_BloodyNightmare = { return MG3_Campaign() && (serverflags & MG3_SF_BN_ACTIVE); };
+
+// The player's blows on others do 80%; what others do to the player 120% (not player against player).
+float(entity targ, entity attacker, float damage) MG3_BloodyNightmareDamage = {
+    if(attacker.classname == "player" && targ.classname != "player") return damage * 0.8;
+    if(targ.classname == "player" && attacker.classname != "player") return damage * 1.2;
+    return damage;
+};
+
+// Each level of a Bloody Nightmare game starts with the axe and the shotgun only (and the Super Axe, the bloody
+// super shotgun once found, and the best armour worn); ammunition is kept. Upstream rewrites parm1 (its items) and
+// the selected weapon; here the level parms of the hands and holsters (VR's inventory, client.qc SetChangeParms) are
+// rewritten before DecodeLevelParms reads them: any other weapon (a gun, an enemy sword, the chainsaw...) is gone
+// with its record, and the axe and shotgun (and that super shotgun) are put back in an empty holster when gone.
+float(float wid) MG3_BNKeeps = {
+    if(wid == WID_FIST || wid == WID_AXE || wid == WID_SHOTGUN || wid == WID_MJOLNIR) return TRUE;
+    return wid == WID_SUPER_SHOTGUN && ((MG3_bloody | parm56) & MG3_BLOODY_SSG);
+};
+float(float wid) MG3_BNHas = {
+    return parm8 == wid || parm10 == wid || parm11 == wid || parm12 == wid || parm13 == wid || parm14 == wid
+        || parm15 == wid || parm16 == wid;
+};
+// Into the default holster when free (the axe's parm13, the shotgun's parm14: SetNewParms), else the first free one.
+void(float wid, float preferred) MG3_BNPutBack = {
+    if(MG3_BNHas(wid)) return;
+    if(preferred == 13 && parm13 == WID_FIST) { parm13 = wid; parm27 = 0; parm35 = 0; parm45 = 0; return; }
+    if(preferred == 14 && parm14 == WID_FIST) { parm14 = wid; parm28 = 0; parm36 = 0; parm46 = 0; return; }
+    if(parm11 == WID_FIST) { parm11 = wid; parm25 = 0; parm33 = 0; parm43 = 0; return; }
+    if(parm12 == WID_FIST) { parm12 = wid; parm26 = 0; parm34 = 0; parm44 = 0; return; }
+    if(parm13 == WID_FIST) { parm13 = wid; parm27 = 0; parm35 = 0; parm45 = 0; return; }
+    if(parm14 == WID_FIST) { parm14 = wid; parm28 = 0; parm36 = 0; parm46 = 0; return; }
+    if(parm15 == WID_FIST) { parm15 = wid; parm29 = 0; parm37 = 0; parm47 = 0; return; }
+    if(parm16 == WID_FIST) { parm16 = wid; parm30 = 0; parm38 = 0; parm48 = 0; return; }
+    if(parm8 == WID_FIST) { parm8 = wid; parm23 = 0; parm31 = 0; parm41 = 0; return; }
+    if(parm10 == WID_FIST) { parm10 = wid; parm24 = 0; parm32 = 0; parm42 = 0; }
+};
+void() MG3_BloodyNightmareStrip = {
+    if(!MG3_Campaign() || !(serverflags & MG3_SF_BN_ACTIVE)) return;
+    if(skill != 3) { // the skill was changed: no longer Bloody Nightmare
+        serverflags = serverflags - (serverflags & MG3_SF_BN_ACTIVE);
+        return;
+    }
+    if(!MG3_BNKeeps(parm8)) { parm8 = WID_FIST; parm23 = 0; parm31 = 0; parm41 = 0; }
+    if(!MG3_BNKeeps(parm10)) { parm10 = WID_FIST; parm24 = 0; parm32 = 0; parm42 = 0; }
+    if(!MG3_BNKeeps(parm11)) { parm11 = WID_FIST; parm25 = 0; parm33 = 0; parm43 = 0; }
+    if(!MG3_BNKeeps(parm12)) { parm12 = WID_FIST; parm26 = 0; parm34 = 0; parm44 = 0; }
+    if(!MG3_BNKeeps(parm13)) { parm13 = WID_FIST; parm27 = 0; parm35 = 0; parm45 = 0; }
+    if(!MG3_BNKeeps(parm14)) { parm14 = WID_FIST; parm28 = 0; parm36 = 0; parm46 = 0; }
+    if(!MG3_BNKeeps(parm15)) { parm15 = WID_FIST; parm29 = 0; parm37 = 0; parm47 = 0; }
+    if(!MG3_BNKeeps(parm16)) { parm16 = WID_FIST; parm30 = 0; parm38 = 0; parm48 = 0; }
+    MG3_BNPutBack(WID_AXE, 13);
+    MG3_BNPutBack(WID_SHOTGUN, 14);
+    float items = IT_SHOTGUN | IT_AXE;
+    if((MG3_bloody | parm56) & MG3_BLOODY_SSG) { MG3_BNPutBack(WID_SUPER_SHOTGUN, 0); items = items | IT_SUPER_SHOTGUN; }
+    if(parm3 <= 0) {} // (no armour left: none worn)
+    else if(parm1 & IT_ARMOR3) items = items | IT_ARMOR3;
+    else if(parm1 & IT_ARMOR2) items = items | IT_ARMOR2;
+    else if(parm1 & IT_ARMOR1) items = items | IT_ARMOR1;
+    parm1 = items;
+};
+// Upstream's level-select rule: boss2 entered on skill 3 is a Bloody Nightmare game.
+void() MG3_BloodyNightmareLevel = {
+    if(MG3_Campaign() && mapname == "boss2" && skill == 3) serverflags = serverflags | MG3_SF_BN_ACTIVE | MG3_SF_BN_DISCOVERED;
+};
+
+// Official Campaigns > Dawn of the Machine: Bloody Nightmare (shown once vr_mg3_bn_discovered): the menu sets skill 3
+// and vr_mg3_bn_start before the start map loads; its first frame turns the game into a Bloody Nightmare one.
+void() MG3_Frame = {
+    if(!cvar("vr_mg3_bn_start")) return;
+    if(time < 1 || !find(world, classname, "player")) return; // (once the player is in: he is told)
+    cvar_set("vr_mg3_bn_start", "0");
+    if(!MG3_Campaign()) return;
+    serverflags = serverflags | MG3_SF_BN_ACTIVE | MG3_SF_BN_DISCOVERED;
+    cvar_set("skill", "3");
+    skill = 3;
+    MG_PrintAll("$mg3_selected_bloody_nightmare"); // (centre printed: a broadcast this early may come before the client)
+};

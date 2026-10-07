@@ -60,7 +60,7 @@ Useful settings:
 |---|---|---|
 | `vr_snap_turn` | 0 | degrees per snap; 0 = smooth turning at `vr_turn_speed` |
 | `vr_controller_legacy_pose` | 1 | the hands follow the controller pose the old engine used (SteamVR's raw pose, rebuilt from OpenXR's grip pose for Touch/Quest and Index controllers), so the old tuned offsets line up; 0 uses the grip pose as is |
-| `vr_gunangle`, `vr_offhandpitch` | 39.5, 40.25 | weapon pitch relative to the controller (the shipped values, tuned for that raw pose): Options > VR Settings > Gun Angle |
+| `vr_gunangle`, `vr_offhandpitch` | 39.5, 40.25 | weapon pitch relative to the controller (the shipped values, tuned for that raw pose): Advanced VR > Weapons > Hand/Gun Calibration (both hands at once: VR Settings > Hand Pitch) |
 | `vr_world_scale` | 1.25 | |
 | `vr_height_calibration`, `vr_floor_offset` | 1.646, -21 | |
 | `vr_mirror` | 1 | desktop window: 0 off, 1 left eye, 2 both eyes |
@@ -150,6 +150,10 @@ The round logs before round 21 (`ROUND6.md` to `ROUND20.md`) were removed on 202
 prints it.
 
 - **New in this round** (details in `docs/vr-port/ROUND21.md`; each section ends with an "In the headset" list):
+  - **Swing Through Enemies** (ROUND21.md, "Melee phasing"; off by default): Combat > Melee > Swing Through Enemies.
+    While your hand swings fast, the fist and what it holds pass through enemies instead of being drawn stopped at their
+    bodies (the blow was always tested where your real hand goes: this shows it there). **Tell me if melee feels better
+    or worse with it on**, and try Swing Through Speed and Follow-Through.
   - **The crowbar** (ROUND21.md, same title): one lies in the firing range's prop area, north of the chainsaw. Hold it
     as a sword: by its black tape, one hand or two (the other hand below the first, or on the bar above the hands,
     sliding along it short of the hook). Its blows are blunt, the hook's hardest; its chisel end jabs as a pommel does;
@@ -233,7 +237,7 @@ prints it.
     **Anti-Aliasing** choice (Recording page); climbing's mantle and lenient grab, the props' settings and two caches
     are cheaper or fixed with the same results; no GPU-sampling thread runs unless you profile (Debug > Profiling and
     Memory > Memory Log: GPU keeps it on for the Memory Log).
-  - **Profiling: where the time goes** (ROUND21.md, same title): VR Settings > Advanced VR Options > Debug >
+  - **Profiling: where the time goes** (ROUND21.md, same title): Advanced VR > Debug >
     Profiling and Memory. Profiler Panel (In Front) shows each system's milliseconds a frame with a bar against the budget; CSV
     Capture writes a row a second while on; the Hitch Log names what took a slow frame's time. See "Profiling" below.
     Also found with it: the foveated rendering's setup waited for the driver each eye (0.2-0.4 ms of the CPU a frame,
@@ -665,7 +669,7 @@ prints it.
     health box (or, in single player, a weapon lying in the level). It sparkles. Pull the trigger to lock on,
     then flick your hand back or up. It flies to your hand in an arc and arrives in about half a second. Close
     your hand (grip) as it arrives to catch it; too early or too late and it drops at your feet. It flies through
-    walls, so it cannot get stuck. Tuning: VR Settings > Advanced VR Options > Force Grab. `developer 1` prints
+    walls, so it cannot get stuck. Tuning: Advanced VR > Force Grab. `developer 1` prints
     each pull, catch and miss.
   - **Melee:** any swing faster than `vr_melee_speed` (3 m/s) hits once, whatever its direction; damage grows
     with speed, and punches (knuckles first) do 25% more (`vr_melee_punch_mult`). Tell me if weak swings still
@@ -843,7 +847,7 @@ is the most useful thing to send me along with a description. In particular:
 - **The picture is wrong** (double vision, wrong scale, swimming): `vr_status` output while it happens, and a
   screenshot of the desktop mirror (`vr_mirror 2` shows both eyes).
 - **Hands or weapons are in the wrong place or at the wrong angle:** `vr_status` and `vr_dumpview` while holding the
-  pose. Gun Angle in VR Settings is the first thing to adjust.
+  pose. Hand Pitch on VR Settings (Hand Calibration) is the first thing to adjust.
 - **Fingers wrong on something held** (through it, or stuck open): `vr_debug_grasp 1` prints each grasp solve;
   `vr_grasp_dump main hand.obj` writes the drawn hand and the held model as an .obj to send me. Hand/Gun
   Calibration > Fit Fingers to What You Hold off shows the controller's curls alone, Jointed Hand off the old
@@ -901,7 +905,7 @@ vr_spectator_scale 0.75; vr_bullettime_duration 60; vr_bullettime; wait60`, then
 in separate runs. For exact image comparison use `vr_fixed_frames 1; vr_dither 0; r_drawentities 0;
 r_particles 0; vr_particles 0; r_dynamic 0` before the map, to exclude simulation variation from the fixture.
 The two headset images must match while the spectator colour changes. Check the toggle with
-`vr_menu_search vr_spectator_bullettime_fx` and the boards with `vr_menu_path_check maps/vrcalibration.map`.
+`vr_menu_search vr_spectator_bullettime_fx` and the boards with `vr_menu_path_check maps/vrcalibration.map` (and `maps/vrtesthall.map`).
 
 The spectator camera's own settings: `vr_spectator_rate` (1 every frame, 2 or 3 every 2nd or 3rd, more than 3 at most
 that many images a second; the window pass shows the last image between: `window view` outside `spectator` in the
@@ -914,10 +918,16 @@ timer), which the report shows as "frame cap" (idle), not work.
 Crash reports (ROUND21.md, "clang-cl"): in a test run (`QVR_NO_ERROR_DIALOG`, which the kit sets) a crash writes
 `qvr_crash.txt` (the exception and the crashing thread's stack, file and line) and `qvr_crash.dmp` in the game folder,
 and run.sh prints it as `ENGINE CRASH`. `vr_debug_crash` (an access violation) or `vr_debug_crash abort` crashes on
-purpose, to check it (Debug > Profiling and Memory > Crash the Game).
+purpose, to check it (Debug > Profiling and Memory > Crash the Game). A crash in a map's own data (a garbage node,
+plane or marksurface) is often the hunk, cache or zone touched from a pool thread: `vr_zone_threadcheck 1` first in
+the script crashes at the culprit instead (ROUND21.md, "Map load crash: the cache's LRU list from the pool").
 
-Menus (ROUND21.md, "Menu: scroll memory and shortcuts"): `menu_vr pos` prints the menu shown and, on a VR page, its
-selected row (with the header above it), its scroll and the page Back goes to. While a drop-down list is open (ROUND21.md, "Drop-down lists in the VR menus") a second line gives its row, highlighted choice, scroll and box (menu coordinates, for `vr_mock_laser`). `menu_vr recent [clear]` prints Search's recent list (SRECENT lines, each row's middle in menu coordinates while Search is shown) or clears it (quakevr/search_recent.txt). `menu_vr list`: every page's number
+`quit` in a test run (`QVR_TEST_BACKGROUND`, which the kit sets) quits at once, whatever has the keys: without a map
+the console is up, so a script's `toggleconsole` closed it and `quit` opened the quit confirmation and waited there
+until the kit's timeout (so did `quit` after `menu_vr ...`). A player's `quit` outside the console still asks.
+
+Menus (ROUND21.md, "Menu: scroll memory and shortcuts"): `menu_vr pos` prints the layout (ROUND21.md, "The menus' corner column moved left": where the menu's text starts, the corner buttons' right edge and bottom, beside or over the menu; on a VR page the rows' top and count), then the menu shown and, on a VR page, its
+selected row (with the header above it), its scroll and the page Back goes to. While a drop-down list is open (ROUND21.md, "Drop-down lists in the VR menus") a second line gives its row, highlighted choice, scroll and box (menu coordinates, for `vr_mock_laser`). `menu_vr rows` (Debug > Tools > Menu Rows) prints the VR page's rows as drawn (MROW: row, top y, label) and MROWS: rows shown, scroll and its most, the section gap (`vr_menu_section_gap`) and whether the mouse finds each row where it is drawn (`rowAt agrees`). `menu_vr pos` also prints where Back goes (`back to <page>, menu <m_state>` for a menu outside the VR pages), the main menu's row spacing and group gap, Single Player's row, the flat banner's place, the corner's version label (ROUND21.md, "Versions and the menus' version label": its text, box, what the menu draws right to under it, or why it was left out), and the selected slider's setting, its value as shown and its step (`(fine)` while the fine modifier is held); `vr_mock_key <key> down|up` holds or lets go of a key (`shift`: fine steps). `menu_vr recent [clear]` prints Search's recent list (SRECENT lines, each row's middle in menu coordinates while Search is shown) or clears it (quakevr/search_recent.txt). `menu_vr list`: every page's number
 and place in the tree. `menu_vr dump` prints every page reached from VR Settings and its rows (MDPAGE/MDROW lines);
 `python Misc/quakevr/menu_coverage.py before.log after.log` compares two dumps (every setting and action still on a
 page, the tree, pages over 30 rows; ROUND21.md, "Menus reorganized"). Page numbers: 13 Grappling Hook, 23 Weapon
@@ -1144,6 +1154,19 @@ where the first good pull may start it. Mjolnir in water (ROUND21.md, "Prop size
 defaults"): `impulse 153` with `vr_weapon_grip_mode 1`, then `impulse 215` strikes its lightning (15 cells) as a blow
 does. Prop size: `vr_prop_size_NN` (the prop's slot; `vr_prop_id_NN <model>` gives a free one to a model), then
 `vr_debug_box3d 1; vr_physics_list <classname>` prints `size x`, the body's box, the entity box and the drawn scale.
+Dawn of the Machine's weapons (ROUND21.md, "Dawn of the Machine (MG3): weapons"; any campaign with the owned MG3
+data): `impulse 168` puts the Super Axe in the main hand (188: the off hand), `vr_mg3_wtest` 1 reports (data, hands,
+holsters, cells, the burst chain), 2 checks its blows and burst on spawned ogres and a zombie (a few seconds; 19
+checks), 3 its pickup (hold the grip: `+grabright; vr_mock_button main grip 1`), 4 MG3 map2's own (`vr_campaign_native
+mg3; map map2`), 5 puts one in the main hand and holster 0 for changelevel/save checks, 6 checks every axe button of
+an MG3 map (map6/7/8, secret5: shots and blasts leave them shut, each blow kind opens one), 7 stands you before the
+nearest closed axe button (then a real punch: `vr_motion_play punch_straight noplace yaw <your yaw>`), 8 says whether
+it opened, 9 the laser cannon's bolt damage (15/20 in campaign 5, else 18/25) and bounces off the floor, 10 takes the
+nearest `weapon_laser_gun`, 11 sets both bloody bits (any campaign), 12 reports them, 13 takes the map's bloody
+shotguns (none: two spawned ahead), 14 sets the Bloody Nightmare new-game flag (then `changelevel`), 15 clears the
+bits (`vr_debug_shots 1`: the bloody super shotgun's 28 pellets); developer 1 prints `superaxe:` and `bloody:`
+lines (each blow, each burst). Real swings: `motion_synth.py slash_horizontal_rtl --weapon superaxe --distance 0.85`.
+`vr_anchor_nearest owned/mg3/progs/v_hammer.mdl x y z` finds its anchors; `Misc/quakevr/fit_superaxe.py` its fit.
 The crowbar (ROUND21.md, "The crowbar"): `impulse 167` puts one in the main hand (187: the off hand; hold the grip:
 `+grabright; vr_mock_button main grip 1`, or `vr_weapon_grip_mode 1`), `impulse 217` drops one 48 units ahead, `216`
 takes the one lying nearest into an empty hand (the grip held), `218` prints each lying about and whether your hands
@@ -1167,7 +1190,7 @@ prints each shot ("grunt's shotgun fired: hand 1, 9 left") and each empty click.
 `vr_mock_hand main 0.25 1.20 -0.40 70 0 0`. The grunts' burst rifles and the rifle's lasers (ROUND21.md, "The grunts' burst rifles; the enforcer rifle's faster lasers"): `vr_debug_shots 1` prints each burst round and each rifle laser (fired: its speed; what it hit, its damage); `vr_hull_hittest <distance> <spread>` gives a spread's share of hits on you; `hullhit/hit_test.sh <worktree> 2160 "0:256" 24` a grunt's damage to you in 30 s (`vr_grunt_burst 0`: the shotgun's). `Misc/quakevr/make_enemyguns.py` makes the models (`check_mdl_holes.py`
 checks them).
 Enemy shoves (ROUND21.md, "Grunts and enforcers shove you"): `developer 1`, `vr_test_spawn 0` (or `8`),
-`vr_test_spawn_dist 40`, `impulse 241` on vrcalibration's open floor: "enemy shove: ... shoves the player ...", "the player
+`vr_test_spawn_dist 40`, `impulse 241` on vrtesthall's open floor: "enemy shove: ... shoves the player ...", "the player
 slid 63.7 units"; parry with the crowbar across (`vr_weapon_grip_mode 1; impulse 167; vr_mock_hand main 0.15 1.35 -0.35
 0 90 0`); `impulse 219` shoves the nearest monster (staggered: it can't shove); side view `vr_mock_camera -1.8 1.3 -0.7 0
 -90`. His real parries against a grunt: `vr_motion_play C:/OHWorkspace/quakevr-iw/quakevr/motions/parry_pose_<...>.csv
@@ -1205,6 +1228,14 @@ prop to lay the rope over). The kit's `scratch/hook/run_all.sh` runs the 18 scen
 Leaning (round 21): `vr_mock_hand head <x> <y> <z> <pitch> <yaw> <roll>` and `vr_mock_play` head keyframes with angles
 turn the head too (pitch up, roll as the hands'); `vr_debug_lean 1` writes `lean_trace.txt` (the game directory): the
 head, the box, the lean, the pelvis, the feet and the lean's hold and cues, every frame.
+Leaning through stick turns (ROUND21.md, the section of that name): `bash Misc/quakevr/lean/lean_turn_test.sh <agent> ["0 2"] [cases]`
+prints the body's drift in the room (`vr_body_error`) after a lean, a turn or move, and straightening up; with
+`vr_lean_turn 2` about 1 cm at most throughout, 0 after. `vr_debug_body_error 1` logs it twice a second.
+Stray button presses at a load (ROUND21.md, "A far button pressed at a map load"): `bash Misc/quakevr/buttons/stray_press_test.sh <agent>` loads vrstart2 and vrstart 5 times each, then 20 times a save
+made with the off hand held up beside vrstart2's Turning button, and presses it once for real: `stray presses 0, real
+presses 1, long lines 0`. `vr_debug_wallbuttons 1` (Debug > Views > Wall Buttons) prints each press with the hand's
+position and its distance from the button and from the player; `developer 1` a hand's line to its muzzle longer than any
+weapon (refused).
 Body calibration (ROUND21.md, "Body calibration"): `vr_bodycal standing` runs it in the mock too. A synthetic person
 doing its poses is a take of raw tracking played alongside: `vr_motion_play <take> watch noplace`, then
 `vr_bodycal standing` in the same frame (the scratchpad's `bodycal/gentake.py` makes them); `vr_bodycal_print`
@@ -1214,13 +1245,18 @@ VR Calibration (ROUND21.md, "VR Calibration"): from the main menu, `togglemenu; 
 vr_mock_stick main 0 0` puts the cursor on VR CALIBRATION, `vr_test_modal_answer 1` answers the next confirmation dialog
 by itself (0: no), then `vr_mock_button main primary 1` / `0`. `vr_setup_test_take <take>` plays a synthetic person's
 take (as above, a Windows path: `cygpath -m`) from the body step's first frame and stops it after. `vr_setup here` runs
-it in any map, `vr_setup_skip` goes on to the next step (Body Calibration stopped). A wall button: `setpos <x> <y> 24 0
-<yaw> 0` 26 units in front of its face, then `vr_mock_hand main 0.0 1.4 -0.85` (from `-0.4`) presses it. **A button's
-command (QC `localcmd`) is appended after everything left in the script**: to see its effect, end the script with
-`alias fin "<checks>;quit"; bind ABUTTON fin; toggleconsole; wait5; toggleconsole; wait5; vr_mock_button main primary
-1` (the two toggles put the keys back to the game: the A button's binding then runs after the buttons' commands).
-`vr_setup_option list` prints every setting and its choice. `vr_menu_path_check [maps/vrcalibration.map]` checks the
-boards' menu paths (any missing: `MENU PATH MISSING`).
+it in any map, `vr_setup_skip` goes on to the next step (Body Calibration stopped). In the room `togglemenu` pauses it
+("paused on Body Calibration's page", `menu_vr pos` on page "Body Calibration" row "Position"); two more `togglemenu`s
+close the menu and it starts again. The doorway to the hub: `setpos 0 -100 24 0 -90 0; noclip` (setpos leaves noclip
+on), `vr_mock_stick off 0 1; wait60`; the trigger's `changelevel` runs after the rest of the script, so end it with
+`bind ABUTTON mapname; toggleconsole; wait5; toggleconsole; wait5; vr_mock_button main primary 1` (`"mapname" is
+"vrstart"`). The test hall's wall buttons (`map vrtesthall`): `setpos <x> <y> 24 0 <yaw> 0` 26 units in front of its
+face, then `vr_mock_hand main 0.0 1.4 -0.85` (from `-0.4`) presses it. **A button's command (QC `localcmd`) is appended
+after everything left in the script**: to see its effect, end the script with `alias fin "<checks>;quit"; bind ABUTTON
+fin; toggleconsole; wait5; toggleconsole; wait5; vr_mock_button main primary 1` (the two toggles put the keys back to
+the game: the A button's binding then runs after the buttons' commands). `vr_setup_option list` prints every setting
+and its choice. `vr_menu_path_check [maps/vrcalibration.map]` (and `maps/vrtesthall.map`) checks the boards' menu paths
+(any missing: `MENU PATH MISSING`).
 Elbow tucked by the face (ROUND21.md, the section of that name): `Misc/quakevr/armik/armsweep.py <tag> poses|orient|play ["<cvars>"]` (run from a scratch folder; `QVR_AGENT=<agent>`) poses the arms with the author's calibration and prints the elbows (cm past, behind and below the shoulder, the swing, the strain, `tuck`); `contin.py` and `orientsum.py` summarise the sweeps; `"vr_body_elbow_tuck 0"` is the old IK exactly. `vr_debug_arm 1` lines end with `tuck` and `torso` (the swing out of the torso).
 Arms options and holster limits (ROUND21.md, "Arms options after body calibration; holster limits"): `cvarlist
 vr_bodycal_` and `cvarlist vr_body_tweak` show the measurements and the tweaks (typing `vr_bodycal_undo` runs Undo;
@@ -1712,7 +1748,14 @@ trust. Run it with `SDL_ASSERT=abort` in the environment (the kit's run.ps1 sets
 quit` and `map start; wait200; map e1m1; wait30; impulse 9; vr_flashlight 1; wait200; quit`: `exit=0` each. Exit 42
 means an assertion: put a `Sys_Error` before the suspect `SDL_assert` (its message lands in `qvr_error.txt`) to see
 which. warden's lit water used to fail `num_instances > 0` in R_AddBModelCall (ROUND21.md, "Zero-instance water
-calls").
+calls"). The kit runs it with `bash <kit>/build.sh <name> --debug` (QC and the Debug engine; MSBuild's log in the
+worktree's `scratch/build_debug.log`), then `bash <kit>/run.sh <name> -Debug -Script "..."`: the same run as Release's
+(SDL_ASSERT=abort set, as for every run), and an assertion prints as `exit=42 (an SDL assertion failed ...)`. Its
+console shows OpenGL's debug messages (`GL api error ...`), so filter on `ENGINE|exit=|TIMEOUT` rather than `rror`.
+A clean run has no `GL api error` or `GL api undefined` line (ROUND21.md, "GL errors in Debug builds"): filter on
+`GL api (error|undefined)|GL error caller|exit=` to check. Each error or undefined-behaviour message is followed, once
+per distinct stack, by `GL error caller: fn (file.c:12) < caller (file.c:34) < ...` (the debug output is synchronous,
+so the GL call that failed is on that stack; frames in the driver show as addresses).
 
 
 ## Slipgate and melee regression fixtures (2026-10-04)
@@ -1792,3 +1835,76 @@ and **Same-Frame Parry Hits** (both grant 500 health; the dragon requires Rogue 
 (impulse 249) and **A Melee Blow Now** (impulse 242). With `notarget`, the latter is a controlled blow through
 the actual parry path. In VR, check a knight/ogre's multi-hit attack, crossed arms, counter timing, and turn
 Parry Stops Attacks off to compare. Do not tune or replay archived melee takes for this check.
+
+## Immersive reloading (2026-10-07)
+
+`bash Misc/quakevr/reload/reload_test.sh <agent>` (RELOAD_PLAN.md; ROUND21.md, "Immersive manual reloading"): the QC
+self-test (`vr_reload_test 9; impulse 125`: `reload: PASS|FAIL ...`, `reload: N passed, M failed`), then by the mock
+hands: `impulse 154; vr_test_weaponinst 7; impulse 120` (the shotgun into the off hand), `vr_mock_hand_to main
+ammopouch` (the ammo pouch's reach point; `vr_dumpview` prints `ammo pouch at ...`), `+grabmain; vr_mock_button main
+grip 1` (a shell taken), `vr_mock_hand_to main lport [units below]` (the held shell at the off hand's gun's loading
+port: in), a shell let go of away from the pouch (lying about), `vr_mock_hand_to main nearest vr_ammo_shell 12`, grip,
+then `... 1` (taken again: the fist must arrive gripping), let go of at the pouch (refunded). `vr_reload_test 0;
+impulse 125` prints the counts; `vr_reload_debug 1` (with `developer 1`) each take, load, refund and loss, 2 a held
+shell's distance to the port every frame.
+Magazines (phase 2): the same script's section 4: `impulse 156; vr_test_weaponinst 7; impulse 120` (the nailgun into
+the off hand), `vr_mock_button off secondary 1` (B/Y: its magazine drops), the main hand at the pouch takes a magazine,
+`vr_mock_hand_to main lport` seats it (the well), the empty main hand gripping at `lport` holds the magazine: moved in
+small steps it stays (`vr_mock_hand_to main by ...`), jumped away with a turn in one frame (`vr_mock_hand main ... 0 0 70`)
+it comes out into the hand; a magazine brought up in small steps to a full gun does nothing, jumped there it bumps the
+old one out. `vr_reload_debug 2` prints the pull's speed and snap and the bump's speed every frame.
+The author's rounds 2 and 3 (section 6; ROUND21.md, "Immersive reloading: rounds 2 and 3"): the bump is two steps (a hit
+only knocks the old magazine out: `knocked out by a hit at N m/s`; the new one seats once taken away and back:
+`vr_mock_hand_to main lport 8`, then `lport`); `vr_mock_hand_to main lportmid` puts a held magazine's middle at the
+well (not seated: it seats by its top); `vr_mock_hand_to main mag 0` with the grip closing there is the two-handed
+grip on a magazine gun's magazine (`hand 1 holds the magazine of the gun in hand 0`, `vr_dumpview`: `helping 1`); out by
+`vr_mock_hand_to main mag -6 0` (`pulled off at`), `vr_mock_hand_turn main 0 0 80` (a wrist snap in one frame:
+`snapped off at`) or 40 small steps apart (`the hands N units further apart`). A grip already closed moved onto a grip
+prints `2h grip: ... already closed: no hold (vr_2h_grip_edge)`. The ammo button: `vr_mock_hand_to main wbutton
+<front|side|back> [units]` puts the main fingertip off the off gun's button; `developer 1` prints `weapon button N:
+pressed` or `not pressed, the fingertip came A deg off its face (cone C)`. Run the mock scripts one at a time per
+worktree: two run.sh at once on the same worktree share its base folder and fail.
+The author's magazine notes (section 8; ROUND21.md, "Immersive reloading: magazines, both grips, the pull"): the gun in
+the main hand with grip mode Hold (`vr_weapon_grip_mode 0`, `+grabright; vr_mock_button main grip 1; impulse 156`).
+`vr_mock_hand_to <hand> mag <along> [<out>]` puts the hand on the attached magazine of the other hand's gun (its box,
+`hands::State::magBox`: `along` -1 its far end .. 1 its feed end, `out` units off its side; it prints the box's size);
+`heldspot 0` is the gun's own two-handed grip. The checks: both grips hold it two-handed (`vr_dumpview` `helping 1`),
+only the magazine latches; the four ways (12 small steps stay; `mag -6 0` in a frame `pulled off at`; `vr_mock_hand_turn
+off 0 0 80` `snapped off at`; 40 steps apart `the hands N units further apart`); Pull Reach 0 (a unit off its side: no
+hold; inside: held); a hit 0.3 units off its far end (`knocked out by a hit at N m/s, D units from it, T from its
+top`); a gun handed off to the off hand (the main hand lets go while the off hand holds `heldspot 0`): its magazine
+pulled out and seated again. The mock's hand arrives in one frame, far faster than a hand: set
+`vr_reload_bump_speed 100` while it comes. `vr_reload_debug 2` prints the hold's pull, snap and apart every frame, 3 each
+empty hand's distance off the magazine's box. The report line ends `, main mag M`.
+The ammo button (section 9): `vr_mock_hand_to main wbutton <degrees> [units] [azimuth]` (0 its front, 180 behind), 20
+approaches in a straight line at a quarter unit a frame from 0-60 degrees (95% must press) and 20 from 120-180 (none).
+
+## Put-away transition (2026-10-07)
+
+`bash Misc/quakevr/collectfx_test.sh <agent>` (ROUND21.md, "Put-away transition"): a shells box (`vr_test_spawn 101`,
+`vr_test_spawn_hold 1`) let go of at the right hip holster (`vr_mock_hand_to main holster 3`) and at the ammo pouch, the
+silver key (`vr_test_spawn 113`) at the hip holster, with `vr_debug_collect_fx 1` (`collect fx: <model> (entity N, drawn
+pose) by hand H into hotspot S`, then `gone in`): each taken once (`You got ...`, the reserve 20 more), drawn going in;
+`vr_collect_fx 0` nothing drawn; a save and load and a map change while it goes in. `vr_debug_collect_fx 2` prints each
+frame's size and distance left. Pictures: `vr_mock_camera 0.9 1.4 -0.9 25 150` (the player from the front right, the
+right hip in view), screenshots every `wait4` after the release (about a fifth of the way each).
+
+## Shotgun auto pump (2026-10-07)
+
+`bash Misc/quakevr/autopump_test.sh <agent>` (ROUND21.md, "Shotgun auto pump"): one shot of the shotgun in the main hand
+(`impulse 154`, `+attack`) with `vr_debug_weaponfx 1` (`autopump hand H start|back|home t T (real R ...)`, `shells eject
+hand H t T (auto pump back at B)`): at 72 and 120 Hz (`vr_fixed_frames_rate`) the shell leaves in the frame the fore-end
+reaches the back and the stroke is home 0.3 s after the shot; in bullet time at 0.25x the same game times take four
+times as long in real time; with `vr_autopump 0` no stroke and the shell 0.22 s after the shot; the off hand's shotgun
+the same. `vr_debug_weaponfx 2` prints the travel every frame. Pictures: `vr_autopump_hold 0..1` holds the fore-end at
+that point of the stroke (0.35-0.45 at the back); `vr_light_test` lights the gun; a side view of the main hand's gun
+(`vr_mock_hand main 0.15 1.2 -0.45 70 0 0`): `vr_mock_camera 0.62 1.22 -0.74 3 90`; from behind above the right rod:
+`vr_mock_camera 0.3 1.3 -0.55 20 60`.
+The super shotgun broken open (phase 2b; section 7): `impulse 155; vr_test_weaponinst 7; impulse 120` (it into the off
+hand), `+offhandattack` (both barrels: `vr_reload_test 0; impulse 125` prints `reload: the super shotgun open 0 spent
+2`), `+flickreloadleft` (`broken open by a flick: 2 spent and 0 live thrown out`), the trigger again (`a dry click`),
+the pouch and `vr_mock_hand_to main lport` (the breech, turned with the barrels: `2 into the gun`), the flick again
+(`closed by a flick`). The pry: `vr_mock_hand_to main heldspot 0` and the grip (`ssg: both hands on it`), then the main
+hand down 10 units in four frames (`ssg: pried open`, `broken open by the pry`), up again (`ssg: the barrels lifted
+shut`); `vr_reload_debug 2` prints the pry's angle every frame and `ssg: hand N open A deg, its breech ...` (the drawn
+barrels against the model's turned breech: `turned 0.00 off`). The self-test's section: `reload: PASS ... super shotgun`.

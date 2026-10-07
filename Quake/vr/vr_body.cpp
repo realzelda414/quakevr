@@ -7,6 +7,8 @@
 #include "vr_backend.hpp"
 #include "vr_cvars.hpp"
 #include "vr_lines.hpp"
+#include "vr_menu.hpp"
+#include "vr_protocol.hpp"
 #include "vr_units.hpp"
 
 #include "Zancle/Math/Abs.hpp"
@@ -223,6 +225,24 @@ constexpr float POUCH_X_DEFAULT = -7.f; // vr_cvars.inc: at it, the pouch on the
     return outOfTheTorso(standing, true, pos + fwd * (at - now));
 }
 
+// The ammo pouch (ammoPouchPosition): without the body, at the hips' height and X, between them (vr_ammo_pouch_x/y/z
+// from there); with it, on the belly's ring as a hip holster at its default X is (frontOfTheBody), X moving it on from
+// there (round the hips going back).
+[[nodiscard]] glm::vec3 legacyAmmoPouchPosition(const hands::State& s)
+{
+    return hands::bodyAnchor(s, {HIP_X_DEFAULT + vr_ammo_pouch_x.value, vr_ammo_pouch_y.value, vr_ammo_pouch_z.value}) +
+           crouchAdjustment(s, -9.5f);
+}
+
+[[nodiscard]] glm::vec3 ammoPouchOnTheBody(const hands::State& standing, const glm::vec3& pos)
+{
+    glm::vec3 fwd, right, up;
+    hands::angleVectors({0.f, standing.bodyYaw, 0.f}, fwd, right, up);
+    const float now = glm::dot(pos - standing.head, fwd);
+    const float at = frontOfTheBody(standing, LeftHip, pos - fwd * vr_ammo_pouch_x.value) + vr_ammo_pouch_x.value;
+    return outOfTheTorso(standing, true, pos + fwd * (at - now));
+}
+
 // With the full body's legs (vr_body_mode 3), the hip holsters ride the thighs, by
 // vr_holster_leg_follow (0 fixed on the body, 1 all the way): they go with the legs' animation
 // (walking, stepping round, tucking up in the air, kicking in the water), from where they are with
@@ -253,6 +273,35 @@ void onTheThigh(const avatar::Follower& follow, Holster holster, glm::vec3& pos,
     }
 }
 
+// The ammo pouch on the belt between the legs (vr_ammo_pouch_leg_follow, as vr_holster_leg_follow for the hips' holsters):
+// moved as the belt is by both thighs' animation (walking, stepping round), half each (as a point of each thigh, as
+// onTheThigh moves a hip holster), by that much. Where it is drawn is where the hands find it.
+void onBothThighs(const avatar::Follower& follow, glm::vec3& pos)
+{
+    const float amount = CLAMP(0.f, vr_ammo_pouch_leg_follow.value, 1.f);
+    if(amount <= 0.f || vr_body_mode.value < 3.f)
+    {
+        return;
+    }
+    const float strap = THIGH_STRAP * units::metresToUnits() * units::bodyScale();
+    glm::vec3 moved{0.f};
+    int legs = 0;
+    for(int leg = 0; leg < 2; leg++)
+    {
+        avatar::ThighMotion m;
+        if(follow.thigh(leg, m))
+        {
+            const glm::vec3 anchor = pos + m.down * za::max(0.f, strap - glm::dot(pos - m.joint, m.down));
+            moved += m.joint + m.turn * (anchor - m.joint) - anchor;
+            legs++;
+        }
+    }
+    if(legs > 0)
+    {
+        pos += moved * (amount / static_cast<float>(legs));
+    }
+}
+
 // With vr_body_anchors: where the holster is for the standing body, carried by the pelvis (hips)
 // or the chest, and (`plate`) the body's surface there; the hips' on the thighs (onTheThigh).
 [[nodiscard]] glm::vec3 followingHolsterPosition(
@@ -274,7 +323,8 @@ void onTheThigh(const avatar::Follower& follow, Holster holster, glm::vec3& pos,
     return now;
 }
 
-[[nodiscard]] Hotspot hotspot(const hands::State& s, int hand, const HolsterPositions& holsters, const glm::vec3* pouch)
+[[nodiscard]] Hotspot hotspot(
+    const hands::State& s, int hand, const HolsterPositions& holsters, const glm::vec3* pouch, const glm::vec3* ammoPouch)
 {
     const glm::vec3& pos = s.pos[hand];
 
@@ -295,8 +345,15 @@ void onTheThigh(const avatar::Follower& follow, Holster holster, glm::vec3& pos,
             best = h;
         }
     }
-    // The grenade pouch (vr_handgrenade), the same way: at the small of the back, apart from every holster.
-    if(pouch && pouchReach() > 0.f && glm::distance(pos, *pouch) / pouchReach() < bestRatio)
+    // The grenade pouch (vr_handgrenade) and the ammo pouch (vr_reload_mode 3), the same way: the one the hand is most
+    // within, holsters and pouches alike (the ammo pouch sits between the hip holsters).
+    const float grenadeRatio = pouch && pouchReach() > 0.f ? glm::distance(pos, *pouch) / pouchReach() : 2.f;
+    const float ammoRatio = ammoPouch && ammoPouchReach() > 0.f ? glm::distance(pos, *ammoPouch) / ammoPouchReach() : 2.f;
+    if(ammoRatio < bestRatio && ammoRatio <= grenadeRatio)
+    {
+        return HS_AMMO_POUCH;
+    }
+    if(grenadeRatio < bestRatio)
     {
         return HS_GRENADE_POUCH;
     }
@@ -403,6 +460,48 @@ glm::vec3 pouchPosition(const hands::State& s, HolsterPlate* plate)
     return now;
 }
 
+bool ammoPouchEnabled()
+{
+    // The server's mode as it applies (STAT_QVR_RELOADMODE: Immersive, with Weapon Mode Immersive), not this client's own
+    // setting: in multiplayer the server's rules are the ones that hold.
+    return cl.stats[protocol::STAT_QVR_RELOADMODE] == 3;
+}
+
+float ammoPouchReach()
+{
+    return vr_ammo_pouch_thresh.value;
+}
+
+glm::vec3 ammoPouchPosition(const hands::State& s, HolsterPlate* plate)
+{
+    if(plate)
+    {
+        *plate = HolsterPlate{};
+    }
+    if(!vr_body_anchors.value)
+    {
+        return legacyAmmoPouchPosition(s);
+    }
+    const avatar::Follower follow{s};
+    const hands::State standing = avatar::standing(s);
+    glm::vec3 pos = legacyAmmoPouchPosition(standing);
+    if(vr_body_mode.value < 1.f)
+    {
+        return follow(avatar::Part::Pelvis, pos);
+    }
+    pos = ammoPouchOnTheBody(standing, pos);
+    glm::vec3 now = follow(avatar::Part::Pelvis, pos);
+    if(plate)
+    {
+        const HolsterPlate p = plateOnTheRing(standing, true, pos);
+        plate->out = follow(avatar::Part::Pelvis, pos + p.out) - now;
+        plate->up = follow(avatar::Part::Pelvis, pos + p.up) - now;
+        plate->clearance = p.clearance;
+    }
+    onBothThighs(follow, now);
+    return now;
+}
+
 glm::vec3 chestAnchor(const hands::State& s, const glm::vec3& offsets)
 {
     if(!vr_body_anchors.value)
@@ -461,10 +560,19 @@ void queueDebug(const hands::State& s)
 
     const cvar_t* shown[HolsterCount] = {&vr_show_shoulder_holsters, &vr_show_shoulder_holsters,
         &vr_show_hip_holsters, &vr_show_hip_holsters, &vr_show_upper_holsters, &vr_show_upper_holsters};
+    // VR Settings > Holster Calibration: the pair whose slider is chosen, shown while it is.
+    const cvar_t* chosen = menu::selectedSetting();
+    const auto pairChosen = [chosen](const cvar_t& x, const cvar_t& y, const cvar_t& z) {
+        return chosen && (chosen == &x || chosen == &y || chosen == &z);
+    };
+    const bool back = pairChosen(vr_menu_holster_back_x, vr_menu_holster_back_y, vr_menu_holster_back_z);
+    const bool hip = pairChosen(vr_menu_holster_hip_x, vr_menu_holster_hip_y, vr_menu_holster_hip_z);
+    const bool chest = pairChosen(vr_menu_holster_chest_x, vr_menu_holster_chest_y, vr_menu_holster_chest_z);
+    const bool calibrating[HolsterCount] = {back, back, hip, hip, chest, chest};
 
     for(int h = 0; h < HolsterCount; h++)
     {
-        if(!shown[h]->value)
+        if(!shown[h]->value && !calibrating[h])
         {
             continue;
         }
@@ -481,6 +589,12 @@ void queueDebug(const hands::State& s)
         const bool hovered = s.hotspot[HAND_OFF] == HS_GRENADE_POUCH || s.hotspot[HAND_MAIN] == HS_GRENADE_POUCH;
         const glm::vec4 color = hovered ? glm::vec4{0.2f, 1.f, 0.2f, 0.35f} : glm::vec4{1.f, 0.9f, 0.2f, 0.25f};
         lines::point(pouchPosition(s), pouchReach() * 2.f, color);
+    }
+    if(vr_show_grenade_pouch.value && ammoPouchEnabled())
+    {
+        const bool hovered = s.hotspot[HAND_OFF] == HS_AMMO_POUCH || s.hotspot[HAND_MAIN] == HS_AMMO_POUCH;
+        const glm::vec4 color = hovered ? glm::vec4{0.2f, 1.f, 0.2f, 0.35f} : glm::vec4{1.f, 0.9f, 0.2f, 0.25f};
+        lines::point(ammoPouchPosition(s), ammoPouchReach() * 2.f, color);
     }
 
     if(vr_show_virtual_stock.value)
@@ -500,9 +614,11 @@ void updateHotspots(hands::State& s)
     const HolsterPositions holsters = holsterPositions(s);
     const bool withPouch = pouchEnabled();
     const glm::vec3 pouch = withPouch ? pouchPosition(s) : glm::vec3{0.f};
+    const bool withAmmo = ammoPouchEnabled();
+    const glm::vec3 ammo = withAmmo ? ammoPouchPosition(s) : glm::vec3{0.f};
     for(int hand = 0; hand < HAND_COUNT; hand++)
     {
-        s.hotspot[hand] = hotspot(s, hand, holsters, withPouch ? &pouch : nullptr);
+        s.hotspot[hand] = hotspot(s, hand, holsters, withPouch ? &pouch : nullptr, withAmmo ? &ammo : nullptr);
     }
 }
 

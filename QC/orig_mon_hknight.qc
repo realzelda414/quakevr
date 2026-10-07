@@ -76,7 +76,7 @@ void(float offset) hknight_shot =
     newmis.classname = "knightspike";
     setmodel(newmis, "progs/k_spike.mdl");
     setsize(newmis, VEC_ORIGIN, VEC_ORIGIN);
-    newmis.velocity = vec*300;
+    newmis.velocity = vec * MG3_HknightSpikeSpeed(); // QVR: 300; Dawn of the Machine's Bloody Nightmare 500
     sound(self, CHAN_WEAPON, "hknight/attack1.wav", 1, ATTN_NORM);
 };
 
@@ -109,9 +109,9 @@ void() CheckContinueCharge =
         return;        // done charging
     }
     if(random() > 0.5)
-        sound(self, CHAN_WEAPON, "knight/sword2.wav", 1, ATTN_NORM);
+        VR_SoundVaried(self, CHAN_WEAPON, "knight/sword2.wav", 1, ATTN_NORM);
     else
-        sound(self, CHAN_WEAPON, "knight/sword1.wav", 1, ATTN_NORM);
+        VR_SoundVaried(self, CHAN_WEAPON, "knight/sword1.wav", 1, ATTN_NORM);
 };
 
 //===========================================================================

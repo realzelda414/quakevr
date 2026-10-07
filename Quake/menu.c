@@ -204,6 +204,7 @@ char		m_return_reason [32];
 void M_ConfigureNetSubsystem(void);
 void M_SetSkillMenuMap (const char *name);
 void M_Options_SelectMods (void);
+void M_Menu_LevelsFrom (void); // QVR: Ironwail's Levels from another menu (the main menu's Play Custom Map)
 void M_Options_Init (enum m_state_e state);
 void M_ChooseQuitMessage (void);
 void M_DrawQuitMessage (void);
@@ -1175,10 +1176,11 @@ enum
 	MAIN_VRSETTINGS, // QVR: the VR Settings (as Options > VR Settings), right after VR Calibration; Back from them to this menu
 	MAIN_SINGLEPLAYER,
 	MAIN_MULTIPLAYER,
-	MAIN_MAPLIBRARY, // QVR: the map browser (vr_menu_maps.inc)
+	MAIN_MAPLIBRARY, // QVR: Download Maps, the map browser (vr_menu_maps.inc)
+	MAIN_PLAYCUSTOM, // QVR: Play Custom Map, Ironwail's Levels (the maps installed)
 	MAIN_OPTIONS,
 	MAIN_VRADVANCED, // QVR: the Advanced VR Options (as the corner's Advanced VR)
-	MAIN_MODS,
+	MAIN_MODS, // QVR: shown with vr_menu_main_mods only (Options > Mods otherwise)
 	MAIN_QUIT, // QVR: no Help/Ordering row
 
 	MAIN_ITEMS,
@@ -1188,12 +1190,27 @@ enum
 // (vr_bigfont.cpp), so that VR Calibration looks like the others.
 static const char *const m_main_labels[MAIN_ITEMS] =
 {
-	"VR Calibration", "VR Settings", "Single Player", "Multiplayer", "Map Library", "Options", "Advanced VR", "Mods", "Quit",
+	"VR Calibration", "VR Settings", "Single Player", "Multiplayer", "Download Maps", "Play Custom Map", "Options",
+	"Advanced VR", "Mods", "Quit",
 };
 
 const char *M_Main_RowLabel (void) // QVR: menu_vr pos
 {
 	return m_main_labels[m_main_cursor];
+}
+
+// QVR: whether a row is shown: Mods only where Ironwail shows it (no mod with its own menu) and vr_menu_main_mods asks
+// for it (Advanced VR > HUD and Menus > Menu; Options > Mods has it).
+static qboolean M_Main_Shown (int item)
+{
+	return item != MAIN_MODS || (m_main_mods && VR_MenuMainShowsMods ());
+}
+
+// QVR: the rows in groups, a gap above each but the first: the VR rows, playing (Single Player, Multiplayer), the maps
+// (Download Maps, Play Custom Map), the rest.
+static qboolean M_Main_GroupStart (int item)
+{
+	return item == MAIN_SINGLEPLAYER || item == MAIN_MAPLIBRARY || item == MAIN_OPTIONS;
 }
 
 void M_Menu_Main_f (void)
@@ -1208,7 +1225,7 @@ void M_Menu_Main_f (void)
 	// to 'Options' to nudge the player toward the secondary location.
 	// TODO (maybe): inform the user about the missing option
 	// and its alternative location?
-	if (!m_main_mods && m_main_cursor == MAIN_MODS)
+	if (!M_Main_Shown (MAIN_MODS) && m_main_cursor == MAIN_MODS) // QVR: or not shown (vr_menu_main_mods)
 	{
 		m_main_cursor = MAIN_OPTIONS;
 		M_Options_SelectMods ();
@@ -1216,24 +1233,41 @@ void M_Menu_Main_f (void)
 }
 
 
-// QVR: the rows' spacing: Quake's 20, closer where the canvas is too short for them all (the headset's panel at Menu
-// Height 1 with the Mods row: the last row's letters, 20 tall, kept inside it).
-static int M_Main_Step (void)
+// QVR: the rows' spacing and the groups' gaps: Quake's 20 and 10, closer where the canvas is too short for them all (a
+// flat screen's 200 rows, the headset's panel at Menu Height 1): the gaps a little first, then the rows (to 15), then the
+// gaps the rest of the way; the last row's letters, 20 tall, kept inside it.
+void M_Main_Layout (int *step, int *gap)
 {
 	drawtransform_t transform;
 	float left, top, right, bottom;
-	int rows = MAIN_ITEMS - !m_main_mods;
-	int step;
+	int rows = 0, i, avail;
 
+	for (i = 0; i < MAIN_ITEMS; i++)
+		rows += M_Main_Shown (i);
 	Draw_GetCanvasTransform (CANVAS_MENU, &transform);
 	Draw_GetTransformBounds (&transform, &left, &top, &right, &bottom);
-	step = (int)((bottom - 2 - 32 - 20) / (rows - 1));
-	return CLAMP (16, step, 20);
+	avail = (int)(bottom - 2 - 32 - 20);
+	*step = CLAMP (15, (avail - 3 * 6) / (rows - 1), 20);
+	*gap = CLAMP (0, (avail - (rows - 1) * *step) / 3, 10);
+}
+
+// QVR: a row's top (menu y): Quake's 32 for the first, a step for each row shown above it, a gap for each group.
+static int M_Main_RowY (int item, int step, int gap)
+{
+	int i, y = 32;
+
+	for (i = 0; i < item; i++)
+		if (M_Main_Shown (i))
+			y += step;
+	for (i = 1; i <= item; i++)
+		if (M_Main_GroupStart (i))
+			y += gap;
+	return y;
 }
 
 void M_Main_Draw (void)
 {
-	int		cursor, i, row, step; // QVR: i, row, step
+	int		i, step, gap; // QVR: i, step, gap
 	qpic_t	*p;
 	qboolean text; // QVR: the rows as text (VR_BigFont_Draw)
 
@@ -1242,25 +1276,27 @@ void M_Main_Draw (void)
 	M_DrawPic ( (320-p->width)/2, 4, p);
 
 	// QVR: the rows as text in the picture's letters when the pictures give every one (a mod's own pictures may not):
-	// else the picture, with VR Calibration above it in the letters of the mods' fallback row.
+	// else the picture's rows, the others in the mods' fallback row's letters.
 	text = true;
 	for (i = 0; i < MAIN_ITEMS; i++)
-		if ((i != MAIN_MODS || m_main_mods) && !VR_BigFont_CanDraw (m_main_labels[i]))
+		if (M_Main_Shown (i) && !VR_BigFont_CanDraw (m_main_labels[i]))
 			text = false;
 
-	step = M_Main_Step ();
+	M_Main_Layout (&step, &gap);
 	if (text)
 	{
-		for (i = 0, row = 0; i < MAIN_ITEMS; i++) // QVR: the rows as text
-			if (i != MAIN_MODS || m_main_mods)
-				VR_BigFont_Draw (73, 32 + row++ * step, m_main_labels[i]);
+		for (i = 0; i < MAIN_ITEMS; i++) // QVR: the rows as text
+			if (M_Main_Shown (i))
+				VR_BigFont_Draw (73, M_Main_RowY (i, step, gap), m_main_labels[i]);
 	}
 	else
-	{ // QVR: the picture's rows (its Help row left out), VR Calibration, Map Library and the VR Settings rows between
-	  // them in the mods' row's letters
+	{ // QVR: the picture's rows (its Help row left out), the others in the mods' row's letters
 		p = Draw_CachePic ("gfx/mainmenu.lmp");
-		for (i = 0, row = 32; i < MAIN_ITEMS; i++)
+		for (i = 0; i < MAIN_ITEMS; i++)
 		{
+			int row = M_Main_RowY (i, step, gap);
+			if (!M_Main_Shown (i))
+				continue;
 			switch (i)
 			{
 			case MAIN_SINGLEPLAYER: M_DrawSubpic (72, row, p, 0, 0, p->width, 20); break;
@@ -1268,28 +1304,35 @@ void M_Main_Draw (void)
 			case MAIN_OPTIONS: M_DrawSubpic (72, row, p, 0, 40, p->width, 20); break;
 			case MAIN_QUIT: M_DrawSubpic (72, row, p, 0, 80, p->width, p->height - 80); break;
 			case MAIN_MODS:
-				if (!m_main_mods)
-					continue;
 				if (m_main_mods > 0)
 					M_DrawTransPic (72, row, Draw_CachePic ("gfx/menumods.lmp"));
 				else
 					M_PrintEx (74, row + 1, 16, "MODS");
 				break;
 			case MAIN_VRCALIBRATION: M_PrintEx (74, row + 1, 16, "VR CALIBRATION"); break;
-			case MAIN_MAPLIBRARY: M_PrintEx (74, row + 1, 16, "MAP LIBRARY"); break;
+			case MAIN_MAPLIBRARY: M_PrintEx (74, row + 1, 16, "DOWNLOAD MAPS"); break;
+			case MAIN_PLAYCUSTOM: M_PrintEx (74, row + 1, 16, "PLAY CUSTOM MAP"); break;
 			case MAIN_VRSETTINGS: M_PrintEx (74, row + 1, 16, "VR SETTINGS"); break;
 			case MAIN_VRADVANCED: M_PrintEx (74, row + 1, 16, "ADVANCED VR"); break;
 			}
-			row += step;
 		}
 	}
 
-	cursor = m_main_cursor;
-	if (!m_main_mods && cursor > MAIN_MODS)
-		--cursor;
-	M_DrawQuakeCursor (54, 32 + cursor * step);
+	M_DrawQuakeCursor (54, M_Main_RowY (m_main_cursor, step, gap));
 }
 
+// QVR: the cursor to the next row shown up (-1) or down (1), round the ends.
+static void M_Main_MoveCursor (int dir)
+{
+	int i;
+
+	for (i = 0; i < MAIN_ITEMS; i++)
+	{
+		m_main_cursor = (m_main_cursor + dir + MAIN_ITEMS) % MAIN_ITEMS;
+		if (M_Main_Shown (m_main_cursor))
+			break;
+	}
+}
 
 void M_Main_Key (int key)
 {
@@ -1306,18 +1349,12 @@ void M_Main_Key (int key)
 
 	case K_DOWNARROW:
 		M_ThrottledSound ("misc/menu1.wav");
-		if (++m_main_cursor >= MAIN_ITEMS)
-			m_main_cursor = 0;
-		else if (!m_main_mods && m_main_cursor == MAIN_MODS)
-			++m_main_cursor;
+		M_Main_MoveCursor (1); // QVR: past a row not shown
 		break;
 
 	case K_UPARROW:
 		M_ThrottledSound ("misc/menu1.wav");
-		if (--m_main_cursor < 0)
-			m_main_cursor = MAIN_ITEMS - 1;
-		else if (!m_main_mods && m_main_cursor == MAIN_MODS)
-			--m_main_cursor;
+		M_Main_MoveCursor (-1);
 		break;
 
 	case K_ENTER:
@@ -1331,7 +1368,7 @@ void M_Main_Key (int key)
 		case MAIN_VRCALIBRATION: // QVR: the calibration room (vr_setup)
 			if (!SCR_ModalMessage (sv.active
 				? "Start VR Calibration?\n\nThe game in progress ends: you go\nto the calibration room, and the\ncalibration starts by itself.\n\n(y/n)\n"
-				: "Start VR Calibration?\n\nYou go to the calibration room, and\nthe calibration starts by itself:\nheight, body, then your main hand.\n\n(y/n)\n", 0.0f))
+				: "Start VR Calibration?\n\nYou go to the calibration room, and\nthe calibration starts by itself:\nyour height, then your body.\n\n(y/n)\n", 0.0f))
 				break;
 			IN_Activate ();
 			key_dest = key_game;
@@ -1349,6 +1386,10 @@ void M_Main_Key (int key)
 
 		case MAIN_MAPLIBRARY: // QVR
 			VR_OpenMapLibrary ();
+			break;
+
+		case MAIN_PLAYCUSTOM: // QVR: Ironwail's Levels; Back from them to this menu
+			M_Menu_LevelsFrom ();
 			break;
 
 		case MAIN_OPTIONS:
@@ -1374,12 +1415,22 @@ void M_Main_Key (int key)
 	}
 }
 
+// QVR: the row under the mouse (the laser's spot in the headset): each row from its top down a step; in a gap between
+// groups, above the rows or below them, the row selected stays.
 void M_Main_Mousemove (float cx, float cy)
 {
 	int prev = m_main_cursor;
-	M_UpdateCursor (cy, 32, M_Main_Step (), MAIN_ITEMS - !m_main_mods, &m_main_cursor); // QVR: M_Main_Step
-	if (m_main_cursor >= MAIN_MODS && !m_main_mods)
-		++m_main_cursor;
+	int i, y, step, gap;
+
+	M_Main_Layout (&step, &gap);
+	for (i = 0; i < MAIN_ITEMS; i++)
+	{
+		if (!M_Main_Shown (i))
+			continue;
+		y = M_Main_RowY (i, step, gap);
+		if (cy >= y && cy < y + step)
+			m_main_cursor = i;
+	}
 	if (m_main_cursor != prev)
 		M_MouseSound ("misc/menu1.wav");
 }
@@ -1866,8 +1917,17 @@ static void M_Maps_Init (void)
 	mapsmenu.prev_cursor = mapsmenu.list.cursor;
 }
 
+// QVR: the Levels from the main menu's Play Custom Map (as the menu_maps command opens them).
+void M_Menu_LevelsFrom (void)
+{
+	VR_NavJump (m_maps); // (Back from them: the main menu)
+	Cmd_TokenizeString ("menu_maps"); // (M_Menu_Maps_f looks at its command's arguments)
+	M_Menu_Maps_f ();
+}
+
 void M_Menu_Maps_f (void)
 {
+	VR_NavEntered (m_maps, m_state); // QVR: Back from them where a jump came from (Play Custom Map, the corner's Levels)
 	IN_DeactivateForMenu();
 	key_dest = key_menu;
 	m_state = m_maps;
@@ -2054,7 +2114,8 @@ void M_Maps_Key (int key)
 	case K_MOUSE4:
 	case K_MOUSE2:
 		M_List_ClearSearch (&mapsmenu.list);
-		M_Menu_SinglePlayer_f ();
+		if (!VR_NavBack (m_maps)) // QVR: where they were opened from (Play Custom Map, the corner's Levels)
+			M_Menu_SinglePlayer_f ();
 		break;
 
 	case K_ENTER:
@@ -2317,6 +2378,12 @@ void M_MultiPlayer_Draw (void)
 	M_DrawTransPic (72, 32, Draw_CachePic ("gfx/mp_menu.lmp") );
 
 	M_DrawQuakeCursor (54, 32 + m_multiplayer_cursor * 20);
+
+	// QVR: multiplayer is not ready in Quake VR: said plainly under the rows (right of the banner's column).
+	M_DrawTextBox (64, 100, 30, 3);
+	M_PrintWhite (72 + (240 - 26 * 8) / 2, 108, "Multiplayer is untested in");
+	M_PrintWhite (72 + (240 - 24 * 8) / 2, 116, "Quake VR and is expected");
+	M_PrintWhite (72 + (240 - 21 * 8) / 2, 124, "not to work properly.");
 
 	if (ipxAvailable || tcpipAvailable)
 		return;
@@ -7268,7 +7335,8 @@ static int m_credits_cursor;
 static void M_Credits_Draw (void)
 {
     const char *title = Cvar_VariableValue("vr_campaign") == 3 ? "Dimension of the Past" :
-        Cvar_VariableValue("vr_campaign") == 4 ? "Dimension of the Machine" : "Quake";
+        Cvar_VariableValue("vr_campaign") == 4 ? "Dimension of the Machine" :
+        Cvar_VariableValue("vr_campaign") == 5 ? "Dawn of the Machine" : "Quake";
     M_PrintWhite ((320 - (int)strlen(title) * 8) / 2, 28, title);
     M_Print (96, 52, "Campaign complete");
     M_PrintWhite (72, 80, "Quake: id Software");
@@ -7382,7 +7450,67 @@ static void M_UpdateBounds (void)
 	m_width &= ~15;
 	m_left = left + (width - m_width) / 2;
 	m_top = top + (height - m_height) / 2;
-	VR_MenuBounds (&m_top, &m_height); // QVR: below the corner's buttons
+	VR_MenuBounds (&m_left, &m_top, &m_width, &m_height); // QVR: beside the corner's buttons
+}
+
+// QVR: the left edge of what the menu shown draws (menu x): Ironwail's lists laid out from the canvas's width (levels,
+// mods and a mod's details) reach further left than Quake's 320 columns; the others stay within them. The VR menu
+// style's corner buttons stand left of it (vr_menuui.cpp).
+int M_ContentLeft (void)
+{
+	switch (M_GetBaseState (m_state))
+	{
+	case m_maps:
+	case m_mods:
+	case m_modinfo:
+		return q_min (m_left, 0);
+	default:
+		return 0;
+	}
+}
+
+// QVR: how far right and down (menu x and y) the menu shown draws, for the corner's version label to keep clear of it
+// (vr_menubrand.cpp): Quake's menus within its 320 x 200; Options' and the key bindings' lists down to their last row
+// (their scroll bar, search box and hint under it); Ironwail's lists laid out from the canvas's width as wide and as
+// tall as the menu's bounds. (The VR pages: qvr::menu::contentRightBelow.)
+void M_ContentExtent (float *right, float *bottom)
+{
+	*right = 320.f;
+	*bottom = 200.f;
+	switch (M_GetBaseState (m_state))
+	{
+	case m_maps:
+	case m_mods:
+	case m_modinfo:
+		*right = (float) q_max (320, m_left + m_width);
+		*bottom = (float) q_max (200, m_top + m_height);
+		break;
+	case m_options:
+		*bottom = (float) q_max (200, optionsmenu.y + OPTIONS_LISTOFS + optionsmenu.yofs + optionsmenu.list.viewsize * 8 + 8);
+		break;
+	case m_keys:
+		*bottom = (float) q_max (200, keysmenu.y + KEYLIST_TOP + keysmenu.list.viewsize * 8 + KEYLIST_BOTTOM);
+		break;
+	default:
+		break;
+	}
+}
+
+// QVR: where the menu shown draws its leftmost text, for the flat screen's banner (vr_menubrand.cpp): the lists' left
+// (their cursor's column); Quake's menus, laid out round the plaque's column, 320 (nothing in its way).
+int M_TextLeft (void)
+{
+	switch (m_state)
+	{
+	case m_maps:
+		return mapsmenu.x - 8;
+	case m_mods:
+		return modsmenu.x - 8;
+	case m_modinfo:
+		return modinfomenu.x - 8;
+	default:
+		return 320;
+	}
 }
 
 void M_Draw (void)
@@ -7414,6 +7542,7 @@ void M_Draw (void)
 
 	GL_SetCanvas (CANVAS_MENU); //johnfitz
 	VR_MenuDrawBannerColumn (); // QVR: the VR menu style's banner, under the corner's buttons
+	VR_MenuDrawVersion (); // QVR: the version label in the bottom right corner (under the page: what opens over it hides it)
 
 	switch (M_GetBaseState (m_state))
 	{
@@ -7688,6 +7817,9 @@ void M_Mousemove (int screenx, int screeny)
 		m_ignoremouseframe = false;
 		return;
 	}
+
+	if (VR_MenuMouseOnButtons (x, y)) // QVR: on a corner button: the menu's own selection stays (Back returns to it)
+		return;
 
 	switch (M_GetBaseState (m_state))
 	{

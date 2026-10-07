@@ -23,6 +23,7 @@ inline constexpr int U_QVR_OFFSET = 1 << 26;       // 3 coords
 inline constexpr int U_QVR_NOROTATE = 1 << 27;     // no data: a rigid body, whose EF_ROTATE model keeps its angles
 inline constexpr int U_QVR_WEAPONUID = 1 << 28;    // long: a weapon prop's weapon id (QC vr_weaponinst.qc: its record's)
 inline constexpr int U_QVR_SPIN = 1 << 29;         // no data: drawn spinning as an EF_ROTATE pickup (a weapon pickup drawn as its prop)
+inline constexpr int U_QVR_NOMAG = 1 << 30;        // no data: a weapon prop with no magazine in (QC QVR_WPNFLAG_NOMAG: immersive reloading)
 
 // Server -> client.
 inline constexpr int svc_quakevr = 39;
@@ -51,7 +52,7 @@ enum SvcQuakeVr : int
     QVR_SVC_TRACER = 20,          // [short entity][byte hand, 255 a monster's][coord3 from][coord3 to]: a hitscan pellet's line, for a bullet tracer (vr_weaponfx.cpp)
     QVR_SVC_WEAPONGONE = 21,      // [long weapon id]: that weapon is gone (its record freed: nothing has it any more): its blood forgotten (vr_wounds.cpp; reliable)
     QVR_SVC_TIP_MAKE = 22,        // [short handle]: a map tip (func_vr_tip) begins (vr_tips.cpp; QC/vr_tips.qc)
-    QVR_SVC_TIP_NAME = 23,        // [short handle][string]: its name (its key in vr_tips_seen, with the map's)
+    QVR_SVC_TIP_NAME = 23,        // [short handle][string]: its name (its key in tips_seen.txt, with the map's)
     QVR_SVC_TIP_TEXT = 24,        // [short handle][string]: its text (\n new lines)
     QVR_SVC_TIP_POS = 25,         // [short handle][coord3]: its point in the map
     QVR_SVC_TIP_ENT = 26,         // [short handle][short entity index, -1 a fixed point, -2 gone]: what it follows
@@ -60,6 +61,7 @@ enum SvcQuakeVr : int
     QVR_SVC_TIP_DELAY = 29,       // [short handle][float]: seconds near and seen before it shows (< 0: vr_tips_delay)
     QVR_SVC_TIP_FLAGS = 30,       // [short handle][byte]: its flags (qvr::tips::Flags)
     QVR_SVC_RULES = 31,           // [byte count]([string cvar][float value]) x count: server rules' values (vr_serverrules.cpp; reliable, with the spawn state and on a change)
+    QVR_SVC_COLLECT = 32,         // [byte hand][byte hotspot][short entity][short modelindex][float3 origin][float3 angles]: a thing that hand put away at that holster or pouch, drawn going in (vr_collectfx.cpp; to that player only)
 };
 inline constexpr int ropeEnded = 255; // QVR_SVC_ROPE's count: the beam's rope ended (no corners follow)
 
@@ -108,7 +110,13 @@ enum Stat : int
     STAT_QVR_WEAPONUID,  // the main hand's weapon's id (QC vr_weaponinst.qc: its record's; 0 none): its blood (vr_wounds.cpp)
     STAT_QVR_WEAPONUID2, // the off hand's
     STAT_QVR_HOLSTERWEAPONUID0, // 6: each holster's weapon's id (0 none): its blood goes with it, drawn holstered too
-    STAT_QVR_END = STAT_QVR_HOLSTERWEAPONUID0 + 6
+    STAT_QVR_AMMOTYPE = STAT_QVR_HOLSTERWEAPONUID0 + 6, // the main hand's ammo type (.currentammo: QC's AID_*; the off hand's: STAT_QVR_AMMO2): the wrist gadget's MAIN tile
+    // The server's reloading mode as it applies (vr_reload_mode; 0 without Weapon Mode Immersive): the client draws the
+    // ammo pouch, the guns' magazines and the clip on the ammo screens by it, not by its own setting (multiplayer).
+    STAT_QVR_RELOADMODE,
+    STAT_QVR_POUCHKIND,  // what the ammo pouch gives and shows (QC .vr_pouch_kind: 1 shells, 2 nailgun magazines, 3 super nailgun's, 4 cells)
+    STAT_QVR_POUCHCOUNT, // and how many of its ammo are left (.vr_pouch_count): its contents as drawn, its counter
+    STAT_QVR_END
 };
 
 inline constexpr int numHolsters = 6;

@@ -61,6 +61,11 @@ constexpr Option options[] = {
     {"hud", "HUD", "vr_hud_mode", {{1.f, "Wrist Gadget"}, {0.f, "Status Bar"}}, 2},
     {"crosshair", "Crosshair", "vr_crosshair", {{0.f, "Off"}, {1.f, "Dot"}, {2.f, "Laser"}, {3.f, "Soft Laser"}}, 4},
     {"climb", "Climbing", "vr_climb", {{1.f, "On"}, {0.f, "Off"}}, 2},
+    // vrstart2's settings pavilion (ROUND21.md, "vrstart2"): the old hub's raw-cvar buttons, with their screens now
+    {"holsters", "Weapon Mode", "vr_holster_mode", {{0.f, "Immersive"}, {1.f, "Quick Slots"}}, 2},
+    {"reload", "Reloading", "vr_reload_mode", {{3.f, "Immersive"}, {2.f, "Hip Holsters"}, {1.f, "All Holsters"}, {0.f, "Off"}}, 4},
+    {"twohand", "Two-Handed Aim", "vr_2h_mode", {{2.f, "Virtual Stock"}, {1.f, "Basic"}, {0.f, "Off"}}, 3},
+    {"tips", "Tips", "vr_tips", {{1.f, "Floating Screens"}, {2.f, "Wrist Gadget"}, {0.f, "Off"}}, 3},
 };
 
 [[nodiscard]] const Option* findOption(const char* key)
@@ -135,6 +140,14 @@ void drawOptionScreens()
     }
     constexpr const char* prefix = "vr_setup_option ";
     const size_t prefixLength = ZA_STRLEN(prefix);
+    // The button's label board's top over its top (QC buttons.qc), when it has one: a screen goes above it, 2 clear of
+    // it (its half height: 0.3's characters, vr_text3d.cpp's screens), or at least `least` over the button's top.
+    const int labelTopField = ED_FindFieldOffset("vr_button_label_top");
+    const auto overTop = [&](edict_t* e, float least) {
+        const eval_t* const v = labelTopField >= 0 ? GetEdictFieldValue(e, labelTopField) : nullptr;
+        constexpr float screenHalf = 2.4f * 0.5f + 2.4f * 0.375f + 2.4f * 0.3f;
+        return v ? za::max(least, v->_float + 2.f + screenHalf) : least;
+    };
     for(int i = 1; i < qcvm->num_edicts; i++)
     {
         edict_t* e = EDICT_NUM(i);
@@ -143,6 +156,24 @@ void drawOptionScreens()
             continue;
         }
         const char* target = PR_GetString(e->v.targetname);
+        // A hub's campaign buttons ("vr_activestartpaknameidx <n>; ..."): "SELECTED" over the one chosen (the portal
+        // takes you to its start)
+        constexpr const char* campaignPrefix = "vr_activestartpaknameidx ";
+        const size_t campaignLength = ZA_STRLEN(campaignPrefix);
+        if(!q_strncasecmp(target, campaignPrefix, campaignLength))
+        {
+            if(Q_atoi(target + campaignLength) == static_cast<int>(qvr::vr_activestartpaknameidx.value))
+            {
+                const glm::vec3 lo{e->v.absmin[0], e->v.absmin[1], e->v.absmin[2]};
+                const glm::vec3 hi{e->v.absmax[0], e->v.absmax[1], e->v.absmax[2]};
+                const glm::vec3 dir{e->v.movedir[0], e->v.movedir[1], e->v.movedir[2]};
+                // (in front of the button: a lectern's cap may overhang it)
+                const glm::vec3 at3 = 0.5f * (lo + hi) + glm::vec3{0.f, 0.f, 0.5f * (hi.z - lo.z) + overTop(e, 14.f)} - dir * 8.f;
+                text3d::queue("SELECTED", at3, glm::vec3{0.f, glm::degrees(za::atan2(dir.y, dir.x)), 0.f},
+                    text3d::Align::Centre, 0.3f, true);
+            }
+            continue;
+        }
         if(q_strncasecmp(target, prefix, prefixLength))
         {
             continue;
@@ -163,7 +194,7 @@ void drawOptionScreens()
         const glm::vec3 hi{e->v.absmax[0], e->v.absmax[1], e->v.absmax[2]};
         const glm::vec3 dir{e->v.movedir[0], e->v.movedir[1], e->v.movedir[2]};
         const glm::vec3 centre = 0.5f * (lo + hi);
-        const glm::vec3 at3 = centre + glm::vec3{0.f, 0.f, 0.5f * (hi.z - lo.z) + 9.f} + dir * 2.f;
+        const glm::vec3 at3 = centre + glm::vec3{0.f, 0.f, 0.5f * (hi.z - lo.z) + overTop(e, 9.f)} + dir * 2.f;
         const float yaw = glm::degrees(za::atan2(dir.y, dir.x));
         text3d::queue(text, at3, glm::vec3{0.f, yaw, 0.f}, text3d::Align::Centre, 0.3f, true);
     }
@@ -187,6 +218,7 @@ enum class Step
     Height,     // standing tall and still
     Body,       // Body Calibration running
     BodyReview, // its page open on a result it didn't trust
+    Paused,     // the menu open in the calibration room (on Body Calibration's page): starts over when it closes
     Done,       // the summary
 };
 
@@ -246,6 +278,12 @@ void enter(Step step)
     flow.anchor = tracking().head.position;
 }
 
+// The calibration room is loaded (a local game in it).
+[[nodiscard]] bool inRoom()
+{
+    return sv.active && !q_strcasecmp(sv.name, roomMap);
+}
+
 void stop(const char* why)
 {
     if(flow.step == Step::Idle)
@@ -256,8 +294,24 @@ void stop(const char* why)
     if(why)
     {
         S_LocalSound("misc/menu3.wav");
-        Con_Printf("VR Calibration stopped (%s): the START CALIBRATION button runs it again\n", why);
+        Con_Printf("VR Calibration stopped (%s): the main menu's VR Calibration runs it again\n", why);
     }
+}
+
+// The menu opened while the setup runs. In the calibration room (calibration only: no buttons) it pauses on Body
+// Calibration's page, whose first row is Position (standing or seated), and starts over when the menu closes; elsewhere
+// (`vr_setup here`) it stops.
+void menuOpened()
+{
+    if(!inRoom())
+    {
+        stop("the menu");
+        return;
+    }
+    flow.step = Step::Paused;
+    menu::reopen(menu::bodyCalibrationPage());
+    Con_Printf("VR Calibration: paused on Body Calibration's page (Position: standing or seated); it starts over when the "
+               "menu closes\n");
 }
 
 void begin()
@@ -265,14 +319,15 @@ void begin()
     flow.world = worldGeneration();
     flow.body = "Body: skipped";
     enter(Step::Intro);
-    Con_Printf("VR Calibration: starting (height, body); the menu button stops it\n");
+    Con_Printf(inRoom() ? "VR Calibration: starting (height, body); the menu button pauses it\n"
+                        : "VR Calibration: starting (height, body); the menu button stops it\n");
 }
 
 void finish()
 {
     enter(Step::Done);
     S_LocalSound("misc/talk.wav");
-    Con_Printf("VR Calibration: done. The buttons on the walls change the main options.\n");
+    Con_Printf(inRoom() ? "VR Calibration: done. The glowing doorway behind you leads to the hub.\n" : "VR Calibration: done.\n");
     saveConfigNow();
 }
 
@@ -383,8 +438,8 @@ void heightFrame(double now, za::String& text)
     Con_Printf("VR Calibration: height set: your eyes at %.2f m%s\n", eyes, seated() ? " (seated)" : "");
     if(!seated() && eyes < 1.3f)
     {
-        Con_Printf("VR Calibration: that's low for standing. Playing seated? Set POSITION (the stand) to Seated, then press "
-                   "START CALIBRATION\n");
+        Con_Printf("VR Calibration: that's low for standing. Playing seated? Open the menu: Position (on the page it opens) to "
+                   "Seated, then close it to start over\n");
     }
     flow.got = true;
     flow.gotAt = now;
@@ -415,6 +470,14 @@ void flowFrame()
         return;
     }
     const double now = realtime;
+    if(flow.step == Step::Paused)
+    {
+        if(key_dest != key_menu)
+        {
+            begin();
+        }
+        return;
+    }
     if(flow.step == Step::BodyReview)
     {
         if(key_dest != key_menu && bodycal::phase() != bodycal::Phase::Capturing)
@@ -435,7 +498,7 @@ void flowFrame()
         }
         if(key_dest == key_menu)
         {
-            stop("the menu");
+            menuOpened();
             return;
         }
         afterBody();
@@ -443,7 +506,7 @@ void flowFrame()
     }
     if(key_dest == key_menu && flow.step != Step::Done)
     {
-        stop("the menu");
+        menuOpened();
         return;
     }
 
@@ -458,7 +521,7 @@ void flowFrame()
             const int left = static_cast<int>(za::ceil(introSeconds - (now - flow.start)));
             text += "Your height, then your body.\n\n";
             text += seated() ? "Seated: sit where you will play.\n" : "Stand in the middle of your play space.\n";
-            text += "Playing seated? Press POSITION on the\nstand to your right: Seated.\n\n";
+            text += inRoom() ? "Playing seated? Open the menu: set\nPosition to Seated, then close it.\n\n" : "\n";
             text += va("starting in %d", za::max(left, 1));
             if(now - flow.start >= introSeconds)
             {
@@ -472,7 +535,10 @@ void flowFrame()
             appendGold(text, "DONE");
             // The height as the body step left it (its first pose measures it again).
             text += va("\nHeight: eyes at %.2f m\n%s\n\n", vr_height_calibration.value, flow.body);
-            text += "Explore the room: the buttons on the\nwalls change the main options, the\nboards say where the rest is.";
+            if(inRoom())
+            {
+                text += "The glowing doorway behind you\nleads to the hub.";
+            }
             if(now - flow.start >= doneSeconds || key_dest == key_menu)
             {
                 flow.step = Step::Idle;
@@ -483,7 +549,7 @@ void flowFrame()
     }
     if(flow.step != Step::Idle && flow.step != Step::Body)
     {
-        text += flow.step == Step::Done ? "" : "\n\nmenu button: stop";
+        text += flow.step == Step::Done ? "" : inRoom() ? "\n\nmenu button: pause" : "\n\nmenu button: stop";
         drawText(text);
     }
 }
@@ -522,6 +588,7 @@ void skip_f()
             finish();
             break;
         case Step::BodyReview: finish(); break;
+        case Step::Paused: begin(); break;
         case Step::Done: flow.step = Step::Idle; break;
         default: Con_Printf("vr_setup_skip: the setup isn't running\n"); break;
     }
@@ -548,7 +615,7 @@ void frame()
     // A first start (vr_setup_pending, vr_cvars.cpp) begun without the headset: VR Calibration once it tracks, with no
     // game running or in the vrstart hub (where VR starts), as the main menu's VR Calibration row; only once. (Started
     // with VR on, vr_startgame goes to the calibration room at once: vr_main.cpp.)
-    if(vr_setup_pending.value != 0.f && vrActive() && tracking().head.valid && (!sv.active || !strcmp(sv.name, "vrstart")) &&
+    if(vr_setup_pending.value != 0.f && vrActive() && tracking().head.valid && (!sv.active || !strcmp(sv.name, VR_HubMap())) &&
         !running() && !flow.pending)
     {
         Cvar_SetValueQuick(&vr_setup_pending, 0.f);

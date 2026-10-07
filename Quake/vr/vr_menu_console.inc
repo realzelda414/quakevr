@@ -12,7 +12,6 @@ constexpr char keyNext = 3;
 
 struct ConsolePage
 {
-    int from{PageMain}; // the page it was opened from (Back)
     int scroll{0};      // rows up from the newest
     int hoverKey{-1};   // under the laser or the mouse
     int focusKey{-1};   // the sticks' selection (-1: the laser's)
@@ -35,6 +34,20 @@ constexpr float consoleRowHeight = 7.f;
 
 char consoleKeyLetters[4][12][2]; // the keys' labels (SearchKey points at them)
 
+void consoleEdges(float& left, float& right)
+{
+    drawtransform_t t;
+    Draw_GetCanvasTransform(CANVAS_MENU, &t);
+    float cl, ct, cr, cb;
+    Draw_GetTransformBounds(&t, &cl, &ct, &cr, &cb);
+    left = cl + 4.f;
+    if(!menuui::toolbarRow())
+    {
+        left = za::fmax(left, menuui::toolbarRight() + 4.f); // (right of the corner's buttons: the text from the top)
+    }
+    right = za::fmin(cr - 4.f, left + 460.f);
+}
+
 [[nodiscard]] ConsoleLayout consoleLayout()
 {
     const Layout l = layout();
@@ -45,12 +58,7 @@ char consoleKeyLetters[4][12][2]; // the keys' labels (SearchKey points at them)
     ConsoleLayout c;
     c.k = za::fmax(1.f, -t.scale[1] * vid.guiheight / (t.scale[0] * vid.guiwidth));
     c.half = 7.f;
-    c.left = cl + 4.f;
-    if(!menuui::toolbarRow())
-    {
-        c.left = za::fmax(c.left, menuui::toolbarRight() + 4.f); // (right of the corner's buttons: the text from the top)
-    }
-    c.right = za::fmin(cr - 4.f, c.left + 460.f);
+    consoleEdges(c.left, c.right);
     const float rowStep = (2.f * c.half + 3.f) / c.k;
 
     // From the bottom up: the last row (Tab, Space... Run), four rows of keys, the line typed, the console's text.
@@ -313,7 +321,7 @@ void consoleKey(int key)
         case K_ESCAPE:
         case K_BBUTTON:
         case K_MOUSE2:
-        case K_MOUSE4: showPage(consolePage.from); S_LocalSound("misc/menu2.wav"); return;
+        case K_MOUSE4: goBack(); return;
         case K_ENTER:
         case K_KP_ENTER: typeInConsole(keyRun); return;
         case K_TAB: typeInConsole(keyTab); return;
@@ -374,20 +382,13 @@ void consoleMouse(float x, float y)
 void openConsolePage()
 {
     const int target = pageIndex(pageConsole);
-    if(m_state != m_vr)
-    {
-        VR_Menu_Open();
-    }
-    else if(page == target)
+    if(m_state == m_vr && page == target)
     {
         S_LocalSound("misc/menu1.wav");
         return;
     }
-    consolePage.from = page == target ? PageMain : page;
     consolePage.scroll = 0;
     consolePage.hoverKey = -1;
     consolePage.focusKey = 0;
-    parentPage[target] = consolePage.from;
-    showPage(target);
-    S_LocalSound("misc/menu2.wav");
+    openFromAnywhere(target); // (Back: where it was opened from)
 }

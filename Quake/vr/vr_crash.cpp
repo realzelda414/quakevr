@@ -12,20 +12,38 @@
 extern "C" void VR_InstallZancleAssertHandler (void);
 
 // The build's version: qvr_buildver.h, written by every Visual Studio build in its intermediate folder
-// (Windows/VisualStudio/quakevr.props, QvrBuildVersion: the last commit's date and short hash, "-dirty" with
-// uncommitted changes to tracked files). Builds without it (the Makefile's) say "unknown build".
+// (Windows/VisualStudio/quakevr.props, QvrBuildVersion): QVR_VERSION, the repository's VERSION file ("0.9.0");
+// QVR_VERSION_DEV, 1 unless the release script built it; QVR_BUILD_VERSION, the version ("-dev" on a dev build), the last
+// commit's date and short hash, "-dirty" with uncommitted changes to tracked files. The CMake and Makefile builds pass
+// QVR_VERSION from VERSION (Quake/vr/vr.cmake, vr.mk) and are dev builds.
 #if defined(__has_include)
 #if __has_include("qvr_buildver.h")
 #include "qvr_buildver.h"
 #endif
 #endif
+#ifndef QVR_VERSION
+#define QVR_VERSION "0.0.0"
+#endif
+#ifndef QVR_VERSION_DEV
+#define QVR_VERSION_DEV 1
+#endif
 #ifndef QVR_BUILD_VERSION
-#define QVR_BUILD_VERSION "unknown build"
+#define QVR_BUILD_VERSION QVR_VERSION "-dev (unknown build)"
 #endif
 
 extern "C" const char *VR_BuildVersion (void)
 {
 	return QVR_BUILD_VERSION;
+}
+
+extern "C" const char *VR_Version (void)
+{
+	return QVR_VERSION;
+}
+
+extern "C" int VR_VersionIsDev (void)
+{
+	return QVR_VERSION_DEV;
 }
 
 #ifdef _WIN32
@@ -327,7 +345,106 @@ extern "C" int VR_ErrorDialogSuppressed (const char *errorMsg)
 	return 1;
 }
 
+/*
+==================
+VR_DescribeCallers -- the calling thread's stack as one line ("fn (file.c:12) < caller (file.c:34) < ..."), skip
+frames above the caller left out, at most depth frames, symbols from the build's .pdb: gl_vidsdl.c's GL debug callback
+names where a GL error came from. Returns a hash of the frames' addresses (0: no stack).
+==================
+*/
+static int callersSymInit = 0; // VR_DescribeCallers: SymInitialize done (1) or failed (-1)
+static HMODULE callersDbg = NULL;
+
+extern "C" unsigned VR_DescribeCallers (char *out, int outSize, int skip, int depth)
+{
+	void *pcs[32];
+	USHORT n;
+	unsigned hash = 2166136261u;
+	int len = 0;
+	HANDLE proc = GetCurrentProcess ();
+	qvr_SymFromAddr_t pSymFromAddr = NULL;
+	qvr_SymGetLineFromAddr64_t pSymGetLine = NULL;
+	if (outSize > 0)
+		out[0] = 0;
+	if (depth > 32)
+		depth = 32;
+	n = CaptureStackBackTrace ((DWORD)(skip + 1), (DWORD)depth, pcs, NULL);
+	if (!n)
+		return 0;
+	if (!callersSymInit)
+	{
+		qvr_SymInitialize_t pSymInitialize;
+		qvr_SymSetOptions_t pSymSetOptions;
+		callersSymInit = -1;
+		callersDbg = LoadLibraryA ("dbghelp.dll");
+		pSymInitialize = callersDbg ? (qvr_SymInitialize_t)GetProcAddress (callersDbg, "SymInitialize") : NULL;
+		pSymSetOptions = callersDbg ? (qvr_SymSetOptions_t)GetProcAddress (callersDbg, "SymSetOptions") : NULL;
+		if (pSymSetOptions)
+			pSymSetOptions (SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+		if (pSymInitialize)
+		{
+			// The crash report's search path (a later crash report's SymInitialize then finds this one's).
+			char symPath[MAX_PATH + 4] = ".";
+			char exePath[MAX_PATH];
+			DWORD len = GetModuleFileNameA (NULL, exePath, MAX_PATH);
+			char *slash = len > 0 && len < MAX_PATH ? strrchr (exePath, '\\') : NULL;
+			if (slash)
+			{
+				*slash = 0;
+				snprintf (symPath, sizeof (symPath), "%s;.", exePath);
+			}
+			if (pSymInitialize (proc, symPath, TRUE))
+				callersSymInit = 1;
+		}
+	}
+	if (callersSymInit == 1)
+	{
+		pSymFromAddr = (qvr_SymFromAddr_t)GetProcAddress (callersDbg, "SymFromAddr");
+		pSymGetLine = (qvr_SymGetLineFromAddr64_t)GetProcAddress (callersDbg, "SymGetLineFromAddr64");
+	}
+	for (USHORT i = 0; i < n; i++)
+	{
+		DWORD64 addr = (DWORD64)(uintptr_t)pcs[i];
+		char buf[sizeof (SYMBOL_INFO) + 128];
+		SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
+		DWORD64 disp = 0;
+		DWORD ldisp = 0;
+		IMAGEHLP_LINE64 line;
+		char frame[256];
+		hash = (hash ^ (unsigned)(addr & 0xffffffffu)) * 16777619u;
+		memset (buf, 0, sizeof (buf));
+		sym->SizeOfStruct = sizeof (SYMBOL_INFO);
+		sym->MaxNameLen = 127;
+		memset (&line, 0, sizeof (line));
+		line.SizeOfStruct = sizeof (line);
+		if (pSymFromAddr && pSymFromAddr (proc, addr, &disp, sym))
+		{
+			if (pSymGetLine && pSymGetLine (proc, addr, &ldisp, &line))
+			{
+				const char *file = strrchr (line.FileName, '\\');
+				snprintf (frame, sizeof (frame), "%s (%s:%lu)", sym->Name, file ? file + 1 : line.FileName, (unsigned long)line.LineNumber);
+			}
+			else
+				snprintf (frame, sizeof (frame), "%s", sym->Name);
+		}
+		else
+			snprintf (frame, sizeof (frame), "%p", pcs[i]);
+		if (outSize > 0 && len < outSize - 1)
+			len += snprintf (out + len, (size_t)(outSize - len), "%s%s", i ? " < " : "", frame);
+	}
+	return hash;
+}
+
 #else
+
+extern "C" unsigned VR_DescribeCallers (char *out, int outSize, int skip, int depth)
+{
+	(void) skip;
+	(void) depth;
+	if (outSize > 0)
+		out[0] = 0;
+	return 0;
+}
 
 extern "C" void VR_InstallCrashHandler (void)
 {

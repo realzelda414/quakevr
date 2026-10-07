@@ -98,6 +98,11 @@ float(entity targ, entity inflictor) CanDamage =
 
 // The firing range's training dummy that died as the grunt it stands for (vr_dummy.qc, vr_dummy_gib): not counted, no loot.
 .float vr_dummy_dead;
+// QVR: Dawn of the Machine's infected (vr_mg3_infected.qc): what his first death turns him into (0: none, or turned).
+.float vr_mg3_infected;
+// QVR: Dawn of the Machine's own monsters drawn and fought as a stock one (vr_mg3_ogre.qc MG3_MON_*: the rocket ogre an
+// ogre, the demo dog a rottweiler): which it is (0: the stock monster).
+.float vr_mg3_mon;
 
 /*
 ============
@@ -140,6 +145,15 @@ void(entity targ, entity attacker) Killed =
     }
 
     self.enemy = attacker;
+
+    // QVR: Dawn of the Machine's infected (vr_mg3_infected.qc): his first death bursts him into a zombie or a fiend, not
+    // counted (upstream's .infected), before any of Quake VR's dying (beheading, ragdoll, corpse, gore).
+    if(self.vr_mg3_infected && (self.flags & FL_MONSTER))
+    {
+        MG3_Infected_Turn(attacker);
+        self = oself;
+        return;
+    }
 
 // bump the monster counter
     if((self.flags & FL_MONSTER) && !self.vr_dummy_dead && (!MGH_Active() || self.classname != "monster_zombie"))
@@ -285,6 +299,7 @@ void() demon_die;
 void() ogre_die;
 void() knight_die;
 void() hknight_die;
+void() rknight_die; // (Dawn of the Machine's ranged knight: vr_mg3_rknight.qc)
 void() shalrath_die;
 void() sham_die;
 void() wiz_die;
@@ -340,6 +355,11 @@ float(entity e) VR_Corpse_Parts =
         vr_corpse_gib1 = "progs/gib3.mdl";
         vr_corpse_gib2 = "progs/gib3.mdl";
     }
+    else if(e.th_die == rknight_die) // (Dawn of the Machine's ranged knight: the death knight's head and corpse health)
+    {
+        vr_corpse_head = "progs/h_hellkn.mdl";
+        vr_corpse_healthh = cvarh_vr_corpse_health_hellknight;
+    }
     else if(e.th_die == knight_die || e.th_die == hknight_die)
     {
         vr_corpse_head = e.th_die == knight_die ? "progs/h_knight.mdl" : "progs/h_hellkn.mdl";
@@ -384,6 +404,11 @@ float(entity e) VR_Corpse_Parts =
     {
         vr_corpse_head = "progs/h_scourg.mdl";
         vr_corpse_healthh = cvarh_vr_corpse_health_scourge;
+    }
+    else if(e.th_die == supsham_die)
+    {
+        vr_corpse_head = "progs/h_shams.mdl"; // (Dawn of the Machine's super shambler: as the shambler)
+        vr_corpse_healthh = cvarh_vr_corpse_health_shambler;
     }
     else if(e.th_die == VR_Decap_ZombieDie)
     {
@@ -788,6 +813,8 @@ float(entity p, float xHand) VR_Throw_HandMayStrike;
 
 // Every player frame, for each hand (self is the player; VR_Carry_HandFrame): a hand swung at a
 // blow's speed (vr_melee_speed) through a corpse, or what it holds, strikes it.
+void(entity xFrom, float xChan, entity xTarg) VR_Blunt_HitLayer; // (vr_crates.qc)
+
 void(float xHand) VR_Corpse_StrikeFrame =
 {
     if(!cvar_hget(cvarh_vr_corpse_gib) || !self.ishuman || self.health <= 0)
@@ -857,7 +884,8 @@ void(float xHand) VR_Corpse_StrikeFrame =
     {
         dmg = dmg * 1.5;
     }
-    sound(self, CHAN_AUTO, VRIsHandWeaponless(self, xHand) ? "fisthit.wav" : "player/axhit2.wav", 0.8, ATTN_NORM);
+    VR_SoundVaried(self, VRGetHandChannel(xHand), VRIsHandWeaponless(self, xHand) ? "fisthit.wav" : "player/axhit2.wav", 0.8, ATTN_NORM);
+    VR_Blunt_HitLayer(self, VRGetHandChannel(xHand), c);
     haptic(xHand, 0.0, 0.1, 60, 0.7);
     SpawnBlood(at, dir * 40, dmg);
 
@@ -1064,6 +1092,10 @@ void(entity e, vector dir, float speed, float up) VR_Push =
     {
         return;
     }
+    if(MG3_Shub_Is(e))
+    {
+        return; // (Dawn of the Machine's Shub: rooted, as upstream)
+    }
 
     if(e.flags & FL_MONSTER)
     {
@@ -1200,6 +1232,35 @@ float(entity targ, entity inflictor, entity attacker, float damage, float isVRMe
     if(!targ.takedamage)
     {
         return FALSE;
+    }
+
+    // Dawn of the Machine's Bloody Nightmare: the player's blows 80%, the rest on the player 120% (vr_mg3_defs.qc).
+    if(MG3_Campaign() && (serverflags & MG3_SF_BN_ACTIVE))
+    {
+        damage = MG3_BloodyNightmareDamage(targ, attacker, damage);
+    }
+    // Dawn of the Machine's lava man: 0.8 of anything but the lightning gun and the laser cannon, nothing from Chthon.
+    if(targ.mg3_lavaman)
+    {
+        damage = MG3_LavaManDamage(targ, inflictor, attacker, damage);
+        if(damage <= 0)
+        {
+            return FALSE;
+        }
+    }
+    // Dawn of the Machine's Shub: nothing while she thrashes or dies (vr_mg3_shub.qc; upstream combat.qc's boss_immune).
+    if(targ.mg3_shub_immune)
+    {
+        return FALSE;
+    }
+    // Dawn of the Machine's Chthon (killable): none during his fits or from lava men, 0.8 but lightning and laser.
+    if(targ.mg3_chthon)
+    {
+        damage = MG3_ChthonDamage(targ, inflictor, attacker, damage);
+        if(damage <= 0)
+        {
+            return FALSE;
+        }
     }
 
     if(targ.classname == "trigger_explosion")
@@ -1430,6 +1491,10 @@ float(entity targ, entity inflictor, entity attacker, float damage, float isVRMe
         return TRUE;
     }
 
+    // QVR: Dawn of the Machine's health thresholds, read before the blow as upstream (vr_mg3_triggers.qc)
+    if(targ.health_target != string_null)
+        MG3_HealthTarget(targ, attacker);
+
     // do the damage
     targ.health = targ.health - take;
 
@@ -1502,7 +1567,7 @@ float(entity targ, entity inflictor, entity attacker, float damage, float isVRMe
     {
         self.th_pain (attacker, take);
     // nightmare mode monsters don't go into pain frames often
-        if(skill == 3)
+        if(skill == 3 && MG3_NightmarePainRest(self)) // (Dawn of the Machine spares zombies and Chthon: vr_mg3_bn.qc)
             self.pain_finished = time + 5;
     }
 
@@ -1530,6 +1595,10 @@ float(entity t) VR_WallTorch_OnWall; // (vr_walltorch.qc: it is on its wall, not
 // Deals the damage, with the gibs it may throw at the speed for what dealt it (vr_gib_speed).
 float(entity targ, entity inflictor, entity attacker, float damage, float isVRMelee) T_DamageImpl =
 {
+    if(targ.classname == "func_axe_button" && !MG3_AxeButton_Struck(targ, inflictor, attacker, isVRMelee))
+    {
+        return FALSE; // only a melee blow opens it (vr_mg3_weapons.qc)
+    }
     if(targ.vr_shootnade)
     {
         return VR_GrenShot_Damage(targ, inflictor, attacker, damage, isVRMelee);
@@ -1577,7 +1646,7 @@ float(entity e) VR_Parry_MeleeMonster =
 {
     string c = e.classname;
     return c == "monster_knight" || c == "monster_hell_knight" || c == "monster_ogre" || c == "monster_demon1" ||
-           c == "monster_dog" || c == "monster_shambler" || c == "monster_fish" || c == "monster_gremlin" ||
+           c == "monster_dog" || c == "monster_shambler" || c == "monster_super_shambler" || c == "monster_fish" || c == "monster_gremlin" ||
            c == "monster_mummy" || c == "monster_super_wrath" || c == "monster_sword" || c == "monster_morph" ||
            c == "monster_dragon" || c == "monster_scourge" || c == "monster_ogre_marksman" || c == "monster_tarbaby" ||
            e.vr_dummy_striking || e.vr_eshove_striking;
@@ -1892,7 +1961,7 @@ float(entity targ, entity inflictor, entity attacker, float damage) VR_Parry =
     vector to = attacker.origin - targ.origin;
     to_z = 0;
     // Up close only (a shambler's lightning also comes from the shambler itself).
-    if(vlen(to) > 150 || (attacker.classname == "monster_shambler" && vlen(to) > 110))
+    if(vlen(to) > 150 || (VR_IsShambler(attacker) && vlen(to) > 110))
     {
         return damage;
     }
@@ -1999,7 +2068,7 @@ float(entity targ, entity inflictor, entity attacker, float damage) VR_Parry =
     {
         entity oldSelfX = self;
         self = targ;
-        sound(self, CHAN_AUTO, "fisthit.wav", 1, ATTN_NORM);
+        VR_SoundVaried(self, CHAN_AUTO, "fisthit.wav", 1, ATTN_NORM);
         sound(self, CHAN_AUTO, "demon/dland2.wav", 0.5, ATTN_NORM);
         haptic(cVR_MainHand, 0.0, 0.3, 60, 1.0);
         haptic(cVR_OffHand, 0.0, 0.3, 60, 1.0);
@@ -2031,13 +2100,13 @@ float(entity targ, entity inflictor, entity attacker, float damage) VR_Parry =
         float parrySound = cvar_hget(cvarh_vr_bash_sound);
         if(parrySound > 0)
         {
-            sound(self, CHAN_AUTO, "vr/parry.wav", min(1, parrySound), ATTN_NORM);
-            sound(self, CHAN_AUTO, "player/axhit2.wav", 0.35 * min(1, parrySound), ATTN_NORM);
+            sound(self, VRGetHandChannel(hand), "vr/parry.wav", min(1, parrySound), ATTN_NORM);
+            VR_SoundVaried(self, VRGetHandChannel(hand), "player/axhit2.wav", 0.35 * min(1, parrySound), ATTN_NORM);
         }
         else
         {
-            sound(self, CHAN_AUTO, "player/axhit2.wav", 1, ATTN_NORM);
-            sound(self, CHAN_AUTO, "weapons/tink1.wav", 0.6, ATTN_NORM);
+            VR_SoundVaried(self, VRGetHandChannel(hand), "player/axhit2.wav", 1, ATTN_NORM);
+            VR_SoundVaried(self, VRGetHandChannel(hand), "weapons/tink1.wav", 0.6, ATTN_NORM);
         }
         particle2(at, (to * -1 + '0 0 0.5') * 80, QVR_PARTICLE_PRESET_SPARKS, 24);
         haptic(hand, 0.0, 0.3, 90, 1.0);
@@ -2263,7 +2332,7 @@ void(entity inflictor, entity attacker, float damage, entity ignore) T_RadiusDam
                     {    // shambler takes half damage from all explosions
                         float oldHitKind = vr_hitkind;
                         vr_hitkind = QVR_HITKIND_SPLASH;
-                        if(head.classname == "monster_shambler")
+                        if(VR_IsShambler(head))
                             T_Damage(head, inflictor, attacker, points*0.5);
                         else
                             T_Damage(head, inflictor, attacker, points);
@@ -2306,7 +2375,7 @@ void(entity attacker, float damage) T_BeamDamage =
                 {
                     float oldHitKind = vr_hitkind;
                     vr_hitkind = QVR_HITKIND_SPLASH;
-                    if(head.classname == "monster_shambler")
+                    if(VR_IsShambler(head))
                         T_Damage(head, attacker, attacker, points*0.5);
                     else
                         T_Damage(head, attacker, attacker, points);

@@ -8,6 +8,8 @@ public static class Components
     public const string HdTextures = "hdtextures";
     /// <summary>VisPatch's data (see-through water for the relight), with the relight component.</summary>
     public const string VisPatch = "vispatch";
+    /// <summary>Setup's copy in the install (SetupCopy), for the Apps &amp; Features entry's Uninstall.</summary>
+    public const string Setup = "setup";
 }
 
 public sealed class InstalledFile
@@ -53,7 +55,8 @@ public sealed class InstallRecord
     public List<string> Directories { get; set; } = [];
     /// <summary>Absolute paths of the shortcuts it made.</summary>
     public List<string> Shortcuts { get; set; } = [];
-    /// <summary>The player asked for the relight at the first start, and it has not been started yet.</summary>
+    /// <summary>The player asked for the relight at the first start at the last install or update (the game starts it
+    /// from the marker, <see cref="FirstStartRelight"/>: whether it still has to is <see cref="FirstStartRelight.Pending"/>).</summary>
     public bool RelightPending { get; set; }
 
     public static InstallRecord? Load(string installDir)

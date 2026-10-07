@@ -10,6 +10,7 @@
 .float thinkArg;
 .float vr_flashlight_state; // packed client lamp state, saved and carried by parm50
 .float vr_gib; // a gib or head that can be carried (VR_MakeGibGrabbable)
+.entity vr_wpn_from; // a weapon lying about or flying: the player whose hand it left (DropWeaponInHandScaled), else world
 .float vr_born; // when it was made (set by the engine, ED_Alloc: vr_cheats.cpp; VR_Scene_IsRuntimeProp)
 .float vr_sgib; // a small gib (vr_smallgibs.qc): when it was made
 .float vr_sgib_id; // its serial in the small gibs' ring (0: gone)
@@ -163,6 +164,7 @@
 .string worldtext;
 .float worldtext_halign;
 .float worldtext_scale;
+.float vr_button_label_top; // a func_button's label board's top over the button's top (vr_setup.cpp puts its screens above it)
 .float angle;
 
 //
@@ -172,10 +174,11 @@
 // Map tips (func_vr_tip: QC/vr_tips.qc)
 // ----------------------------------------------------------------------------
 
-.string tipname;   // the tip's name (its key in vr_tips_seen)
+.string tipname;   // the tip's name (its key in tips_seen.txt)
+.string tip_targetname; // its targetname as the map set it (func_vr_tip clears .targetname: only its name)
 .float tiphandle;  // the engine's tip record this one made (vr_tip_make)
 .float tip_size;   // its screen's text size (0: vr_tips_size)
-.float tip_delay;  // seconds near before it shows (unset or < 0: vr_tips_delay)
+.string tip_delay; // seconds near before it shows: 0 at once, -1 (or no key) vr_tips_delay (a string: no key is not 0)
 
 //
 //
@@ -226,5 +229,11 @@
                          // of it (VR_Prop_Flung) until it lands, is taken or flies up (VR_Throw_SelfFrame)
 .float vr_was_monster;   // a monster's head (VR_MakeGibGrabbable took its FL_MONSTER): what it drops after (a gibbed
                          // grunt's backpack: SoldierDrop after ThrowHead) is still a monster's drop (.vr_monster_drop)
+
+.float vr_drop_born;     // a thrown_weapon: when it was made (dropped, thrown); the oldest single-use enemy weapon lying
+                         // about goes first past vr_enemy_weapon_drop_max (vr_enemyguns.qc VR_EnemyWeapons_MakeRoom)
+.float vr_drop_fade;     // such a weapon fading away (past the cap): when it began; it counts no more, can't be taken
+.float vr_enemy_drop;    // a weapon's record (.weaponinst): a monster dropped it (a grunt's, an enforcer's, an ogre's):
+                         // capped while it lies about, whoever let go of it since (not a map's or a dispenser's)
 
 .float carry_portal; // room mapping of a held object, one-based gate

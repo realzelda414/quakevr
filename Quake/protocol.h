@@ -121,6 +121,19 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	SND_LARGESOUND	(1<<4)	// a short soundindex (instead of a byte)
 //johnfitz
 
+// QVR: the hands' sound channels (QC CHAN_HAND, CHAN_HAND2: VRGetHandChannel): any free channel of the player's, as
+// channel 0 (never cutting a sound off), played from the main or the off hand (vr/vr_audio.cpp handOf). Sent with
+// SND_LARGEENTITY (its channel a byte); NetQuake's protocol has 3 bits for it, so there they go as channel 0.
+#define	SND_CHAN_HAND		8
+#define	SND_CHAN_HAND2		9
+#define	SND_MAX_CHANNEL		9
+// QVR: a sound's pitch (its playback rate: 1 as recorded; QC sound()'s sixth argument, DP's and FTE's speed percent):
+// a short, the rate * 4000 (DarkPlaces' SND_SPEEDUSHORT4000, read after the attenuation). Not sent for 1, nor in
+// NetQuake's protocol.
+#define	SND_PITCH		(1<<5)
+#define	SND_PITCH_MIN		0.25f
+#define	SND_PITCH_MAX		4.f
+
 //johnfitz -- PROTOCOL_FITZQUAKE -- flags for entity baseline messages
 #define B_LARGEMODEL	(1<<0)	// modelindex is short instead of byte
 #define B_LARGEFRAME	(1<<1)	// frame is short instead of byte

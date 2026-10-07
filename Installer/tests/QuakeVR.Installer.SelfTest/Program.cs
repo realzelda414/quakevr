@@ -1,9 +1,11 @@
 using System.Security.Cryptography;
 using QuakeVR.Installer.Core;
 using QuakeVR.Installer.Core.Assets;
+using QuakeVR.Installer.Core.Audio;
 using QuakeVR.Installer.Core.Detection;
 using QuakeVR.Installer.Core.Packaging;
 using QuakeVR.Installer.Core.Platform;
+using QuakeVR.Installer.Core.Prerequisites;
 using QuakeVR.Installer.Core.Shortcuts;
 using QuakeVR.Installer.SelfTest;
 
@@ -48,6 +50,53 @@ T Throws<T>(Action a, string what) where T : Exception
 
 var tests = new List<(string Name, Action Body)>
 {
+    ("statement: four claims, unanswered at first, Continue only with YES to all four", () =>
+    {
+        Eq(4, AiStatement.Claims.Count, "claims");
+        Eq(3, AiStatement.Paragraphs.Count, "paragraphs");
+        True(AiStatement.Paragraphs[1].Contains("renaissance") && !AiStatement.Paragraphs[1].Contains("reinassance"), "spelling fixed");
+        var s = new AiStatement();
+        var changes = 0;
+        s.Changed += () => ++changes;
+        for (var i = 0; i < 4; ++i)
+        {
+            Eq<bool?>(null, s[i], $"claim {i + 1} starts unanswered");
+        }
+        Eq(4, s.Unanswered, "unanswered");
+        True(!s.AllYes, "nothing answered: no Continue");
+        s.Answer(0, true);
+        s.Answer(1, true);
+        s.Answer(2, true);
+        True(!s.AllYes, "one unanswered: no Continue");
+        s.Answer(3, false);
+        True(!s.AllYes, "one NO: no Continue");
+        Eq<bool?>(false, s[3], "NO kept");
+        s.Answer(3, true);
+        True(s.AllYes, "all YES: Continue");
+        Eq(0, s.Unanswered, "all answered");
+        s.Answer(1, false);
+        True(!s.AllYes, "YES switched back to NO: no Continue");
+        Eq<bool?>(false, s[1], "a set claim switches between YES and NO only");
+        s.Answer(1, false);
+        Eq(6, changes, "Changed fires on real changes only");
+        // Every mix of the 3^4 states: Continue exactly when all four are YES.
+        for (var m = 0; m < 81; ++m)
+        {
+            var t = new AiStatement();
+            var allYes = true;
+            for (int i = 0, v = m; i < 4; ++i, v /= 3)
+            {
+                if (v % 3 != 0)
+                {
+                    t.Answer(i, v % 3 == 1);
+                }
+                allYes &= v % 3 == 1;
+            }
+            Eq(allYes, t.AllYes, $"mix {m}");
+        }
+        var text = AiStatement.Format();
+        True(text.Contains(AiStatement.Subtitle) && AiStatement.Claims.All(text.Contains) && AiStatement.Paragraphs.All(text.Contains), "the console's text");
+    }),
     ("vdf: libraryfolders, both formats, escapes, comments", () =>
     {
         var v = Vdf.Parse("""
@@ -162,7 +211,45 @@ var tests = new List<(string Name, Action Body)>
         File.WriteAllText(Path.Combine(corrupt, "hipnotic", "pak0.pak"), "PACK garbage");
         Eq(PackStatus.Incomplete, PackInspector.Inspect("hipnotic", PackLists.Resources("hipnotic"), [corrupt]).Status, "corrupt pak");
     }),
-    ("expansions: base dirs for hipnotic/rogue, owned roots for dopa/mg1/mg3, mg1 not yet supported", () =>
+    ("expansions: readiness matches the engine (campaigns[].nativeReady, soloOnly() in Quake/vr/vr_gamedir.cpp)", () =>
+    {
+        using var stream = typeof(Program).Assembly.GetManifestResourceStream("vr_gamedir.cpp");
+        True(stream is not null, "vr_gamedir.cpp embedded");
+        var source = new StreamReader(stream!).ReadToEnd();
+        var table = System.Text.RegularExpressions.Regex.Match(source, @"Campaign campaigns\[\] = \{(.*?)\n\};", System.Text.RegularExpressions.RegexOptions.Singleline);
+        True(table.Success, "campaigns[] found in vr_gamedir.cpp");
+        var rows = System.Text.RegularExpressions.Regex.Matches(table.Groups[1].Value, @"\{""(\w+)"",\s*""([^""]*)"",\s*""\w+"",\s*(\d+),\s*(true|false),")
+            .Select(m => (Folder: m.Groups[1].Value, Title: m.Groups[2].Value, Index: int.Parse(m.Groups[3].Value), Ready: m.Groups[4].Value == "true"))
+            .ToList();
+        Eq(ExpansionDetector.Campaigns.Count + 1, rows.Count, "campaigns[] rows (id1 and the installer's expansions)");
+        var solo = System.Text.RegularExpressions.Regex.Match(source, @"bool soloOnly\(int index\)\s*\{\s*return ([^;]*);", System.Text.RegularExpressions.RegexOptions.Singleline);
+        True(solo.Success && System.Text.RegularExpressions.Regex.IsMatch(solo.Groups[1].Value, @"^index == \d+( \|\| index == \d+)*$"),
+            $"soloOnly() is a list of indices (got <{solo.Groups[1].Value}>): teach this test its new form");
+        var soloIndices = System.Text.RegularExpressions.Regex.Matches(solo.Groups[1].Value, @"\d+").Select(m => int.Parse(m.Value)).ToHashSet();
+        foreach (var c in ExpansionDetector.Campaigns)
+        {
+            var row = rows.SingleOrDefault(r => r.Folder == c.Folder);
+            True(row.Folder is not null, $"{c.Folder} in campaigns[]");
+            Eq(row.Title, c.Title, $"{c.Folder} title");
+            Eq(row.Ready, c.NativeReady, $"{c.Folder} NativeReady (campaigns[].nativeReady)");
+            Eq(soloIndices.Contains(row.Index), c.SoloOnly, $"{c.Folder} SoloOnly (soloOnly({row.Index}))");
+        }
+        // The labels follow the flags.
+        var quake = Dir("exp-labels");
+        Fixtures.MakeOriginal(quake);
+        var rerelease = Path.Combine(quake, "rerelease");
+        Fixtures.MakeRerelease(rerelease);
+        foreach (var c in ExpansionDetector.Campaigns)
+        {
+            Fixtures.MakePack(c.InBaseDirs ? quake : rerelease, c.Folder);
+        }
+        foreach (var e in ExpansionDetector.Detect([quake], []))
+        {
+            var c = ExpansionDetector.Campaigns.Single(x => x.Folder == e.Folder);
+            Eq(!c.NativeReady ? "detected, not yet supported" : c.SoloOnly ? "ready (single player)" : "ready", e.Detail, $"{e.Folder} label");
+        }
+    }),
+    ("expansions: base dirs for hipnotic/rogue, owned roots for dopa/mg1/mg3, mg3 not yet supported", () =>
     {
         var quake = Dir("exp-quake");
         Fixtures.MakeOriginal(quake);
@@ -171,6 +258,7 @@ var tests = new List<(string Name, Action Body)>
         Fixtures.MakeRerelease(rerelease);
         Fixtures.MakePack(rerelease, "dopa");
         Fixtures.MakePack(rerelease, "mg1");
+        Fixtures.MakePack(rerelease, "mg3");
         // A textures-only dopa folder in the Quake VR folder (higher priority) must not hide the real one.
         var qvr = Dir("exp-qvr");
         Directory.CreateDirectory(Path.Combine(qvr, "dopa", "textures"));
@@ -180,8 +268,9 @@ var tests = new List<(string Name, Action Body)>
         Eq(ExpansionState.NotFound, byName["rogue"].State, "rogue");
         Eq(ExpansionState.Ready, byName["dopa"].State, "dopa");
         Eq(rerelease, byName["dopa"].Root, "dopa from <base>\\rerelease");
-        Eq(ExpansionState.DetectedNotSupported, byName["mg1"].State, "mg1");
-        Eq(ExpansionState.NotFound, byName["mg3"].State, "mg3");
+        Eq(ExpansionState.Ready, byName["mg1"].State, "mg1");
+        Eq("ready (single player)", byName["mg1"].Detail, "mg1 label");
+        Eq(ExpansionState.DetectedNotSupported, byName["mg3"].State, "mg3");
     }),
     ("vr: active runtime, VD suggestion, VC++ runtime", () =>
     {
@@ -204,6 +293,114 @@ var tests = new List<(string Name, Action Body)>
         Eq(false, VcRuntimeDetector.Detect(new MemorySystemProbe().SetValue(vc, "Major", 14).SetValue(vc, "Minor", 40)).Ok, "14.40 too old");
         Eq(true, VcRuntimeDetector.Detect(new MemorySystemProbe().SetValue(vc, "Major", 14).SetValue(vc, "Minor", 44)).Ok, "14.44 ok");
         Eq(false, VcRuntimeDetector.Detect(new MemorySystemProbe()).Ok, "absent");
+    }),
+    ("vc++ runtime: the registry key and the DLLs the game imports", () =>
+    {
+        const string vc = @"HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64";
+        var sys = Path.Combine(run, "fake-system32"); // (only a name: MemorySystemProbe's files are made up)
+        MemorySystemProbe Machine(int minor, params (string Dll, Version V)[] dlls)
+        {
+            var p = new MemorySystemProbe().SetFolder(KnownFolder.System64, sys).SetValue(vc, "Major", 14).SetValue(vc, "Minor", minor).SetValue(vc, "Bld", 35211);
+            foreach (var (dll, v) in dlls)
+            {
+                p.SetFileVersion(Path.Combine(sys, dll), v);
+            }
+            return p;
+        }
+        var good = new Version(14, 44, 35211, 0);
+        var all = VcRuntimeDetector.Dlls.Select(d => (d, good)).ToArray();
+        Eq("msvcp140.dll|vcruntime140.dll|vcruntime140_1.dll", string.Join("|", VcRuntimeDetector.Dlls), "the exe's runtime DLLs");
+        var ok = VcRuntimeDetector.Detect(Machine(44, all));
+        True(ok.Ok, "key and DLLs 14.44");
+        Eq(new Version(14, 44, 35211), ok.Installed, "version from the key");
+        var missing = VcRuntimeDetector.Detect(Machine(44, all.Where(d => d.d != "vcruntime140_1.dll").ToArray()));
+        True(!missing.Ok && missing.Describe().Contains("vcruntime140_1.dll is missing"), "a DLL missing despite the key: " + missing.Describe());
+        var oldDll = VcRuntimeDetector.Detect(Machine(44, [.. all.Where(d => d.d != "msvcp140.dll"), ("msvcp140.dll", new Version(14, 38, 33135, 0))]));
+        True(!oldDll.Ok && oldDll.Describe().Contains("msvcp140.dll is 14.38.33135"), "an old msvcp140.dll: " + oldDll.Describe());
+        True(!VcRuntimeDetector.Detect(Machine(40, all)).Ok, "key 14.40");
+        var noKey = new MemorySystemProbe().SetFolder(KnownFolder.System64, sys);
+        foreach (var (d, v) in all)
+        {
+            noKey.SetFileVersion(Path.Combine(sys, d), v);
+        }
+        True(VcRuntimeDetector.Detect(noKey).Ok, "no key but every DLL 14.44: ok");
+        Eq(false, VcRuntimeDetector.Detect(new MemorySystemProbe().SetFolder(KnownFolder.System64, sys)).Ok, "nothing at all");
+    }),
+    ("vc++ redistributable: signature and version checked, exit codes, dry run, never downloaded or run for real", () =>
+    {
+        // Real Authenticode on files already on this PC: the .NET runtime's own DLL (Microsoft's embedded signature),
+        // and a made-up one.
+        var verifier = new AuthenticodeVerifier();
+        var coreLib = typeof(object).Assembly.Location;
+        var ms = verifier.Verify(coreLib);
+        True(ms.Trusted && ms.Signer!.Contains("O=Microsoft Corporation"), $"System.Private.CoreLib.dll signed by Microsoft: {ms.Detail} {ms.Signer}");
+        True(!ms.IsMicrosoft, "but by its CN=.NET certificate, not the CN=Microsoft Corporation one the redistributable has");
+        True(new SignatureInfo(true, "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", "").IsMicrosoft, "the redistributable's signer");
+        var fake = Path.Combine(Dir("vc-fake"), "vc_redist.x64.exe");
+        File.WriteAllBytes(fake, [0x4D, 0x5A, 1, 2, 3]);
+        True(!verifier.Verify(fake).Trusted, "a made-up exe is not trusted");
+        True(!new SignatureInfo(true, "CN=Evil Corp, O=Evil Corp", "").IsMicrosoft, "someone else's valid signature");
+
+        // The flow with fakes: a local server instead of aka.ms, a verifier and a runner that only record.
+        using var server = new LocalHttpServer();
+        server.Serve("vc_redist.x64.exe", new byte[] { 0x4D, 0x5A, 9, 9, 9 });
+        var runs = new List<string>();
+        var exitCode = 0;
+        var trusted = true;
+        var version = new Version(14, 44, 35211, 0);
+        var fakeVerifier = new FakeVerifier(_ => new SignatureInfo(trusted, "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond", trusted ? "ok" : "bad"));
+        var runner = new FakeRunner((exe, a) => { runs.Add($"{Path.GetFileName(exe)} {a}"); return exitCode; });
+        using var http = Downloader.CreateClient();
+        var redist = new VcRedist(fakeVerifier, runner, _ => version, http);
+        var dl = Dir("vc-downloads");
+        var missing = new VcRuntimeInfo(null, VcRuntimeDetector.Required);
+        VcRedistResult Ensure(bool dryRun = false, bool offline = false, string[]? local = null) => redist.EnsureAsync(missing, new VcRedistOptions
+        {
+            DryRun = dryRun, Offline = offline, LocalCopies = local ?? [], Mirrors = [server.Url("vc_redist.x64.exe")], DownloadDir = dl,
+        }, null, CancellationToken.None).GetAwaiter().GetResult();
+
+        Eq(VcRedistOutcome.AlreadyInstalled, redist.EnsureAsync(new VcRuntimeInfo(new Version(14, 51), VcRuntimeDetector.Required), new VcRedistOptions { DownloadDir = dl },
+            null, CancellationToken.None).GetAwaiter().GetResult().Outcome, "nothing to do");
+        var dry = Ensure(dryRun: true);
+        Eq(VcRedistOutcome.DryRun, dry.Outcome, "dry run");
+        True(dry.Message.Contains("/install /quiet /norestart"), "dry run says the command");
+        Eq(0, server.Requests, "dry run downloads nothing");
+        Eq(0, runs.Count, "dry run runs nothing");
+        Eq(VcRedistOutcome.Unavailable, Ensure(offline: true).Outcome, "offline");
+
+        var installed = Ensure();
+        Eq(VcRedistOutcome.Installed, installed.Outcome, "installed");
+        Eq("vc_redist.x64.exe /install /quiet /norestart", string.Join("|", runs), "run once, quiet, elevated by the runner");
+        Eq(1, server.Requests, "downloaded once");
+        foreach (var (code, outcome) in new[] { (3010, VcRedistOutcome.RebootRequired), (1641, VcRedistOutcome.RebootRequired), (1638, VcRedistOutcome.AlreadyInstalled),
+                     (1602, VcRedistOutcome.Cancelled), (1223, VcRedistOutcome.Cancelled), (1618, VcRedistOutcome.Busy), (1603, VcRedistOutcome.Failed) })
+        {
+            exitCode = code;
+            Eq(outcome, Ensure().Outcome, $"exit code {code}");
+        }
+        True(VcRedist.FromExitCode(3010, "x").RuntimeReady && !VcRedist.FromExitCode(1223, "x").RuntimeReady, "ready after a restart; not after a refusal");
+
+        exitCode = 0;
+        runs.Clear();
+        trusted = false;
+        var bad = Ensure();
+        Eq(VcRedistOutcome.NotTrusted, bad.Outcome, "a download not signed by Microsoft");
+        Eq(0, runs.Count, "never run");
+        True(!File.Exists(Path.Combine(dl, "vc_redist.x64.exe")), "and not kept");
+        trusted = true;
+        version = new Version(14, 36, 32532, 0);
+        Eq(VcRedistOutcome.NotTrusted, Ensure().Outcome, "an older redistributable is not run");
+        version = new Version(14, 51, 36247, 0);
+
+        // A signed copy beside the installer is used without a download; a bad one is skipped for the download.
+        var requests = server.Requests;
+        var beside = Path.Combine(Dir("vc-beside"), "vc_redist.x64.exe");
+        File.WriteAllBytes(beside, [0x4D, 0x5A]);
+        runs.Clear();
+        Eq(VcRedistOutcome.Installed, Ensure(local: [beside]).Outcome, "local copy");
+        Eq(requests, server.Requests, "no download with a good local copy");
+        True(runs.Single().StartsWith("vc_redist.x64.exe"), "the local copy ran");
+        Eq(VcRedistOutcome.DryRun, Ensure(dryRun: true, local: [beside]).Outcome, "dry run with a local copy");
     }),
     ("launch arguments and shortcut plan", () =>
     {
@@ -324,6 +521,132 @@ var tests = new List<(string Name, Action Body)>
         True(!Directory.Exists(Path.Combine(target, "quakevr", "tools")), "empty folders removed");
         Eq(quakeBefore, Snapshot(quake), "Quake folder untouched");
     }),
+    ("first-start relight: the game's marker written when ticked, removed when unticked and by uninstall", () =>
+    {
+        var quake = Dir("fs-quake");
+        Fixtures.MakeOriginal(quake);
+        var pkg = Fixtures.MakePackage(Dir("fs-pkg"), "v1");
+        var target = Path.Combine(run, "fs-QuakeVR");
+        InstallRecord Install(bool relight) => new InstallEngine().Install(new InstallPlan
+        {
+            PackagePath = pkg, TargetDir = target, QuakeDir = quake, RelightOnFirstRun = relight,
+        }, null, CancellationToken.None);
+
+        var record = Install(true);
+        Eq(Path.Combine(target, "quakevr", "relight_on_first_start.txt"), FirstStartRelight.MarkerPath(target), "marker path");
+        True(FirstStartRelight.Pending(target), "marker written");
+        True(record.RelightPending, "asked for");
+        True(!record.Files.Any(f => f.Path.Contains(FirstStartRelight.MarkerName, StringComparison.OrdinalIgnoreCase)), "marker not a recorded file");
+        Eq(0, Uninstaller.Verify(target).Count, "verify clean with the marker");
+        True(!LaunchCommand.Arguments(quake, target, LaunchVariant.Vr).Contains("relight"), "no relight argument on the command line");
+        // The engine looks for the same name (Quake/vr/vr_relight.hpp), when the checkout is there.
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+        {
+            var hpp = Path.Combine(d.FullName, "Quake", "vr", "vr_relight.hpp");
+            if (File.Exists(hpp))
+            {
+                True(File.ReadAllText(hpp).Contains($"firstStartMarker = \"{FirstStartRelight.MarkerName}\""), "engine's marker name");
+                break;
+            }
+        }
+
+        Install(false);
+        True(!FirstStartRelight.Pending(target), "unticked at an update: marker removed");
+        Install(true);
+        True(FirstStartRelight.Pending(target), "ticked again");
+        var u = Uninstaller.Uninstall(target, new UninstallOptions());
+        True(!File.Exists(FirstStartRelight.MarkerPath(target)), "uninstall removes the marker");
+        True(u.FolderRemoved, "folder removed (the marker is not a player file)");
+    }),
+    ("apps & features: the entry in a test registry root, Setup's copy in the install, removed by the uninstall", () =>
+    {
+        // The registry is a made-up root (a JSON file); the real one is never written. HKLM is refused outright.
+        Throws<ArgumentException>(() => new WindowsRegistryWriter().SetString(@"HKLM\Software\QuakeVRTest", "x", "y"), "HKLM refused");
+        var memory = new JsonFileRegistry();
+        memory.SetString(@"HKCU\A", "S", "text");
+        memory.SetDword(@"HKCU\A", "D", 42);
+        Eq("text", memory.GetValue(@"hkcu\a", "s"), "string back, case-insensitive");
+        Eq(42, memory.GetValue(@"HKCU\A", "D"), "dword back");
+        memory.DeleteKey(@"HKCU\A");
+        Eq(0, memory.Keys.Count, "key deleted");
+
+        // A made-up Setup (a development build: exe, its DLLs and JSON files) with things beside it that are not Setup's.
+        var setupDir = Dir("aaf-setup-build");
+        var setupExe = Path.Combine(setupDir, "QuakeVR-Setup.exe");
+        foreach (var (name, body) in new[] { ("QuakeVR-Setup.exe", "exe"), ("QuakeVR-Setup.dll", "dll"), ("QuakeVR.Installer.Core.dll", "core"),
+                     ("QuakeVR-Setup.runtimeconfig.json", "{}"), ("QuakeVR-Setup.deps.json", "{}"), ("installer-settings.json", "{}"),
+                     ("QuakeVR.zip", "a package"), ("vc_redist.x64.exe", "not setup"), ("notes.txt", "x") })
+        {
+            File.WriteAllText(Path.Combine(setupDir, name), body);
+        }
+        True(!SetupCopy.IsSingleFile(setupExe), "a development build");
+        var setupFiles = SetupCopy.FilesOf(setupExe, singleFile: false);
+        Eq("setup/QuakeVR-Setup.deps.json|setup/QuakeVR-Setup.dll|setup/QuakeVR-Setup.exe|setup/QuakeVR-Setup.runtimeconfig.json|setup/QuakeVR.Installer.Core.dll|setup/installer-settings.json",
+            string.Join("|", setupFiles.Select(f => f.Relative).Order(StringComparer.Ordinal)), "Setup's files only");
+        Eq("setup/QuakeVR-Setup.exe|setup/installer-settings.json", string.Join("|", SetupCopy.FilesOf(setupExe, singleFile: true).Select(f => f.Relative)), "single file: the exe (and the settings)");
+
+        var quake = Dir("aaf-quake");
+        Fixtures.MakeOriginal(quake);
+        var pkg = Fixtures.MakePackage(Dir("aaf-pkg"), "v1");
+        var target = Path.Combine(run, "aaf-QuakeVR");
+        var registryFile = Path.Combine(run, "aaf-registry.json");
+        var registry = new JsonFileRegistry(registryFile);
+        var logs = new List<string>();
+        var progress = new SyncProgress<InstallProgress>(p => { if (p.Log is not null) { logs.Add(p.Log); } });
+        var record = new InstallEngine().Install(new InstallPlan
+        {
+            PackagePath = pkg, TargetDir = target, QuakeDir = quake, SetupFiles = setupFiles, Registry = registry,
+        }, progress, CancellationToken.None);
+        var copy = Path.Combine(target, "setup", "QuakeVR-Setup.exe");
+        True(File.Exists(copy) && File.Exists(Path.Combine(target, "setup", "QuakeVR-Setup.dll")), "Setup copied into the install");
+        True(!File.Exists(Path.Combine(target, "setup", "QuakeVR.zip")) && !File.Exists(Path.Combine(target, "setup", "vc_redist.x64.exe")), "nothing else copied");
+        Eq(6, record.Files.Count(f => f.Component == Components.Setup), "Setup's files recorded");
+        Eq(0, Uninstaller.Verify(target).Count, "verify clean");
+        Eq(target, SetupCopy.InstallOf(copy), "the copy knows its install");
+
+        // The entry, in the test root (registry-file).
+        string? Value(string name) => new JsonFileRegistry(registryFile).GetValue(UninstallEntry.Key, name)?.ToString();
+        Eq(@"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\QuakeVRUnleashed", UninstallEntry.Key, "key");
+        Eq("Quake VR: Unleashed", Value("DisplayName"), "DisplayName");
+        Eq("Vittorio Romeo", Value("Publisher"), "Publisher");
+        Eq("v1", Value("DisplayVersion"), "DisplayVersion");
+        Eq(Path.Combine(target, "ironwail.exe") + ",0", Value("DisplayIcon"), "DisplayIcon: the game's exe icon");
+        Eq(target, Value("InstallLocation"), "InstallLocation");
+        Eq($"\"{copy}\" --uninstall --target \"{target}\"", Value("UninstallString"), "UninstallString: the copy in the install");
+        Eq($"\"{copy}\" --uninstall --quiet --target \"{target}\"", Value("QuietUninstallString"), "QuietUninstallString");
+        Eq(UninstallEntry.EstimatedSizeKb(record).ToString(), Value("EstimatedSize"), "EstimatedSize (KiB)");
+        True(new JsonFileRegistry(registryFile).GetValue(UninstallEntry.Key, "EstimatedSize") is int, "EstimatedSize is a DWORD");
+        Eq(record.InstalledAt.ToString("yyyyMMdd"), Value("InstallDate"), "InstallDate");
+        Eq("1", Value("NoModify"), "NoModify");
+        True(logs.Any(l => l.Contains("Installed apps")), "logged");
+
+        // An update run from the install's own copy: its files are in use, kept as they are (and still recorded).
+        var fromCopy = SetupCopy.FilesOf(copy, singleFile: false);
+        var r2 = new InstallEngine().Install(new InstallPlan
+        {
+            PackagePath = Fixtures.MakePackage(Dir("aaf-pkg2"), "v2"), TargetDir = target, QuakeDir = quake, SetupFiles = fromCopy, Registry = registry,
+        }, null, CancellationToken.None);
+        Eq(6, r2.Files.Count(f => f.Component == Components.Setup), "Setup's files still recorded after an update from the copy");
+        Eq("v2", Value("DisplayVersion"), "entry updated");
+        // An update without a Setup copy (the console without --setup-from) keeps the old one.
+        var r3 = new InstallEngine().Install(new InstallPlan { PackagePath = pkg, TargetDir = target, QuakeDir = quake }, null, CancellationToken.None);
+        Eq(6, r3.Files.Count(f => f.Component == Components.Setup), "kept by an update without one");
+        True(File.Exists(copy), "copy still there");
+
+        // Another install's entry is left alone; this one's goes with the uninstall, with the copy and its folder.
+        var other = new JsonFileRegistry();
+        other.SetString(UninstallEntry.Key, "InstallLocation", @"D:\Elsewhere\QuakeVR");
+        True(!UninstallEntry.Remove(other, target), "another folder's entry kept");
+        var u = Uninstaller.Uninstall(target, new UninstallOptions { Registry = registry });
+        True(u.EntryRemoved, "entry removed");
+        Eq(0, new JsonFileRegistry(registryFile).Keys.Count, "the test root is empty again");
+        True(!Directory.Exists(Path.Combine(target, "setup")), "Setup's copy removed");
+        True(u.FolderRemoved, "folder removed");
+
+        // The %TEMP% copy an uninstall restarts from (here a scratch folder).
+        var temp = SetupCopy.CopyToTemp(setupFiles, Dir("aaf-temp"));
+        True(File.Exists(temp) && File.Exists(Path.Combine(Path.GetDirectoryName(temp)!, "QuakeVR-Setup.dll")), "temp copy");
+    }),
     ("uninstall of an untouched install removes the folder", () =>
     {
         var quake = Dir("clean-quake");
@@ -431,6 +754,87 @@ var tests = new List<(string Name, Action Body)>
         Eq("v1", tag, "tag");
         Eq(sha, assets[0].Sha256, "digest");
         Eq(null, assets[1].Sha256, "no digest");
+    }),
+    ("sounds: the mixer never steps the output (voice fades, stolen voices, the loop's seam, the mute, a smooth limiter)", () =>
+    {
+        // The limiter: unchanged below the knee, continuous (and so is its slope) at the knee, never above full scale.
+        Eq(0.5f, SoundMixer.Limit(0.5f), "below the knee");
+        Eq(-0.5f, SoundMixer.Limit(-0.5f), "below the knee, negative");
+        const float k = SoundMixer.KneeStart;
+        True(Math.Abs(SoundMixer.Limit(k + 1e-4f) - SoundMixer.Limit(k - 1e-4f)) < 3e-4, "continuous at the knee");
+        var previous = 0f;
+        for (var x = 0f; x < 8; x += 0.001f)
+        {
+            var y = SoundMixer.Limit(x);
+            True(y >= previous && y <= 1 && y - previous <= 0.001f + 1e-6f, $"monotonic, below 1, slope at most 1 at {x}");
+            previous = y;
+        }
+        True(SoundMixer.Limit(1) > 0.88f && SoundMixer.Limit(1) < 0.92f, "1 bends to about 0.9");
+
+        // Quake's 8-bit sounds rarely start or end on zero: a clip of pure DC (0.5) is the worst case.
+        var dc = new SoundClip("dc", Enumerable.Repeat(0.5f, SoundMixer.Rate / 4).ToArray());
+        short[] Render(SoundMixer m, int frames, Action<int>? at = null)
+        {
+            const int block = 441;
+            var pcm = new short[frames / block * block];
+            for (var f = 0; f < pcm.Length; f += block)
+            {
+                at?.Invoke(f);
+                m.Mix(pcm.AsSpan(f, block));
+            }
+            return pcm;
+        }
+        var mixer = new SoundMixer();
+        mixer.Play(dc, 1);
+        var one = Render(mixer, SoundMixer.Rate / 2);
+        var a = SoundMixer.Analyze(one);
+        True(a.Peak > 0.48, $"the clip plays (peak {a.Peak})");
+        True(a.MaxJump < 0.5 / SoundMixer.FadeInFrames * 1.5, $"fades in and out (largest jump {a.MaxJump})");
+        True(!mixer.Busy, "ended");
+        Eq(0, mixer.Edges, "no edges");
+
+        // Five plays of one sound 20 ms apart: two voices are stolen, and fade out.
+        mixer = new SoundMixer();
+        var stolen = Render(mixer, SoundMixer.Rate / 2, f =>
+        {
+            if (f % 882 == 0 && f < 882 * 5)
+            {
+                mixer.Play(dc, 0.2f);
+            }
+        });
+        a = SoundMixer.Analyze(stolen);
+        True(a.MaxJump < 0.2 / SoundMixer.FadeInFrames * 1.5 + 0.2 / SoundMixer.StealFrames * 3, $"stolen voices fade (largest jump {a.MaxJump})");
+        Eq(0, mixer.Edges, "no edges with stolen voices");
+
+        // A loop whose end and start differ (a ramp from -0.5 to 0.5): no seam; then the mute ramps.
+        var ramp = new SoundClip("ramp", Enumerable.Range(0, SoundMixer.Rate / 5).Select(i => i / (float)(SoundMixer.Rate / 5) - 0.5f).ToArray());
+        mixer = new SoundMixer();
+        mixer.SetLoop(ramp, 1, 0.001);
+        var muted = false;
+        var loop = Render(mixer, SoundMixer.Rate, f =>
+        {
+            if (!muted && f >= SoundMixer.Rate * 3 / 4)
+            {
+                mixer.MasterVolume = 0;
+                muted = true;
+            }
+        });
+        a = SoundMixer.Analyze(loop);
+        True(a.MaxJump < 0.01, $"the loop wraps and mutes without a step (largest jump {a.MaxJump})");
+        True(!mixer.Busy, "muted: nothing to send");
+        Eq(0, loop[^1], "silent once muted");
+        Eq(0, mixer.Edges, "no edges in the loop");
+
+        // The loop's seam itself: the crossfaded copy's last sample flows into its first.
+        var seamless = SoundMixer.Seamless(ramp.Samples);
+        Eq(ramp.Samples.Length - SoundMixer.SeamFrames, seamless.Length, "seamless length");
+        True(Math.Abs(seamless[0] - seamless[^1]) < 0.01, $"seam {seamless[^1]} -> {seamless[0]}");
+
+        // Rendered to a WAV that reads back.
+        var wav = Path.Combine(Dir("sounds"), "mix.wav");
+        SoundMixer.WriteWav(wav, stolen);
+        var back = QuakeFormats.ReadWav(File.ReadAllBytes(wav));
+        True(back is not null && back.SampleRate == SoundMixer.Rate && back.Samples.Length == stolen.Length, "the WAV reads back");
     }),
     ("skin assets: pak search order, palette, WAD pictures and CONCHARS, a map's textures, WAV decoding", () =>
     {

@@ -341,7 +341,7 @@ void(entity xPlayer, float xHand, entity xBox) VR_Carry_Start =
     {
         if(!vr_carry_quiet)
         {
-            sound(self, CHAN_AUTO, "vr/pommel2.wav", 0.35, ATTN_NORM); // a wooden stick taken up: a soft knock
+            sound(self, VRGetHandChannel(xHand), "vr/pommel2.wav", 0.35, ATTN_NORM); // a wooden stick taken up: a soft knock
         }
     }
     else if(!vr_carry_quiet)
@@ -355,7 +355,7 @@ void(entity xPlayer, float xHand, entity xBox) VR_Carry_Start =
         }
         else
         {
-            sound(self, CHAN_AUTO, "knight/sword2.wav", 0.4, ATTN_NORM);
+            VR_SoundVaried(self, VRGetHandChannel(xHand), "knight/sword2.wav", 0.4, ATTN_NORM);
         }
     }
     haptic(xHand, 0.0, 0.1, 70, 0.6);
@@ -765,7 +765,8 @@ float(float xSpeed, float xOwnSpeed, float xTouch) VR_Prop_Flung =
         other.classname, xSpeed, xOwnSpeed, dmg));
     dprint(sprintf(" (base %.1f x%.2f, speed x%.2f, weight x%.2f), by %s\n", base, own, speedMult, weightMult,
         attacker == world ? "nobody" : attacker.netname));
-    sound(self, CHAN_AUTO, "fisthit.wav", 1, ATTN_NORM);
+    VR_SoundVaried(self, CHAN_AUTO, "fisthit.wav", 1, ATTN_NORM);
+    VR_Blunt_HitLayer(self, CHAN_AUTO, other);
     spawn_touchblood(dmg); // (splinters off a crate: spawn_touchblood)
     float pop = VR_Decap_ThrownArm(other, self, attacker, dmg); // VR: a heavy blunt thing at the head pops it if it kills (vr_decap.qc)
     T_Damage(other, self, attacker, dmg);
@@ -848,9 +849,44 @@ void(float xHand, entity xBox) VR_Carry_Release =
     VR_Grenade_Released(xBox, xHand); // a live grenade is the player's (vr_grenade.qc)
 };
 
-// Take it: its own pickup, as if the carrying hand had touched it the old way.
+// The put-away transition (vr_collect_fx: vr_collectfx.cpp): a thing a hand puts away at a holster (into the pack) or a
+// pouch is drawn going into it on that player's client, while it is taken at once here as before. VR_CollectFx_Note
+// keeps its model and pose before it is taken (a taken thing may be removed); VR_CollectFx_Send (self the player), once it
+// is gone, sends them.
+nosave entity vr_cfx_ent;
+nosave float vr_cfx_model;
+nosave vector vr_cfx_org;
+nosave vector vr_cfx_ang;
+
+void(entity e) VR_CollectFx_Note =
+{
+    vr_cfx_ent = e;
+    vr_cfx_model = e.modelindex;
+    vr_cfx_org = e.origin;
+    vr_cfx_ang = e.angles;
+};
+
+// `hotspot`: where it went (QVR_HS_*); 0: the hand's hotspot. Nothing unless that is a holster's or a pouch's.
+void(float xHand, entity e, float hotspot) VR_CollectFx_Send =
+{
+    if(!hotspot)
+    {
+        hotspot = xHand == cVR_OffHand ? self.offhand_hotspot : self.mainhand_hotspot;
+    }
+    if(e != vr_cfx_ent || !vr_cfx_model ||
+       !(isHolsterHotspot(hotspot) || hotspot == QVR_HS_GRENADE_POUCH || hotspot == QVR_HS_AMMO_POUCH))
+    {
+        return;
+    }
+    collectfx(xHand, e, hotspot, vr_cfx_model, vr_cfx_org, vr_cfx_ang);
+    vr_cfx_ent = world;
+};
+
+// Take it: its own pickup, as if the carrying hand had touched it the old way. Taken at a holster or pouch, it is drawn
+// going in (VR_CollectFx_Send).
 void(float xHand, entity xBox) VR_Carry_Take =
 {
+    VR_CollectFx_Note(xBox);
     entity oldSelf = self;
     entity oldOther = other;
     self.touchinghand = xHand;
@@ -871,6 +907,7 @@ void(float xHand, entity xBox) VR_Carry_Take =
     {
         VR_Carry_SetHeld(self, xHand, world);
         xBox.carry_player = world; // (a deathmatch item comes back: carried by no one)
+        VR_CollectFx_Send(xHand, xBox, 0);
     }
 };
 
@@ -880,7 +917,7 @@ void(float xHand, entity xBox) VR_Carry_Take =
 float(float xHand) VR_Carry_AtHolster =
 {
     float hotspot = xHand == cVR_OffHand ? self.offhand_hotspot : self.mainhand_hotspot;
-    return isHolsterHotspot(hotspot) || hotspot == QVR_HS_GRENADE_POUCH;
+    return isHolsterHotspot(hotspot) || hotspot == QVR_HS_GRENADE_POUCH || hotspot == QVR_HS_AMMO_POUCH;
 };
 
 // Every player frame, for each hand (self is the player).
@@ -917,6 +954,11 @@ void(float xHand) VR_Carry_HandFrame =
     {
         // An unarmed hand grenade let go of at the grenade pouch: back in it (vr_grenade.qc).
         if(VR_HandGrenade_LetGo(xHand, box))
+        {
+            return;
+        }
+        // A round (a shell) let go of at the ammo pouch: back in the reserve; an ammo box: into it (vr_reload.qc).
+        if(VR_Reload_LetGo(xHand, box) || VR_Reload_PouchTakesBox(xHand, box))
         {
             return;
         }
@@ -988,6 +1030,12 @@ void(float xHand) VR_Carry_HandFrame =
         }
     }
     box.carry_trigger = trigger;
+
+    // A round (a shell) held at the loading port of the gun in the other hand goes into it (vr_reload.qc).
+    if(VR_Reload_HeldFrame(xHand, box))
+    {
+        return;
+    }
 
     // Follow the hand, turning with it (its angles set; its place in the hand the grip's: moved at once by a change to its
     // Held Object Offsets); not through walls (monsters: VR_Carry_Follow).
@@ -1185,7 +1233,7 @@ void(float xHand) VR_Carry_TrySecondHand =
     VR_Carry_SetHeld(self, xHand, box);
     box.carry_2h = TRUE;
     carry2h(box, self, TRUE); // the grips are kept
-    sound(self, CHAN_AUTO, "knight/sword2.wav", 0.25, ATTN_NORM);
+    VR_SoundVaried(self, VRGetHandChannel(xHand), "knight/sword2.wav", 0.25, ATTN_NORM);
     haptic(xHand, 0.0, 0.1, 70, 0.6);
 };
 
@@ -2359,7 +2407,8 @@ void(float xHand, entity xGib, float xSpeed, vector xAt, vector xDir) VR_Gib_Blo
     dprint("gib: struck by a blow at "); dprint(ftos(xSpeed)); dprint("\n");
     VRSetMeleeHitSoundPlayed(xHand, TRUE);
     VRMeleeHapticByHand(xHand);
-    sound(self, VRGetGunChannel(xHand), "fisthit.wav", 1.0, ATTN_NORM);
+    VR_SoundVaried(self, VRGetGunChannel(xHand), "fisthit.wav", 1.0, ATTN_NORM);
+    VR_Blunt_HitLayer(self, VRGetHandChannel(xHand), xGib);
     VR_SetHitKind(QVR_HITKIND_MELEE, xHand, xAt, xDir);
     float sgib = xGib.vr_sgib;
     float sgibId = xGib.vr_sgib_id;
@@ -2547,7 +2596,8 @@ void(float xHand) VR_Gib_HeldFrameHand =
             VR_Gib_KnockOut(self, g);
             VRSetMeleeHitSoundPlayed(xHand, TRUE); // the blow landed (no punch as well)
             VRMeleeHapticByHand(xHand);
-            sound(self, VRGetGunChannel(xHand), "fisthit.wav", 1.0, ATTN_NORM);
+            VR_SoundVaried(self, VRGetGunChannel(xHand), "fisthit.wav", 1.0, ATTN_NORM);
+            VR_Blunt_HitLayer(self, VRGetHandChannel(xHand), g);
             VR_SetHitKind(QVR_HITKIND_MELEE, xHand, (g.absmin + g.absmax) * 0.5, normalize(rel));
             T_Damage(g, self, self, VR_Gib_StrikeDamage(speed));
             VR_ClearHitKind();

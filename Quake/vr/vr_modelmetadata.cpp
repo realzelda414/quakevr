@@ -36,6 +36,18 @@ using retro::Category;
     return f;
 }
 
+// An owned expansion's file read in place ("owned/mg3/progs/v_hammer.mdl": vr_gamedir.cpp VR_OwnedFile): the path it has
+// in its own pack ("progs/v_hammer.mdl"), whose traits it has (a view weapon, ...); its identity stays its full name.
+[[nodiscard]] const char* packPathOf(const char* name)
+{
+    if(!startsWith(name, "owned/"))
+    {
+        return name;
+    }
+    const char* slash = strchr(name + 6, '/');
+    return slash ? slash + 1 : name;
+}
+
 template <za::SizeT N>
 [[nodiscard]] bool anyPrefix(const char* f, const char* const (&prefixes)[N])
 {
@@ -53,12 +65,13 @@ constexpr const char* gibPrefixes[] = {"gib1.", "gib2.", "gib3.", "gib_brain", "
 constexpr const char* handPrefixes[] = {"hand", "finger_"};
 constexpr const char* gearPrefixes[] = {"vrgadget", "vrpauldron", "vrpouch", "legholster", "vrflashlight"};
 constexpr const char* propPrefixes[] = {"vr_crate", "vr_rock", "vr_brick", "vr_plank", "vr_shell", "vrtorch.", "lantern",
-    "candle", "barrel"};
+    "candle", "barrel", "vr_barrel"};
 // Quake's monsters, the mission packs' (hipnotic: scorpions, gremlins, the armagon; rogue: mummies, eels, lava men,
 // dragons) and the player's model (other players, statues)
 constexpr const char* monsterFiles[] = {"soldier.", "dog.", "ogre.", "knight.", "hknight.", "wizard.", "demon.",
     "shambler.", "zombie.", "shalrath.", "enforcer.", "fish.", "tarbaby.", "boss.", "oldone.", "player.", "scor.",
-    "grem.", "armabody.", "armalegs.", "mummy.", "eel.", "lavaman.", "dragon.", "ogre_", "sword.", "frogman"};
+    "grem.", "armabody.", "armalegs.", "mummy.", "eel.", "lavaman.", "dragon.", "ogre_", "sword.", "frogman",
+    "dog_explosive.", "rknight.", "teleporter_eye", "shambler_blood."}; // (the last four Dawn of the Machine's: read in place, owned/mg3/progs/)
 constexpr const char* itemFiles[] = {"armor.", "backpack.", "w_s_key.", "w_g_key.", "m_s_key.", "m_g_key.", "b_s_key.",
     "b_g_key.", "invulner.", "suit.", "invisibl.", "quaddama.", "end1.", "end2.", "end3.", "end4.", "empathy.",
     "wetsuit.", "shield.", "antigrav."};
@@ -336,6 +349,7 @@ ModelMetadata describePath(const char* name)
     ModelMetadata result = empty;
     if(!name) { return result; }
     result.id = identifyPath(name);
+    name = packPathOf(name);
     const char* file = fileOf(name);
     const size_t n = strlen(name);
     for(int i = 0; i < static_cast<int>(Trait::Count); i++)

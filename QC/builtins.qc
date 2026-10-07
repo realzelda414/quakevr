@@ -136,6 +136,7 @@ float(float a, float b) min = #94;      // DP_QC_MINMAXBOUND
 float(float a, float b) max = #95;      // DP_QC_MINMAXBOUND
 float(float base, float exp) pow = #97; // DP_QC_SINCOSSQRTPOW
 float(string s) strlen = #114;          // FRIK_FILE
+float(string s) stof = #81;             // FRIK_FILE
 string(string s, float start, float length) substring = #116; // FRIK_FILE
 float(string s, float index) str2chr = #222;                  // FTE_STRINGS
 float(float y, float x) atan2 = #474;   // DP_QC_ASINACOSATANATAN2TAN, radians
@@ -398,7 +399,7 @@ void(float h, float v) worldtext_hsetscale = #0;
 // A tip for new players placed in a map (func_vr_tip, QC/vr_tips.qc; Quake/vr/vr_tips.cpp). The server owns the list
 // and sends it to every client (and the whole list to each client as it spawns); a handle is one of its tips.
 float() vr_tip_make = #0;
-void(float h, string s) vr_tip_setname = #0;   // its name: its key in vr_tips_seen, with the map's
+void(float h, string s) vr_tip_setname = #0;   // its name: its key in tips_seen.txt, with the map's
 void(float h, string s) vr_tip_settext = #0;   // its text (\n new lines)
 void(float h, vector v) vr_tip_setpos = #0;    // its point in the map
 void(float h, entity e) vr_tip_setentity = #0; // what it follows, live (world: a fixed point)
@@ -449,6 +450,7 @@ float QVR_SPLASH_THING = 2;  // a splash, small or big by strength
 
 void(entity target, float duration) bodyshock = #0;
 void(entity target, float left) bodysmoulder = #0; // a burning body's fire goes out in `left` s (0: just out; below 0: doused): it smokes while it burns and a while after (vr_burning.qc)
+void(float hand, entity e, float hotspot, float mi, vector org, vector ang) collectfx = #0; // QVR: e, put away by self's hand at that holster or pouch (its model and pose before it was taken), drawn going in on self's client (vr_collect_fx; vr_carry.qc VR_CollectFx_Send)
 void(entity target, float duration) bodyshockdeath = #0; // lightning's lasting shock on a body it killed or struck: arcs crawling over it, fading (vr_shock.qc)
 void(entity box, entity player, float hand, float begin) portal_carry = #0;
 

@@ -17,6 +17,16 @@ float QVR_WPNFLAG_FOREGRIP_CARRIED = VRUTIL_POWER_OF_TWO(1);
 float QVR_WPNFLAG_SAW_RUNNING = VRUTIL_POWER_OF_TWO(2);
 float QVR_WPNFLAG_SAW_CHAIN = VRUTIL_POWER_OF_TWO(3);
 float QVR_WPNFLAG_SAW_STATE = 12; // both (QVR_WPNFLAG_SAW_RUNNING | QVR_WPNFLAG_SAW_CHAIN): stripped as it leaves the hands
+// Immersive reloading's magazine guns (vr_reload.qc): no magazine in (ejected); travels with the gun (holsters, throws, the
+// level's parms) as its flags do. The engine draws the attached magazine of a gun without it (vr_view.cpp; a weapon
+// prop's: U_QVR_NOMAG).
+float QVR_WPNFLAG_NOMAG = VRUTIL_POWER_OF_TWO(4);
+// Immersive reloading's super shotgun (vr_reload.qc, phase 2b): broken open (drawn open, it can't fire, its chambers take
+// shells by hand), and the spent shells still in its barrels (fired, not yet thrown out by opening it: 0, 1 or 2, in two
+// bits: QVR_WPNFLAG_SSG_SPENT_ONE times the count). Both travel with the gun as its flags do (vr_view.cpp draws it open).
+float QVR_WPNFLAG_SSG_OPEN = VRUTIL_POWER_OF_TWO(5);
+float QVR_WPNFLAG_SSG_SPENT_ONE = VRUTIL_POWER_OF_TWO(6);
+float QVR_WPNFLAG_SSG_SPENT = 192; // (both bits: 64 and 128)
 
 //
 //
@@ -96,6 +106,7 @@ float IID_CHAINSAW           = 44; // VR: an ogre's chainsaw.
 float IID_GRUNTGUN           = 45; // VR: a grunt's shotgun.
 float IID_ENFRIFLE           = 46; // VR: an enforcer's laser rifle.
 float IID_CROWBAR            = 47; // VR: the crowbar.
+float IID_SUPERAXE           = 48; // MG3: Dawn of the Machine's Super Axe (vr_mg3_weapons.qc).
 
 //
 //
@@ -122,7 +133,8 @@ float WID_CHAINSAW         = 14; // VR: an ogre's chainsaw (vr_chainsaw.qc; its 
 float WID_GRUNTGUN         = 15; // VR: a grunt's shotgun (vr_enemyguns.qc; its clip is its only ammo)
 float WID_ENFRIFLE         = 16; // VR: an enforcer's laser rifle (vr_enemyguns.qc; its clip is its only ammo)
 float WID_CROWBAR          = 17; // VR: the crowbar (vr_crowbar.qc; a melee weapon, one hand or two, as the swords)
-float WID_LAST             = 17; // the last weapon id
+float WID_SUPERAXE         = 18; // MG3: Dawn of the Machine's Super Axe (vr_mg3_weapons.qc; MG3's model read in place, any campaign)
+float WID_LAST             = 18; // the last weapon id
 float vr_pellet_damage; // FireBulletsImpl's damage a pellet while a shotgun fires (yours, Weapon Damage; a grunt's, vr_enemyguns.qc; 0: id's 4)
 // FireBulletsImpl's tracers (the tracer builtin): the hand that fires (-1 a monster's gun) and where they start (its muzzle).
 float vr_tracer_hand;
@@ -190,6 +202,8 @@ float QVR_HS_LEFT_UPPER_HOLSTER     = 8;
 float QVR_HS_RIGHT_UPPER_HOLSTER    = 9;
 float QVR_HS_CARRIED_GRIP           = 10; // the handle of the gun the other hand carries by its foregrip
 float QVR_HS_GRENADE_POUCH          = 11; // the grenade pouch at the small of the back (vr_handgrenade: vr_grenade.qc)
+float QVR_HS_AMMO_POUCH             = 12; // the ammo pouch on the front of the belt (vr_reload_mode 3: vr_reload.qc)
+float QVR_HS_MAGAZINE               = 13; // the magazine attached to the other hand's gun (vr_reload_mode 3: vr_reload.qc)
 
 //
 //
@@ -221,6 +235,9 @@ float QVR_WEAPONMODE_CYCLEQUICKSLOT = 1;
 float QVR_RELOADMODE_NONE        = 0;
 float QVR_RELOADMODE_ALLHOLSTERS = 1;
 float QVR_RELOADMODE_HIPHOLSTERS = 2;
+// Manual-immersive (docs/vr-port/RELOAD_PLAN.md): the guns that load by hand (VR_Reload_ManualFor, vr_reload.qc) take
+// their ammo from the front pouch, one round or magazine at a time; the others reload at the hip holsters, as 2.
+float QVR_RELOADMODE_IMMERSIVE   = 3;
 
 //
 //

@@ -10,6 +10,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using QuakeVR.Installer.Audio;
 using QuakeVR.Installer.Core.Assets;
+using QuakeVR.Installer.Core.Audio;
 using QuakeVR.Installer.Core.Packaging;
 using QuakeVR.Installer.Core.Platform;
 using QuakeVR.Installer.Skin;
@@ -29,9 +30,20 @@ namespace QuakeVR.Installer;
 /// </summary>
 static class ScreenshotHarness
 {
-    // The window's client area (MainWindow.xaml: 1040 x 720 with its frame).
-    const int Width = 1024;
-    const int Height = 680;
+    // The window's client area at its default size (MainWindow: the size with its frame).
+    const int Width = (int)(MainWindow.DefaultWidth - MainWindow.FrameWidth);
+    const int Height = (int)(MainWindow.DefaultHeight - MainWindow.FrameHeight);
+
+    // The fit check (fit.txt): each page laid out in the client area the window gets on these screens (the window is
+    // never taller than the work area, in DIPs: the screen less a 48 px taskbar at 100%, scaled), and whatever would
+    // need scrolling there. Widths: the default fits all three.
+    static readonly (string Screen, int Height)[] FitScreens =
+    [
+        ("default", Height),
+        ("1366x768 at 100%", Math.Min(Height, 768 - 48 - (int)MainWindow.FrameHeight)),
+        ("1920x1080 at 150%", Math.Min(Height, (1080 - 72) * 2 / 3 - (int)MainWindow.FrameHeight)),
+    ];
+    static readonly StringBuilder FitReport = new();
 
     public static async Task<int> RunAsync(StartupOptions options, string dir)
     {
@@ -54,6 +66,14 @@ static class ScreenshotHarness
         foreach (var f in FindAll<FireView>(view))
         {
             report.AppendLine($"fire: {f.Describe()}");
+        }
+
+        if (await StatementCheck(vm, view, dir, report) is { } failed)
+        {
+            report.AppendLine($"statement check FAILED: {failed}");
+            await File.WriteAllTextAsync(Path.Combine(dir, "report.txt"), report.ToString());
+            Console.Error.WriteLine($"statement check FAILED: {failed}");
+            return 1;
         }
 
         vm.GoTo(Page.Detect);
@@ -126,6 +146,15 @@ static class ScreenshotHarness
             await Save(new ShellView { DataContext = again }, Path.Combine(dir, "1b-welcome-installed.png"));
         }
 
+        // High scaling: the Welcome page at 150% (the sidebar's logos, crisp), and the Statement page in the window a
+        // 1080p screen at 150% leaves room for (the page and the sidebar scroll).
+        vm.GoTo(Page.Welcome);
+        await Save(view, Path.Combine(dir, "7-welcome-150pct.png"), scale: 1.5);
+        vm.GoTo(Page.Statement);
+        await Save(view, Path.Combine(dir, "7b-statement-150pct-1080p.png"), scale: 1.5, height: FitScreens[2].Height);
+        await File.WriteAllTextAsync(Path.Combine(dir, "fit.txt"), FitReport.ToString());
+        Console.WriteLine(FitReport.ToString().TrimEnd());
+
         if (options.Extras)
         {
             await FlameStrip(Path.Combine(dir, "flames-strip.png"), report);
@@ -135,6 +164,8 @@ static class ScreenshotHarness
                 {
                     await TextureSheet(fs, Path.Combine(dir, "quake-textures.png"));
                     report.AppendLine($"sounds: {SoundCheck(fs)}");
+                    var quakeSounds = UiSounds.QuakeClips(fs, Synth.All());
+                    report.AppendLine($"offline mix, Quake's sounds: {MixCheck(quakeSounds.Clips, quakeSounds.Ambience ?? Synth.Crackle(), Path.Combine(dir, "ui-mix-quake.wav"))}");
                     // The window's sound path, muted: the device, the class handlers, Quake's clips, a click.
                     UiSounds.Settings.Muted = true;
                     UiSounds.Start(null);
@@ -145,6 +176,7 @@ static class ScreenshotHarness
                     UiSounds.Stop();
                 }
             }
+            report.AppendLine($"offline mix, synthesized sounds: {MixCheck(Synth.All(), Synth.Crackle(), Path.Combine(dir, "ui-mix-synth.wav"))}");
             report.AppendLine(SoundEngineCheck());
             report.AppendLine(await LiveWindowCheck(options));
             report.AppendLine($"synthesized sounds: {string.Join(", ", Synth.All().Select(kv => $"{kv.Key} {kv.Value.Samples.Length * 1000 / SoundEngine.Rate} ms"))}");
@@ -244,6 +276,77 @@ static class ScreenshotHarness
         return $"sound engine: {during} buffers while a 220 ms sound played, {after - during} more in the next 600 ms (idle: nothing sent)";
     }
 
+    /// <summary>The wave-out rings the live window check compares (frames per buffer, buffers): the old one (it
+    /// crackled: INSTALLER.md, "Sounds"), one just too short, the shortest that holds, and the installer's.</summary>
+    static readonly (int Frames, int Count)[] DeviceRings = [(512, 4), (441, 5), (441, 6), (SoundEngine.BufferFrames, SoundEngine.BufferCount)];
+
+    /// <summary>A scripted session mixed offline (no device): the fire, clicks, a burst of typing (voices of one
+    /// sound stolen), the install's sounds, a mute and back; written to <paramref name="wav"/> and measured.</summary>
+    static string MixCheck(Dictionary<Sfx, SoundClip> clips, SoundClip ambience, string wav)
+    {
+        var mixer = new SoundMixer();
+        var rng = new Random(7);
+        var events = new List<(double At, Action Do)>
+        {
+            (0, () => mixer.SetLoop(ambience, UiSounds.AmbienceLevel, 0.5)),
+            (7.5, () => mixer.MasterVolume = 0),
+            (8.0, () => mixer.MasterVolume = 1),
+        };
+        void At(double t, Sfx kind) => events.Add((t, () =>
+        {
+            var (volume, pitch) = UiSounds.VolumeAndPitch(kind, rng);
+            mixer.Play(clips[kind], volume, pitch);
+        }));
+        At(0.6, Sfx.Select);
+        At(0.9, Sfx.Click);
+        At(1.1, Sfx.Back);
+        At(1.3, Sfx.Toggle);
+        for (var t = 1.6; t < 3.0; t += 0.055)
+        {
+            At(t, Sfx.Type);
+        }
+        for (var t = 3.2; t < 4.0; t += 0.1)
+        {
+            At(t, Sfx.Click);
+            At(t + 0.05, Sfx.Toggle);
+        }
+        At(4.2, Sfx.InstallStart);
+        At(5.0, Sfx.InstallDone);
+        At(6.0, Sfx.Error);
+        At(6.5, Sfx.Support);
+        At(7.2, Sfx.Select);
+        events.Sort((a, b) => a.At.CompareTo(b.At));
+        const int block = 256;
+        var pcm = new short[(int)(9.0 * SoundMixer.Rate) / block * block];
+        var next = 0;
+        for (var f = 0; f < pcm.Length; f += block)
+        {
+            while (next < events.Count && events[next].At * SoundMixer.Rate <= f)
+            {
+                events[next++].Do();
+            }
+            mixer.Mix(pcm.AsSpan(f, block));
+        }
+        SoundMixer.WriteWav(wav, pcm);
+        var a = SoundMixer.Analyze(pcm);
+        // The loudest a source alone moves from one sample to the next (at its volume): jumps above it are the mixer's.
+        var source = clips.Max(kv => MaxJump(kv.Value.Samples) * UiSounds.VolumeAndPitch(kv.Key, new Random(0)).Volume);
+        var dc = clips.Values.Max(c => Math.Abs(c.Samples.Average()));
+        var ends = clips.Values.Max(c => Math.Max(Math.Abs(c.Samples[0]), Math.Abs(c.Samples[^1])));
+        return string.Create(CultureInfo.InvariantCulture,
+            $"{Path.GetFileName(wav)}: sources' DC up to {dc:0.0000}, first/last samples up to {ends:0.000}; the mixer's own steps: largest {mixer.MaxEdge:0.0000}, {mixer.Edges} over 0.01; peak {a.Peak:0.000}, {a.FullScale} samples at full scale, largest jump {a.MaxJump:0.0000} ({a.Jumps} over 0.05; the sources' own largest {source:0.0000}), largest second difference {a.MaxCurve:0.0000} ({a.Curves} over 0.05)");
+    }
+
+    static double MaxJump(float[] s)
+    {
+        double m = 0;
+        for (var i = 1; i < s.Length; ++i)
+        {
+            m = Math.Max(m, Math.Abs(s[i] - s[i - 1]));
+        }
+        return m;
+    }
+
     /// <summary>The real window, shown off screen for two seconds: how often the frame clock ticks and what the
     /// process costs while animating, then with reduced motion.</summary>
     static async Task<string> LiveWindowCheck(StartupOptions options)
@@ -257,6 +360,8 @@ static class ScreenshotHarness
         window.Show();
         window.Activate();
         await Task.Delay(500);
+        var size = string.Create(CultureInfo.InvariantCulture,
+            $"window {window.ActualWidth:0}x{window.ActualHeight:0} (min {window.MinWidth:0}x{window.MinHeight:0}; work area {SystemParameters.WorkArea.Width:0}x{SystemParameters.WorkArea.Height:0})");
         var proc = Process.GetCurrentProcess();
         double Measure(out long ticks)
         {
@@ -274,6 +379,22 @@ static class ScreenshotHarness
             return (proc.TotalProcessorTime - cpu0).TotalMilliseconds / sw.Elapsed.TotalMilliseconds * 100;
         }
         var active = window.IsActive;
+        // The device under the window's load: rings of buffers mixing the fire and a click every 120 ms at a
+        // thousandth of their volume (inaudible), counting the times the device ran dry.
+        var rings = DeviceRings.Select(r => new SoundEngine(r.Frames, r.Count) { MasterVolume = 0.001f }).ToList();
+        var clips = Synth.All();
+        foreach (var e in rings)
+        {
+            e.SetLoop(Synth.Crackle(), 0.1f, 0.01);
+        }
+        var clicker = new Timer(_ =>
+        {
+            foreach (var e in rings)
+            {
+                e.Play(clips[Sfx.Click], 0.3f);
+            }
+        }, null, 0, 120);
+        var ringClock = Stopwatch.StartNew();
         Measure(out _); // Warm up: the first frames compile shaders and fill caches.
         var busy = Measure(out var ticks);
         var governed = Measure(out var governedTicks); // After the governor's first look.
@@ -309,8 +430,16 @@ static class ScreenshotHarness
         var still = Measure(out var stillTicks);
         FrameClock.OverrideReduceMotion(options.ReduceMotion ? true : null);
         window.Close();
+        clicker.Dispose();
+        var ringSeconds = ringClock.Elapsed.TotalSeconds;
+        var ringReport = string.Join("; ", rings.Zip(DeviceRings, (e, r) => string.Create(CultureInfo.InvariantCulture,
+            $"{r.Count}x{r.Frames} ({r.Count * r.Frames * 1000.0 / SoundEngine.Rate:0} ms queued): {e.Underruns} underruns, fewest queued {(e.MinQueued == int.MaxValue ? "-" : e.MinQueued.ToString(CultureInfo.InvariantCulture))}, {e.TimeoutWakes} timeouts, played {e.PlayedSeconds:0.00} s of audio in {e.StreamedSeconds:0.00} s")));
+        foreach (var e in rings)
+        {
+            e.Dispose();
+        }
         return string.Create(CultureInfo.InvariantCulture,
-            $"Windows animation effects {(windowsAnimations ? "on" : "off")}; {(FrameClock.Hardware ? "GPU" : "software")} rendering; live window (active {active}): {ticks / 2.0:0} ticks/s, process CPU {busy:0.0}% of one core; {governor} reduced motion: {stillTicks / 2.0:0} ticks/s, CPU {still:0.0}%;{detail}");
+            $"device rings over {ringSeconds:0} s of the live window: {(rings.All(e => e.Available) ? ringReport : "no audio device")}; Windows animation effects {(windowsAnimations ? "on" : "off")}; {(FrameClock.Hardware ? "GPU" : "software")} rendering; live window (active {active}, {size}): {ticks / 2.0:0} ticks/s, process CPU {busy:0.0}% of one core; {governor} reduced motion: {stillTicks / 2.0:0} ticks/s, CPU {still:0.0}%;{detail}");
     }
 
     static void Layout(FrameworkElement e, double w, double h)
@@ -320,9 +449,9 @@ static class ScreenshotHarness
         e.UpdateLayout();
     }
 
-    static void SavePng(Visual v, int w, int h, string path)
+    static void SavePng(Visual v, int w, int h, string path, double scale = 1)
     {
-        var bitmap = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        var bitmap = new RenderTargetBitmap((int)Math.Round(w * scale), (int)Math.Round(h * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32);
         bitmap.Render(v);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
@@ -330,11 +459,15 @@ static class ScreenshotHarness
         encoder.Save(file);
     }
 
-    static async Task Save(FrameworkElement view, string path)
+    static async Task Save(FrameworkElement view, string path, double scale = 1, int height = Height)
     {
         // Let bindings and item containers settle, then lay out and render at the window's size.
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-        Layout(view, Width, Height);
+        if (scale == 1 && height == Height)
+        {
+            await FitCheck(view, Path.GetFileNameWithoutExtension(path));
+        }
+        Layout(view, Width, height);
         await Task.Delay(350); // The controls' short animations (a check mark popping in) end.
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         view.UpdateLayout();
@@ -346,7 +479,138 @@ static class ScreenshotHarness
             page.RenderTransform = Transform.Identity;
         }
         view.UpdateLayout();
-        SavePng(view, Width, Height, path);
+        SavePng(view, Width, height, path, scale);
+    }
+
+    /// <summary>The page laid out on each of <see cref="FitScreens"/>: what would scroll there, and by how much (the
+    /// shown page's scrolling parts and the sidebar's).</summary>
+    static async Task FitCheck(FrameworkElement view, string name)
+    {
+        var line = new StringBuilder($"{name}:");
+        foreach (var (screen, height) in FitScreens)
+        {
+            Layout(view, Width, height);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            view.UpdateLayout();
+            var over = FindAll<System.Windows.Controls.ScrollViewer>(view)
+                .Where(sv => Shown(sv, view) && sv.ExtentHeight > sv.ViewportHeight + 0.5)
+                .Select(sv => string.Create(CultureInfo.InvariantCulture,
+                    $"{(sv.Name is { Length: > 0 } n ? n : Owner(sv)?.GetType().Name ?? "?")} +{sv.ExtentHeight - sv.ViewportHeight:0}px"))
+                .ToList();
+            line.Append($" {screen} ({Width}x{height}): {(over.Count == 0 ? "fits" : "scrolls " + string.Join(", ", over))};");
+        }
+        FitReport.AppendLine(line.ToString());
+    }
+
+    static bool Shown(DependencyObject d, DependencyObject root)
+    {
+        for (; d is not null && d != root; d = VisualTreeHelper.GetParent(d))
+        {
+            if (d is UIElement { Visibility: not Visibility.Visible })
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static UserControl? Owner(DependencyObject d)
+    {
+        for (d = VisualTreeHelper.GetParent(d); d is not null; d = VisualTreeHelper.GetParent(d))
+        {
+            if (d is UserControl u)
+            {
+                return u;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The Statement page, unanswered, mixed and all YES, saved to PNG and driven through its real controls (the radio
+    /// buttons' automation peers, as a screen reader or a click would): the switches start with neither YES nor NO, a
+    /// picked one cannot go back to neither, and the footer's Continue is enabled only with YES to all four. Returns
+    /// what went wrong, or null.
+    /// </summary>
+    static async Task<string?> StatementCheck(MainViewModel vm, ShellView view, string dir, StringBuilder report)
+    {
+        vm.GoTo(Page.Statement);
+        await Save(view, Path.Combine(dir, "1c-statement-unset.png"));
+        var page = FindAll<StatementPage>(view).Single();
+        var radios = FindAll<System.Windows.Controls.RadioButton>(page).ToList();
+        var next = FindAll<System.Windows.Controls.Button>(view).Single(b => b.Command == vm.NextCommand);
+        if (radios.Count != 8)
+        {
+            return $"{radios.Count} switch halves, not 8";
+        }
+        var states = new List<string>();
+        string? Check(bool continueEnabled, string state)
+        {
+            var on = string.Join("", radios.Select(r => r.IsChecked == true ? "1" : "0"));
+            states.Add($"{state}: switches {on}, continue {(next.IsEnabled ? "enabled" : "disabled")}");
+            return next.IsEnabled != continueEnabled || vm.CanGoNext != continueEnabled ? $"{state}: Continue should be {(continueEnabled ? "enabled" : "disabled")} (button {next.IsEnabled}, command {vm.CanGoNext})" : null;
+        }
+        static System.Windows.Automation.Provider.ISelectionItemProvider Peer(System.Windows.Controls.RadioButton r) =>
+            (System.Windows.Automation.Provider.ISelectionItemProvider)new System.Windows.Automation.Peers.RadioButtonAutomationPeer(r)
+                .GetPattern(System.Windows.Automation.Peers.PatternInterface.SelectionItem);
+        // Radio i*2 is claim i's YES, i*2+1 its NO.
+        void Pick(int claim, bool yes) => Peer(radios[claim * 2 + (yes ? 0 : 1)]).Select();
+
+        if (radios.Any(r => r.IsChecked != false) || vm.Statement.Unanswered != 4)
+        {
+            return "the switches do not start with neither YES nor NO";
+        }
+        if (Check(false, "unset") is { } e1)
+        {
+            return e1;
+        }
+
+        Pick(0, true);
+        Pick(1, false);
+        Pick(2, true);
+        try
+        {
+            Peer(radios[0]).RemoveFromSelection();
+            return "a picked YES went back to neither";
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        await Save(view, Path.Combine(dir, "1d-statement-mixed.png"));
+        if (vm.Statement[0] != true || vm.Statement[1] != false || vm.Statement[2] != true || vm.Statement[3] is not null)
+        {
+            return $"the mixed answers did not reach the statement ({string.Join(",", Enumerable.Range(0, 4).Select(i => vm.Statement[i]?.ToString() ?? "unset"))}; switches {string.Join("", radios.Select(r => r.IsChecked == true ? "1" : "0"))})";
+        }
+        if (Check(false, "mixed") is { } e2)
+        {
+            return e2;
+        }
+
+        Pick(1, true);
+        Pick(3, true);
+        await Save(view, Path.Combine(dir, "1e-statement-all-yes.png"));
+        if (Check(true, "all yes") is { } e3)
+        {
+            return e3;
+        }
+        Pick(2, false);
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        if (Check(false, "one switched to no") is { } e4)
+        {
+            return e4;
+        }
+        Pick(2, true);
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        if (Check(true, "back to all yes") is { } e5)
+        {
+            return e5;
+        }
+        foreach (var s in states)
+        {
+            report.AppendLine($"statement {s}");
+        }
+        await File.WriteAllLinesAsync(Path.Combine(dir, "1-statement-check.txt"), states);
+        return null;
     }
 
     static IEnumerable<T> FindAll<T>(DependencyObject root) where T : DependencyObject

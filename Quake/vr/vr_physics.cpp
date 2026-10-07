@@ -12,6 +12,7 @@
 #include "vr_held.hpp"
 #include "vr_hull.hpp"
 #include "vr_progs.hpp"
+#include "vr_modelmetadata.hpp"
 #include "vr_move.hpp"
 #include "vr_server.hpp"
 #include "vr_portals.hpp"
@@ -168,7 +169,15 @@ constexpr float weaponDrawnReach = 48.f;
     }
     if(hasFlag(target, physics::FL_FORCEGRABBABLE) || (byFist && carried(target)))
     {
-        return held::grabTouch(target, player, which == HAND_OFF ? 0 : 1);
+        // A round lying about (a shell: QC vr_reload.qc) is small, and lies flat on the floor under the lowest the fist
+        // gets: taken within vr_reload_grab_slack of its surface.
+        const int mi = static_cast<int>(target->v.modelindex);
+        const qmodel_t* model = mi > 0 && mi < MAX_MODELS ? sv.models[mi] : nullptr;
+        const float slack = model && (modelmeta::has(model, modelmeta::Trait::LiveShell) ||
+                                      modelmeta::has(model, modelmeta::Trait::Magazine))
+                                ? za::max(vr_reload_grab_slack.value, 0.f) * 0.01f * units::metresToUnits()
+                                : 0.f;
+        return held::grabTouch(target, player, which == HAND_OFF ? 0 : 1, slack);
     }
     // (With vr_weapon_grab_slack more: a gun lying flat is thinner than the lowest the fist gets over the floor.)
     if(weaponByFist(target) && held::grabTouch(target, player, which == HAND_OFF ? 0 : 1,
@@ -304,20 +313,31 @@ void handTouches(edict_t* ent)
 
 // Weapons poking things: the gun from each hand to its muzzle, using the networked hand
 // and muzzle positions (so it works for every client, not just a listen server's).
+// A hand's muzzle is never farther from it than this (metres): no weapon is that long. A line longer is not a weapon's
+// (a client's muzzle left where the hand was before a map load or a teleport: ROUND21.md, "A far button pressed at a map
+// load"; the client carries it with the hand now, vr_client.cpp handMuzzle), and touches nothing.
+constexpr float weaponLineMaxMetres = 4.f;
+
 void weaponTouches(edict_t* ent)
 {
     const glm::vec3 gunExtent{1.f};
     const int handPos[2] = {f().handpos, f().offhandpos};
     const int muzzlePos[2] = {f().muzzlepos, f().offmuzzlepos};
     const float handIndex[2] = {HAND_MAIN, HAND_OFF};
+    const float longest = weaponLineMaxMetres * units::metresToUnits();
 
     for(int i = 0; i < 2; i++)
     {
         const auto* tracked = server::clientMove(ent);
         const int h = i == 0 ? 1 : 0;
-        const trace_t trace = tracked ?
-            moveTrace(tracked->hands[h].pos, -gunExtent, gunExtent, tracked->muzzlePos[h], MOVE_NORMAL | MOVE_PORTALS, ent) :
-            moveTrace(fieldVec(ent, handPos[i]), -gunExtent, gunExtent, fieldVec(ent, muzzlePos[i]), MOVE_NORMAL, ent);
+        const glm::vec3 from = tracked ? tracked->hands[h].pos : fieldVec(ent, handPos[i]);
+        const glm::vec3 to = tracked ? tracked->muzzlePos[h] : fieldVec(ent, muzzlePos[i]);
+        if(glm::distance(from, to) > longest)
+        {
+            Con_DPrintf("VR: hand %d's line to its muzzle is %.0f units long: no weapon touch\n", h, glm::distance(from, to));
+            continue;
+        }
+        const trace_t trace = moveTrace(from, -gunExtent, gunExtent, to, tracked ? MOVE_NORMAL | MOVE_PORTALS : MOVE_NORMAL, ent);
 
         if(trace.fraction < 1.f && trace.ent && fieldFunc(trace.ent, f().vr_wpntouch))
         {
@@ -609,9 +629,14 @@ extern "C" int VR_ClientTeleport(edict_t* ent)
 // Physical walking in the play space: a second, horizontal move with collision.
 extern "C" void VR_ClientRoomscaleMove(edict_t* ent)
 {
+    // With no room-scale move, through a slipgate the move just made took the torso into, now (with one, after it,
+    // below): the tick's message then sends him carried, never past the gate's plane and not yet carried (the client's
+    // eye already through it while the server's PVS was the source room's: the room seen lost its doors and floors for
+    // a frame; ROUND21.md, "A frame seen through after a slipgate").
     const VrMove* vrMove = server::clientMove(ent);
     if(!vrMove)
     {
+        VR_PortalClientCross(ent);
         return;
     }
 
@@ -619,6 +644,7 @@ extern "C" void VR_ClientRoomscaleMove(edict_t* ent)
     const glm::vec3 move = vrMove->roomscaleMove / static_cast<float>(VR_PlayerMoveSpeedup());
     if((move.x == 0.f && move.y == 0.f) || !ZA_ISFINITE(move.x) || !ZA_ISFINITE(move.y))
     {
+        VR_PortalClientCross(ent);
         return;
     }
 

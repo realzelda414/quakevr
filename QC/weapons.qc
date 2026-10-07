@@ -229,6 +229,7 @@ float xHeadRadius;
 float(entity xTarget) PositionalHead =
 {
     string c = xTarget.classname;
+    if(xTarget.vr_mg3_mon && MG3_PositionalHead(xTarget)) { return TRUE; } // (QVR: Dawn of the Machine's own models: vr_mg3_ogre.qc)
     if(c == "monster_army")             { xHeadForward = 3;  xHeadUp = 23; xHeadRadius = 7.2; return TRUE; }
     if(c == "monster_ogre" || c == "monster_ogre_marksman") { xHeadForward = 9; xHeadUp = 33; xHeadRadius = 10; return TRUE; }
     if(c == "monster_enforcer")         { xHeadForward = 2;  xHeadUp = 27; xHeadRadius = 7.4; return TRUE; }
@@ -236,6 +237,8 @@ float(entity xTarget) PositionalHead =
     if(c == "monster_hell_knight")      { xHeadForward = 6;  xHeadUp = 33; xHeadRadius = 7.2; return TRUE; }
     if(c == "monster_knight")           { xHeadForward = 4;  xHeadUp = 22; xHeadRadius = 6.2; return TRUE; }
     if(c == "monster_shambler")         { xHeadForward = 14; xHeadUp = 57; xHeadRadius = 12;  return TRUE; }
+    // Dawn of the Machine's super shambler (MG3's model, $stand1: its face at the hump's front, 33-72 up; its rig's head).
+    if(c == "monster_super_shambler")   { xHeadForward = 30; xHeadUp = 53; xHeadRadius = 13;  return TRUE; }
     // A vore's: Quake VR's own model (progs/shalrath.mdl, taller than id's): his head 40-53 above his origin (round 21).
     if(c == "monster_shalrath")         { xHeadForward = 0;  xHeadUp = 45; xHeadRadius = 8;   return TRUE; }
     if(c == "monster_zombie")           { xHeadForward = 0;  xHeadUp = 22; xHeadRadius = 6;   return TRUE; }
@@ -251,6 +254,10 @@ float(entity xTarget) PositionalHead =
     // (lunging, his head thrust forward and level with his origin; decapitation's zone since round 20, its one source now).
     if(c == "monster_dog")              { xHeadForward = 23; xHeadUp = 1;  xHeadRadius = 7;   return TRUE; }
     if(c == "player")                   { xHeadForward = 4;  xHeadUp = 23; xHeadRadius = 7.2; return TRUE; }
+    // Dawn of the Machine's lava man (MG3's model, $walk1: its head forward of its shoulders, 61-79 up; Rogue's has none).
+    if(c == "monster_lava_man" && xTarget.mg3_lavaman) { xHeadForward = 31; xHeadUp = 70; xHeadRadius = 13; return TRUE; }
+    // Dawn of the Machine's Chthon (id's model, $walk1: his head and jaw 210-276 up, forward of his chest; id's has none).
+    if(c == "monster_boss" && xTarget.mg3_chthon) { xHeadForward = 80; xHeadUp = 240; xHeadRadius = 45; return TRUE; }
     return FALSE;
 };
 
@@ -440,7 +447,7 @@ void(entity xTarget) PositionalHeadshotFeedback =
         return;
     }
 
-    sound(shooter, CHAN_AUTO, "vr/headshot.wav", min(1, v), ATTN_NORM);
+    VR_SoundVaried(shooter, CHAN_AUTO, "vr/headshot.wav", min(1, v), ATTN_NORM);
     if(cvar_hget(cvarh_vr_debug_shots))
     {
         dprint(sprintf("headshot sound: %s by %s\n", xTarget.classname, self.classname));
@@ -454,6 +461,8 @@ void(entity xTarget) PositionalHeadshotFeedback =
 HIPNOTIC WEAPONS
 ================
 */
+float vr_laser_bounces, vr_laser_bounce_ratio, vr_laser_stops; // the laser cannon's bolts' bounces and stops (tests)
+
 void() HIP_LaserTouch =
 {
     vector org;
@@ -502,6 +511,8 @@ void() HIP_LaserTouch =
     }
     else
     {
+       vr_laser_bounces++; // (tests: vr_mg3_weapons_test.qc)
+       vr_laser_bounce_ratio = 0.9;
        self.dmg = 0.9 * self.dmg;
        self.velocity = oldvel+(2*trace_plane_normal);
        self.velocity = normalize(self.velocity);
@@ -514,6 +525,8 @@ void() HIP_LaserTouch =
        return;
     }
 
+    vr_laser_stops++;
+    if(cvar("developer") > 1) { dprint(sprintf("laser bolt stopped: touch %g on %s (health %g)\n", self.cnt, other.classname, other.health)); }
     sound(self, CHAN_WEAPON, "enforcer/enfstop.wav", 1, ATTN_STATIC);
     remove(self);
 };
@@ -654,6 +667,18 @@ void(vector xFrom, vector xTo) VR_TouchTrace =
     }
 };
 
+// A bolt's damage (self: who fires it): Weapon Damage's Laser Cannon (18; one in ten lit, `xLit`, 25/18 of it), and in Dawn
+// of the Machine (campaign 5) its own laser cannon's 15 and 20 (official mg3_weapons.qc HIP_LaunchLaser: the same
+// weapon, the same bouncing bolts, less damage; MG3_LaserScale, vr_mg3_weapons.qc).
+float(float xLit) VR_LaserBoltDamage =
+{
+    if(xLit)
+    {
+        return 25 * VR_WpnDmgScale(self, cvarh_vr_dmg_laser, 18) * MG3_LaserScale(TRUE);
+    }
+    return VR_WpnDmg(self, cvarh_vr_dmg_laser, 18) * MG3_LaserScale(FALSE);
+};
+
 entity(vector org, vector vec, vector extraVel, float light) HIP_LaunchLaser =
 {
     sound(self, CHAN_WEAPON, "hipweap/laserg.wav", 1, ATTN_NORM);
@@ -677,7 +702,7 @@ entity(vector org, vector vec, vector extraVel, float light) HIP_LaunchLaser =
     setorigin(newmis, org);
 
     newmis.speed = 1750;
-    newmis.dmg = VR_WpnDmg(self, cvarh_vr_dmg_laser, 18);
+    newmis.dmg = VR_LaserBoltDamage(FALSE);
     newmis.velocity = vec * newmis.speed + extraVel;
     newmis.old_velocity = newmis.velocity;
     newmis.angles = vectoangles(newmis.velocity);
@@ -754,7 +779,7 @@ void(float xHand, float stat) HIP_FireLaser =
         {
             newmis = HIP_LaunchLaser(org, dir, extraVel, 1);
             VR_ShotPlace(newmis, xHand); // behind what the muzzle is inside (VR_ShotPlace)
-            newmis.dmg = 25 * VR_WpnDmgScale(self, cvarh_vr_dmg_laser, 18);
+            newmis.dmg = VR_LaserBoltDamage(TRUE);
         }
         else
         {
@@ -1137,7 +1162,7 @@ void(float xHand) HIP_FireMjolnir =
         T_Damage_VRMelee (trace_ent, self, self, xdmg);
         if((vr_melee_blunt || VR_Hit_Metal(victim)) && VRGetMeleeHitSoundPlayed(xHand) == FALSE)
         {
-            sound(self, VRGetGunChannel(xHand), VR_Melee_HitSoundOn(victim, "", FALSE), 1, ATTN_NORM); // the head's hit has none
+            VR_SoundVaried(self, VRGetGunChannel(xHand), VR_Melee_HitSoundOn(victim, "", FALSE), 1, ATTN_NORM); // the head's hit has none
         }
         VRSetMeleeHitSoundPlayed(xHand, TRUE);
     }
@@ -1165,7 +1190,7 @@ void(float xHand) HIP_FireMjolnir =
             if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
             {
                 VRMeleeHapticByHand(xHand);
-                sound(self, VRGetGunChannel(xHand), "knight/sword1.wav", 1, ATTN_NORM);
+                VR_SoundVaried(self, VRGetGunChannel(xHand), "knight/sword1.wav", 1, ATTN_NORM);
                 VRSetMeleeHitSoundPlayed(xHand, TRUE);
             }
         }
@@ -1286,7 +1311,8 @@ void(float xHand) W_FireAxe =
         if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
         {
             VRMeleeHapticByHand(xHand);
-            sound(self, VRGetGunChannel(xHand), VR_Melee_HitSoundOn(victim, "fisthit.wav", TRUE), 1.0, ATTN_NORM);
+            VR_SoundVaried(self, VRGetGunChannel(xHand), VR_Melee_HitSoundOn(victim, "fisthit.wav", TRUE), 1.0, ATTN_NORM);
+            VR_Blunt_HitLayer(self, VRGetHandChannel(xHand), victim);
             VRSetMeleeHitSoundPlayed(xHand, TRUE);
         }
     }
@@ -1297,7 +1323,7 @@ void(float xHand) W_FireAxe =
         if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
         {
             VRMeleeHapticByHand(xHand);
-            sound(self, VRGetGunChannel(xHand), "player/axhit2.wav", 1, ATTN_NORM);
+            VR_SoundVaried(self, VRGetGunChannel(xHand), "player/axhit2.wav", 1, ATTN_NORM);
             VRSetMeleeHitSoundPlayed(xHand, TRUE);
         }
 
@@ -1337,7 +1363,8 @@ void(float xHand) W_GunMelee =
         if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
         {
             VRMeleeHapticByHand(xHand);
-            sound(self, VRGetGunChannel(xHand), VR_Melee_HitSoundOn(victim, "fisthit.wav", FALSE), 1.0, ATTN_NORM);
+            VR_SoundVaried(self, VRGetGunChannel(xHand), VR_Melee_HitSoundOn(victim, "fisthit.wav", FALSE), 1.0, ATTN_NORM);
+            VR_Blunt_HitLayer(self, VRGetHandChannel(xHand), victim);
             VRSetMeleeHitSoundPlayed(xHand, TRUE);
         }
     }
@@ -1347,7 +1374,7 @@ void(float xHand) W_GunMelee =
         if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
         {
             VRMeleeHapticByHand(xHand);
-            sound(self, VRGetGunChannel(xHand), "player/axhit2.wav", 1, ATTN_NORM);
+            VR_SoundVaried(self, VRGetGunChannel(xHand), "player/axhit2.wav", 1, ATTN_NORM);
             VRSetMeleeHitSoundPlayed(xHand, TRUE);
         }
 
@@ -1392,7 +1419,7 @@ void(float xHand) W_SwordMelee =
         if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
         {
             VRMeleeHapticByHand(xHand);
-            sound(self, VRGetGunChannel(xHand), VR_Melee_HitSoundOn(victim, "knight/sword2.wav", TRUE), 1.0, ATTN_NORM);
+            VR_SoundVaried(self, VRGetGunChannel(xHand), VR_Melee_HitSoundOn(victim, "knight/sword2.wav", TRUE), 1.0, ATTN_NORM);
             VRSetMeleeHitSoundPlayed(xHand, TRUE);
         }
         return;
@@ -1402,7 +1429,7 @@ void(float xHand) W_SwordMelee =
     if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
     {
         VRMeleeHapticByHand(xHand);
-        sound(self, VRGetGunChannel(xHand), "player/axhit2.wav", 1, ATTN_NORM);
+        VR_SoundVaried(self, VRGetGunChannel(xHand), "player/axhit2.wav", 1, ATTN_NORM);
         VRSetMeleeHitSoundPlayed(xHand, TRUE);
     }
     particle2(org, trace_plane_normal * 60, QVR_PARTICLE_PRESET_SPARKS, 8);
@@ -1437,7 +1464,8 @@ void(float xHand) W_ChainsawMelee =
         if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
         {
             VRMeleeHapticByHand(xHand);
-            sound(self, CHAN_AUTO, VR_Melee_HitSoundOn(victim, "fisthit.wav", TRUE), 1.0, ATTN_NORM);
+            VR_SoundVaried(self, VRGetHandChannel(xHand), VR_Melee_HitSoundOn(victim, "fisthit.wav", TRUE), 1.0, ATTN_NORM);
+            VR_Blunt_HitLayer(self, VRGetHandChannel(xHand), victim);
             VRSetMeleeHitSoundPlayed(xHand, TRUE);
         }
         return;
@@ -1447,7 +1475,7 @@ void(float xHand) W_ChainsawMelee =
     if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
     {
         VRMeleeHapticByHand(xHand);
-        sound(self, CHAN_AUTO, "player/axhit2.wav", 1, ATTN_NORM);
+        VR_SoundVaried(self, VRGetHandChannel(xHand), "player/axhit2.wav", 1, ATTN_NORM);
         VRSetMeleeHitSoundPlayed(xHand, TRUE);
     }
     particle2(org, trace_plane_normal * 60, QVR_PARTICLE_PRESET_SPARKS, 8);
@@ -1498,8 +1526,12 @@ void(float xHand) W_FistMelee =
     if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
     {
         // (A held rock or brick knocks as it does; a fist on an explosive box, a metal knock: VR_Melee_HitSoundOn.)
-        sound(self, VRGetGunChannel(xHand), VR_Debris_Is(held) ? VR_Debris_Sound(held) :
+        VR_SoundVaried(self, VRGetGunChannel(xHand), VR_Debris_Is(held) ? VR_Debris_Sound(held) :
             (VR_Hit_Metal(trace_ent) ? VR_Melee_HitSoundOn(trace_ent, "fisthit.wav", FALSE) : "fisthit.wav"), 1.0, ATTN_NORM);
+        if(!VR_Debris_Is(held))
+        {
+            VR_Blunt_HitLayer(self, VRGetHandChannel(xHand), trace_ent);
+        }
         playedsound = TRUE;
     }
 
@@ -2086,6 +2118,10 @@ void(float xHand) W_FireShotgun =
     {
         ejectcasings(xHand, QVR_CASING_SHOTGUNSHELL, 1, 0.45, 0);
     }
+    else if(VRGetWeapon(xHand) == WID_SUPER_SHOTGUN)
+    {
+        VR_Reload_SsgFired(xHand, 1); // (immersive reloading: spent in its barrel until it is broken open)
+    }
 
     particle2(VRGetMuzzlePos(xHand), '0 0 0', QVR_PARTICLE_PRESET_GUNSMOKE, 1);
 
@@ -2117,7 +2153,14 @@ void(float xHand) W_FireSuperShotgun =
     dir = VRGetWeaponFireRotFwd(xHand);
     vr_pellet_damage = cvar_hget(cvarh_vr_dmg_super_shotgun); // (Weapon Damage)
     vr_decap_weapon = QVR_DECAP_SSG; // (head pops)
-    FireBullets(xHand, 14, dir, '0.035 0.025 0');
+    if(MG3_BloodyBits() & MG3_BLOODY_SSG)
+    {
+        FireBullets(xHand, 28, dir, '0.075 0.025 0'); // Dawn of the Machine's bloody one: twice the pellets, wider (vr_mg3_weapons.qc)
+    }
+    else
+    {
+        FireBullets(xHand, 14, dir, '0.035 0.025 0');
+    }
     vr_decap_weapon = 0;
     vr_pellet_damage = 0;
 
@@ -2128,6 +2171,10 @@ void(float xHand) W_FireSuperShotgun =
     if(!VRIsWeaponReloadingEnabledFor(self, xHand))
     {
         ejectcasings(xHand, QVR_CASING_SHOTGUNSHELL, 2, 0.45, 0);
+    }
+    else
+    {
+        VR_Reload_SsgFired(xHand, 2); // (immersive reloading: spent in its barrels until it is broken open)
     }
 
     particle2(VRGetMuzzlePos(xHand) - '0 2 0', '0 0 0', QVR_PARTICLE_PRESET_GUNSMOKE, 1);
@@ -2184,7 +2231,7 @@ void() T_MissileTouch =
 
     if(other.health)
     {
-        if(other.classname == "monster_shambler")
+        if(VR_IsShambler(other))
             damg = damg * 0.5;    // mostly immune
         T_Damage(other, self, self.owner, damg);
     }
@@ -2635,9 +2682,26 @@ void() GrenadeTouch =
     // HONEY
     self.owner.damage_weapon = IT_GRENADE_LAUNCHER;
 
+    if(other.takedamage == DAMAGE_AIM && other.mg3_chthon)
+    {
+        // Dawn of the Machine's Chthon (upstream GrenadeTouch): the whole blast into him (his middle is far above where it
+        // struck), the rest around.
+        float gd = VR_WpnDmg(self.owner, cvarh_vr_dmg_grenade, 120);
+        T_Damage(other, self, self.owner, gd);
+        T_RadiusDamage(self, self.owner, gd, other);
+        WriteByte(MSG_BROADCAST, SVC_TEMPENTITY);
+        WriteByte(MSG_BROADCAST, TE_EXPLOSION);
+        WriteVec3(MSG_BROADCAST, self.origin);
+        BecomeExplosion();
+        return;
+    }
     if(other.takedamage == DAMAGE_AIM)
     {
-        if(!((other.flags & FL_SPECIFICDAMAGE) && !(other.items & IT_GRENADE_LAUNCHER))) // HONEY
+        if(MG3_Shub_Is(other))
+        {
+            MG3_Shub_GrenadeHit(); // (Dawn of the Machine's Shub: the hit hers, the blast without her: vr_mg3_shub.qc)
+        }
+        else if(!((other.flags & FL_SPECIFICDAMAGE) && !(other.items & IT_GRENADE_LAUNCHER))) // HONEY
         {
             GrenadeExplode();
         }
@@ -3231,6 +3295,18 @@ void(float xHand, float xWeapon, float xWeaponFlags, float xAttackFinished,
         return;
     }
 
+    // The super shotgun broken open (immersive reloading, vr_reload.qc): its hammers fall on nothing.
+    if(VR_Reload_SsgIsOpen(self, xHand))
+    {
+        if(time > xAttackFinished)
+        {
+            sound(self, VRGetHandChannel(xHand), "gunclick.wav", 1, ATTN_NORM);
+            *xOutAttackFinished = time + 0.5;
+            VR_Reload_Log(sprintf("a dry click: the super shotgun (hand %g) is open", xHand));
+        }
+        return;
+    }
+
     float emptyHammer = xWeapon == WID_MJOLNIR && !W_CheckNoAmmo(xHand);
     if(emptyHammer && VRHandsTracked(self) && self.ishuman)
     {
@@ -3241,7 +3317,7 @@ void(float xHand, float xWeapon, float xWeaponFlags, float xAttackFinished,
     {
         if(time > xAttackFinished)
         {
-            sound(self, CHAN_AUTO, "gunclick.wav", 1, ATTN_NORM);
+            sound(self, VRGetHandChannel(xHand), "gunclick.wav", 1, ATTN_NORM);
             *xOutAttackFinished = time + 0.5;
             if(cvar_hget(cvarh_vr_debug_shots))
             {
@@ -3259,12 +3335,12 @@ void(float xHand, float xWeapon, float xWeaponFlags, float xAttackFinished,
     RuneApplyBlackNoise(self); // make rune noise
     //--ZOID
 
-    if(xWeapon == WID_AXE || xWeapon == WID_SWORD || xWeapon == WID_CROWBAR)
+    if(xWeapon == WID_AXE || xWeapon == WID_SWORD || xWeapon == WID_CROWBAR || xWeapon == WID_SUPERAXE)
     {
         if(!VRHandsTracked(self) ||
            !self.ishuman)
         {
-            sound(self, VRGetGunChannel(xHand), "weapons/ax1.wav", 1, ATTN_NORM);
+            VR_SoundVaried(self, VRGetGunChannel(xHand), "weapons/ax1.wav", 1, ATTN_NORM);
             float r = random();
             if(r < 0.25)
                 player_axe1(xHand);
@@ -3282,7 +3358,7 @@ void(float xHand, float xWeapon, float xWeaponFlags, float xAttackFinished,
         SuperDamageSound();
         player_shot1(xHand);
         W_FireShotgun(xHand);
-        *xOutAttackFinished = time + RuneApplyHell(0.5, self);
+        *xOutAttackFinished = time + RuneApplyHell(MG3_BloodyShotgunRefire(0.5), self); // (Dawn of the Machine's bloody one: 0.28)
     }
     else if(xWeapon == WID_SUPER_SHOTGUN)
     {
@@ -3348,7 +3424,7 @@ void(float xHand, float xWeapon, float xWeaponFlags, float xAttackFinished,
             *xOutAttackFinished = time + 0.1;
         }
 
-        sound(self, CHAN_AUTO, "weapons/lstart.wav", 1, ATTN_NORM);
+        sound(self, VRGetHandChannel(xHand), "weapons/lstart.wav", 1, ATTN_NORM);
     }
     // HYPNOTIC
 //MED
@@ -3862,7 +3938,16 @@ void(float xHand) ToggleSecondaryAmmo =
         return;
     }
 
-    VRTryUnloadWeapon(self, xHand, weapon, VRGetWeaponFlags(xHand));
+    if(VR_Reload_MagIn(self, xHand))
+    {
+        // Immersive reloading: the magazine of the old ammo drops out (its rounds in it); one of the new goes in by hand.
+        makevectors(VRGetEntHandRot(self, xHand));
+        VR_Reload_Eject(self, xHand, VRGetEntHandVel(self, xHand) * VRMetersToUnits() - v_up * 40, -1, "the ammo changed");
+    }
+    else
+    {
+        VRTryUnloadWeapon(self, xHand, weapon, VRGetWeaponFlags(xHand));
+    }
 
     VRGunHaptic(VRGetOtherHand(xHand), 0.3, 75, 1.0);
     sound(self, VRGetGunChannel(xHand), "buttons/switch02.wav", 0.5, ATTN_NORM);
@@ -4343,12 +4428,19 @@ void() VR_Test_CrateCoverReport =
 };
 
 void() VR_WeaponInst_Test; // (vr_weaponinst_test.qc)
+void() VR_Reload_Test;     // (vr_reload_test.qc)
 
 void() ImpulseCommands =
 {
     if(self.impulse == 120 && !deathmatch && !coop) // QVR test: the weapons moved, and what has which (vr_weaponinst_test.qc)
     {
         VR_WeaponInst_Test();
+        self.impulse = 0;
+        return;
+    }
+    if(self.impulse == 125 && !deathmatch && !coop) // QVR test: immersive reloading's steps (vr_reload_test.qc)
+    {
+        VR_Reload_Test();
         self.impulse = 0;
         return;
     }
@@ -4441,7 +4533,8 @@ void() ImpulseCommands =
 
     // The hand's B/Y also reels a grappling hook in (vr_grapple.qc: its own gun's, or the other hand's when its own has
     // none out): while it drives one, it cycles nothing.
-    if(self.impulse == 10 && time >= self.attack_finished && !VR_Grapple_ButtonsBusy(cVR_MainHand))
+    if(self.impulse == 10 && time >= self.attack_finished && !VR_Grapple_ButtonsBusy(cVR_MainHand) &&
+       !VR_Reload_MagIn(self, cVR_MainHand)) // (B ejects its magazine: vr_reload.qc)
     {
         if(getWeaponCycleMode() == QVR_WEAPONCYCLEMODE_ALLOWED)
         {
@@ -4451,7 +4544,8 @@ void() ImpulseCommands =
         }
     }
 
-    if(self.impulse == 12 && time >= self.offhand_attack_finished && !VR_Grapple_ButtonsBusy(cVR_OffHand))
+    if(self.impulse == 12 && time >= self.offhand_attack_finished && !VR_Grapple_ButtonsBusy(cVR_OffHand) &&
+       !VR_Reload_MagIn(self, cVR_OffHand)) // (Y ejects its magazine: vr_reload.qc)
     {
         if(getWeaponCycleMode() == QVR_WEAPONCYCLEMODE_ALLOWED)
         {
@@ -4733,6 +4827,18 @@ void() ImpulseCommands =
             traceline(spawnAt + '0 0 8', spawnAt - '0 0 256', TRUE, self); // (on the floor)
             spawned = VR_Crate_TestSpawn(trace_endpos, spawnKind == 107 ? 1 : 2, spawnPlayer.v_viewangle_y + 30, spawnKind == 109);
         }
+        else if(spawnKind == 111 || spawnKind == 112)
+        {
+            // A barrel (vr_crates.qc's vr_barrel: vrstart2's), upright or lying across your view (it may roll).
+            traceline(spawnAt + '0 0 8', spawnAt - '0 0 256', TRUE, spawnPlayer); // (on the floor)
+            self = spawn();
+            self.angles = '0 1 0' * (spawnPlayer.v_viewangle_y + 90);
+            self.spawnflags = spawnKind == 112 ? 1 : 0;
+            setorigin(self, trace_endpos + '0 0 20');
+            vr_barrel();
+            spawned = self;
+            self = spawnPlayer;
+        }
         else if(spawnKind == 110)
         {
             // The rocks and bricks (vr_debris.qc), a row of each across your view, each model in another skin (rocks
@@ -4760,8 +4866,9 @@ void() ImpulseCommands =
             else if(spawnKind == 102) { misc_explobox(); }  // 40 kg (grappling hook tests)
             else if(spawnKind == 103) { misc_explobox2(); } // 25 kg
             else if(spawnKind == 104) { misc_explobox(); self.takedamage = DAMAGE_NO; } // one that never blows up (shot pushes)
+            else if(spawnKind == 113) { self.classname = "item_key1"; item_key1(); } // the silver key (taken at a holster: vr_collect_fx tests)
             else                      { item_shells(); }
-            if((spawnKind == 100 || spawnKind == 101) && !VRPlaceItemNow()) // (its final size from the first frame)
+            if((spawnKind == 100 || spawnKind == 101 || spawnKind == 113) && !VRPlaceItemNow()) // (its final size from the first frame)
             {
                 self = world;
             }
@@ -5183,7 +5290,7 @@ void(float xHand) W_WeaponFrameImpl =
         if(!VRGetFireButtonPressed(xHand) &&
            (VRGetWeapon(xHand) == WID_NAILGUN || VRGetWeapon(xHand) == WID_SUPER_NAILGUN))
         {
-            sound(self, CHAN_AUTO, "lavagun/snail.wav", 1, ATTN_NORM);
+            sound(self, VRGetHandChannel(xHand), "lavagun/snail.wav", 1, ATTN_NORM);
             particle2(VRGetMuzzlePos(xHand), '0 0 0', QVR_PARTICLE_PRESET_SMOKE, 6);
             VRSetLavaGunFired(xHand, 0);
         }
@@ -5298,7 +5405,8 @@ float(float xHotspot) isReloadHolsterHotspot =
         return TRUE;
     }
 
-    ASSERT(cvar_hget(cvarh_vr_reload_mode) == QVR_RELOADMODE_HIPHOLSTERS);
+    ASSERT(cvar_hget(cvarh_vr_reload_mode) == QVR_RELOADMODE_HIPHOLSTERS ||
+           cvar_hget(cvarh_vr_reload_mode) == QVR_RELOADMODE_IMMERSIVE);
 
     return xHotspot == QVR_HS_LEFT_HIP_HOLSTER ||
            xHotspot == QVR_HS_RIGHT_HIP_HOLSTER;
@@ -5492,6 +5600,7 @@ void(entity xProp) VR_Saw_PropRuns;
 void(entity xProp) VR_Saw_PropStop;
 void(entity xProp) VR_Saw_PropTaken;
 void() VR_Saw_PropThink;
+void(entity xNew) VR_EnemyWeapons_MakeRoom;
 
 void() wpnthrow_think =
 {
@@ -5723,7 +5832,8 @@ void() forcegrabbable_touch =
         // hit something that bleeds
         if(GetThrownWeaponDealDamage(self) && other.takedamage)
         {
-            sound(self, CHAN_AUTO, VR_Hit_Metal(other) ? VR_Metal_Sound(VR_METAL_BLADE) : "fisthit.wav", 1, ATTN_NORM); // (an explosive box: a clang)
+            VR_SoundVaried(self, CHAN_AUTO, VR_Hit_Metal(other) ? VR_Metal_Sound(VR_METAL_BLADE) : "fisthit.wav", 1, ATTN_NORM); // (an explosive box: a clang)
+            VR_Blunt_HitLayer(self, CHAN_AUTO, other);
 
             // Where it struck, and going which way (not the trace globals, stale in a touch).
             float posDmgType = PositionalDamage(other, self.origin, normalize(self.velocity));
@@ -5752,7 +5862,7 @@ void() forcegrabbable_touch =
         {
             if(GetThrownWeaponMetalNoiseOnTouch(self))
             {
-                sound(self, CHAN_AUTO, "player/axhit2.wav", 0.65, ATTN_NORM);
+                VR_SoundVaried(self, CHAN_AUTO, "player/axhit2.wav", 0.65, ATTN_NORM);
             }
 
             particle2(self.origin, '0 0 0', QVR_PARTICLE_PRESET_BULLETPUFF, 24);
@@ -5807,8 +5917,26 @@ void(float xHand, entity ent, entity entPlayer,
      float* xOutEntWeapon, float* xOutEntWeaponFlags)
      wpnthrow_handtouch_impl =
 {
-    sound(ent, CHAN_AUTO, "weapons/pkup.wav", 1, ATTN_NORM);
-    VRGunHaptic(xHand, 0.3, 75, 1.0);
+    if(ent.vr_wpn_from == entPlayer)
+    {
+        // Your own weapon taken back (thrown, dropped or let go of, caught, pulled by a force grab): the hand closing on
+        // its handle (vr/phys/grab_wood1..3 an axe's, grab_metal1..3 the rest's, at 0.9: a third of the chime's loudness,
+        // a third its length), from the hand, a shorter pulse; Quake's pickup chime only for a weapon new to you.
+        float k = floor(random() * 3);
+        string grab = k < 1 ? "vr/phys/grab_metal1.wav" : (k < 2 ? "vr/phys/grab_metal2.wav" : "vr/phys/grab_metal3.wav");
+        if(ent.weapon == WID_AXE)
+        {
+            grab = k < 1 ? "vr/phys/grab_wood1.wav" : (k < 2 ? "vr/phys/grab_wood2.wav" : "vr/phys/grab_wood3.wav");
+        }
+        VR_SoundVaried(entPlayer, VRGetHandChannel(xHand), grab, 0.9, ATTN_NORM);
+        VRGunHaptic(xHand, 0.12, 75, 0.7);
+        dprint(sprintf("weapon: %s taken back (%s)\n", ent.classname, grab));
+    }
+    else
+    {
+        VR_SoundVaried(ent, CHAN_AUTO, "weapons/pkup.wav", 1, ATTN_NORM);
+        VRGunHaptic(xHand, 0.3, 75, 1.0);
+    }
     if(VR_AxeStick_IsStuck(ent))
     {
         VR_AxeStick_PulledOut(ent); // out of what it was stuck in (vr_axestick.qc)
@@ -6192,7 +6320,11 @@ entity(entity thrower, float xWeapon, float xWeaponFlags, entity xInst,
     if((thrower.flags & FL_MONSTER) || thrower.vr_was_monster) // (a gibbed one's head: TryEnemyDrop after ThrowHead)
     {
         newmis.vr_monster_drop = time; // dropped by a monster: it can't hurt players just yet (vr_prop_drop_grace)
+        newmis.weaponinst.vr_enemy_drop = 1; // (its record: still a monster's drop in a hand, a holster, dropped again)
     }
+
+    newmis.vr_drop_born = time;
+    VR_EnemyWeapons_MakeRoom(newmis); // (a single-use enemy weapon: at most vr_enemy_weapon_drop_max lie about)
 
     return newmis;
 }
@@ -6530,6 +6662,10 @@ void(entity ent, float xHand, float xWeapon, float xWeaponFlags, float xVelScale
 
     if(thrown != world)
     {
+        if(ent.flags & FL_CLIENT)
+        {
+            thrown.vr_wpn_from = ent; // (taken back: a regrip, not a pickup: wpnthrow_handtouch_impl)
+        }
         if(sawRuns)
         {
             VR_Saw_PropRuns(thrown);
@@ -6568,7 +6704,7 @@ void(entity ent, float xHand, float xWeapon, float xWeaponFlags, float xVelScale
     }
     // (QVR_WEAPONTHROWMODE_DISCARD: nothing is thrown, the weapon is gone.)
 
-    sound(ent, CHAN_BODY, "knight/sword2.wav", 0.7, ATTN_NORM);
+    VR_SoundVaried(ent, VRGetHandChannel(xHand), "knight/sword2.wav", 0.7, ATTN_NORM);
     VRSetHandEmpty(ent, xHand);
     W_SetCurrentAmmoFor(xHand);
 }
@@ -6579,10 +6715,10 @@ void(entity ent, float xHand, float xWeapon, float xWeaponFlags) DropWeaponInHan
 }
 
 // `xInst`: the weapon's record (the hand's, moved; a quick slot's copy: WeaponInst_Clone).
-void(entity entPlayer, float xHotspot, float xWeapon, float xWeaponFlags, entity xInst)
+void(entity entPlayer, float xHand, float xHotspot, float xWeapon, float xWeaponFlags, entity xInst)
 VRPutWeaponInHolster =
 {
-    sound(entPlayer, CHAN_BODY, "weapons/holster1.wav", 1, ATTN_NORM);
+    VR_SoundVaried(entPlayer, VRGetHandChannel(xHand), "weapons/holster1.wav", 1, ATTN_NORM);
 
     xWeaponFlags = xWeaponFlags - (xWeaponFlags & QVR_WPNFLAG_FOREGRIP_CARRIED); // a hand's state, not the weapon's
     xWeaponFlags = xWeaponFlags - (xWeaponFlags & QVR_WPNFLAG_SAW_STATE); // a chainsaw's engine stops
@@ -6598,7 +6734,7 @@ VRReloadWeapon =
 {
     float clip = VRGetEntWeaponClip(entPlayer, xHand);
     VRGunHaptic(xHand, 0.25, 70, 1.0);
-    sound(entPlayer, CHAN_BODY, "reload1.wav", 1, ATTN_NORM);
+    VR_SoundVaried(entPlayer, VRGetHandChannel(xHand), "reload1.wav", 1, ATTN_NORM);
 
     float ammoId = WeaponIdToAmmoId(xWeapon, xWeaponFlags);
     float missingAmmo = WeaponIdToBaseClipSize(xWeapon) - clip;
@@ -6625,7 +6761,7 @@ VRUnloadWeapon =
 {
     float clip = VRGetEntWeaponClip(entPlayer, xHand);
     VRGunHaptic(xHand, 0.25, 70, 1.0);
-    sound(entPlayer, CHAN_BODY, "reload1.wav", 1, ATTN_NORM);
+    VR_SoundVaried(entPlayer, VRGetHandChannel(xHand), "reload1.wav", 1, ATTN_NORM);
 
     float ammoId = WeaponIdToAmmoId(xWeapon, xWeaponFlags);
 
@@ -6636,7 +6772,7 @@ VRUnloadWeapon =
 void(entity entPlayer, float xHand, float xWeapon, float xWeaponFlags)
 VRTryReloadWeapon =
 {
-    if(VRIsWeaponReloadingEnabledFor(entPlayer, xHand) &&
+    if(VRIsWeaponReloadingEnabledFor(entPlayer, xHand) && !VR_Reload_ManualFor(xWeapon) &&
        (VRGetEntWeaponClip(entPlayer, xHand) < WeaponIdToBaseClipSize(xWeapon)) &&
        PlayerHasAmmoForWeapon(entPlayer, xWeapon, xWeaponFlags))
     {
@@ -6702,14 +6838,16 @@ float(entity ent, float xHand, float xWeapon) VRWeaponLetGo =
 }
 
 // Where a weapon let go of falls (or flies) from the hand, rather than going in a holster or to the other hand
-// (2H hotspots: unusable, as you can only dual wield with no weapon out; the grenade pouch holds grenades only).
+// (2H hotspots: unusable, as you can only dual wield with no weapon out; the grenade pouch holds grenades only, the ammo
+// pouch rounds).
 float(float xHotspot) VRLetGoDropsAt =
 {
     return xHotspot == QVR_HS_NONE ||
            xHotspot == QVR_HS_OFFHAND_2H_GRAB ||
            xHotspot == QVR_HS_MAINHAND_2H_GRAB ||
            xHotspot == QVR_HS_CARRIED_GRIP ||
-           xHotspot == QVR_HS_GRENADE_POUCH;
+           xHotspot == QVR_HS_GRENADE_POUCH ||
+           xHotspot == QVR_HS_AMMO_POUCH;
 }
 
 // Whether the weapon in `xHand` leaves it this frame (DoHandImpl's let-go: thrown, dropped or holstered), as
@@ -6771,7 +6909,7 @@ void(entity ent, float xHand) VRHandOffWeapon =
     VRSetHandEmpty(ent, xHand);
     W_SetCurrentAmmo();
 
-    sound(ent, CHAN_BODY, "weapons/holster0.wav", 0.5, ATTN_NORM);
+    VR_SoundVaried(ent, VRGetHandChannel(other), "weapons/holster0.wav", 0.5, ATTN_NORM);
     VRGunHaptic(other, 0.08, 75, 0.6);
 };
 
@@ -6807,7 +6945,7 @@ void(entity ent, float xHand) VRTakeCarriedWeapon =
     VRSetHandEmpty(ent, other);
     W_SetCurrentAmmo();
 
-    sound(ent, CHAN_BODY, "weapons/holster0.wav", 0.5, ATTN_NORM);
+    VR_SoundVaried(ent, VRGetHandChannel(xHand), "weapons/holster0.wav", 0.5, ATTN_NORM);
     VRGunHaptic(xHand, 0.08, 75, 0.6);
 }
 
@@ -6840,7 +6978,7 @@ void(float xHand) VRWeightWrenchFrame =
 // empty. (`self` is `ent`: the holster's getters are self's.)
 void(entity ent, float xHand, float xHotspot) VRHolsterHandWeapon =
 {
-    VRPutWeaponInHolster(ent, xHotspot, VRGetEntWeapon(ent, xHand), VRGetEntWeaponFlags(ent, xHand),
+    VRPutWeaponInHolster(ent, xHand, xHotspot, VRGetEntWeapon(ent, xHand), VRGetEntWeaponFlags(ent, xHand),
         VRGetEntWeaponInst(ent, xHand));
     VRSetHandEmpty(ent, xHand);
     W_SetCurrentAmmoFor(xHand);
@@ -6851,7 +6989,7 @@ void(entity ent, float xHand) VRSwitchWeaponHands =
 {
     float other = VRGetOtherHand(xHand);
     float wflags = VRGetEntWeaponFlags(ent, xHand);
-    sound(ent, CHAN_BODY, "knight/sword2.wav", 0.7, ATTN_NORM);
+    VR_SoundVaried(ent, VRGetHandChannel(other), "knight/sword2.wav", 0.7, ATTN_NORM);
     VRSetEntWeapon(ent, other, VRGetEntWeapon(ent, xHand));
     VRSetEntWeaponFlags(ent, other, wflags - (wflags & QVR_WPNFLAG_FOREGRIP_CARRIED));
     VRMoveEntWeaponInst(ent, xHand, other); // (its magazine, its id)
@@ -6866,7 +7004,7 @@ void(entity ent, float xHand, float xHotspot) VRDrawHolsterWeapon =
 {
     float wid = getHolsterWeapon(xHotspot);
     entity holstered = VRGetEntHolsterWeaponInst(ent, xHotspot);
-    sound(ent, CHAN_BODY, "weapons/holster0.wav", 1, ATTN_NORM);
+    VR_SoundVaried(ent, VRGetHandChannel(xHand), "weapons/holster0.wav", 1, ATTN_NORM);
     VRSetEntWeapon(ent, xHand, wid);
     VRSetEntWeaponFlags(ent, xHand, getHolsterWeaponFlags(xHotspot));
     if(getWeaponMode() == QVR_WEAPONMODE_IMMERSIVE)
@@ -6971,10 +7109,10 @@ void(entity ent, float xHand,
             {
                 if(getHolsterWeapon(xHotspot) != xWeapon)
                 {
-                    sound(ent, CHAN_BODY, "weapons/holster1.wav", 1, ATTN_NORM);
+                    // (its sound: VRPutWeaponInHolster's, from the hand)
 
                     // (The holster keeps a copy: the hand keeps its weapon.)
-                    VRPutWeaponInHolster(ent, xHotspot, xWeapon, xWeaponFlags,
+                    VRPutWeaponInHolster(ent, xHand, xHotspot, xWeapon, xWeaponFlags,
                         WeaponInst_Clone(VRGetEntWeaponInst(ent, xHand)));
                 }
             }
@@ -7051,7 +7189,8 @@ void(entity ent, float xHand,
            xHotspot == QVR_HS_OFFHAND_2H_GRAB ||
            xHotspot == QVR_HS_MAINHAND_2H_GRAB ||
            xHotspot == QVR_HS_HAND_SWITCH ||
-           xHotspot == QVR_HS_GRENADE_POUCH) // (a grenade from the pouch: VR_HandGrenade_HandFrame)
+           xHotspot == QVR_HS_GRENADE_POUCH || // (a grenade from the pouch: VR_HandGrenade_HandFrame)
+           xHotspot == QVR_HS_AMMO_POUCH)      // (a round from the ammo pouch: VR_Reload_HandFrame)
         {
             // Intentionally left empty.
         }
@@ -7083,6 +7222,9 @@ void() W_Frame =
     VR_WallTorch_TestShot(); // vr_test_walltorch_shot: a wall torch shot off its wall (vr_walltorch.qc)
     VR_HandGrenade_HandFrame(cVR_MainHand); // a grenade taken from the pouch at the small of the back (vr_grenade.qc)
     VR_HandGrenade_HandFrame(cVR_OffHand);
+    VR_Reload_PlayerFrame(); // what the ammo pouch gives and shows (vr_reload.qc)
+    VR_Reload_HandFrame(cVR_MainHand); // a round taken from the ammo pouch on the belt (vr_reload.qc)
+    VR_Reload_HandFrame(cVR_OffHand);
 
     UpdateHolsterHover(self);
 

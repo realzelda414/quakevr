@@ -10,6 +10,7 @@
 #include "vr_grasp.hpp"
 #include "vr_held.hpp"
 #include "vr_lines.hpp"
+#include "vr_modelmetadata.hpp"
 #include "vr_profile.hpp"
 #include "vr_protocol.hpp"
 #include "vr_sightalign.hpp"
@@ -538,6 +539,14 @@ void addCap(Caps& out, const glm::vec3& a, const glm::vec3& b, float r)
     return s.grip2HValid[1 - hand] ? 1.f - za::clamp(twohand::transition(1 - hand), 0.f, 1.f) : 1.f;
 }
 
+// A hand holding a round from the ammo pouch: a shell or a magazine (QC vr_reload.qc), as drawn.
+[[nodiscard]] bool holdsRound(int hand)
+{
+    const int num = held::heldEntity(hand);
+    const qmodel_t* m = num > 0 && num < cl_max_edicts ? cl_entities[num].model : nullptr;
+    return m && (modelmeta::has(m, modelmeta::Trait::LiveShell) || modelmeta::has(m, modelmeta::Trait::Magazine));
+}
+
 // A hand holding nothing (it may be helping hold the other hand's gun).
 [[nodiscard]] bool emptyHand(int hand)
 {
@@ -579,6 +588,14 @@ void addCap(Caps& out, const glm::vec3& a, const glm::vec3& b, float r)
         {
             w *= smooth(5.f, 10.f, glm::distance(hands::palmPoint(s, j), torch));
         }
+        // A hand holding a round from the ammo pouch (a shell, a magazine) near the loading port or well of the other
+        // hand's gun: the hands go through each other there (the author: the hand stopped short of the port; and
+        // pushed, the gun's port moved away from the round), fully within vr_reload_collide_leniency cm of it.
+        if(s.loadPortValid[j] && holdsRound(k))
+        {
+            const float within = za::max(vr_reload_collide_leniency.value, 0.f) * 0.01f * units::metresToUnits();
+            w *= smooth(within, within * 1.6f + 2.f, glm::distance(s.pos[k], s.loadPort[j]));
+        }
     }
     return w;
 }
@@ -586,7 +603,8 @@ void addCap(Caps& out, const glm::vec3& a, const glm::vec3& b, float r)
 // The body against a hand at a holster (its hotspot: the holsters stand out of the body, so only a hand deep in one is
 // eased out, from its reach to half of it) and a weapon going into one (from 1.6 times its reach to its reach).
 [[nodiscard]] float awayFromHolsters(
-    const hands::State& s, int hand, const body::HolsterPositions& hp, const glm::vec3* pouch, bool weapon)
+    const hands::State& s, int hand, const body::HolsterPositions& hp, const glm::vec3* pouch, const glm::vec3* ammoPouch,
+    bool weapon)
 {
     float ratio = 1e9f;
     for(int h = 0; h < body::HolsterCount; h++)
@@ -600,6 +618,10 @@ void addCap(Caps& out, const glm::vec3& a, const glm::vec3& b, float r)
     if(pouch && body::pouchReach() > 0.f) // the grenade pouch at the small of the back, as a holster
     {
         ratio = za::min(ratio, glm::distance(s.pos[hand], *pouch) / body::pouchReach());
+    }
+    if(ammoPouch && body::ammoPouchReach() > 0.f) // the ammo pouch on the belly (vr_reload_mode 3), likewise
+    {
+        ratio = za::min(ratio, glm::distance(s.pos[hand], *ammoPouch) / body::ammoPouchReach());
     }
     return weapon ? smooth(1.f, 1.6f, ratio) : smooth(0.5f, 1.f, ratio);
 }
@@ -815,6 +837,7 @@ void solve(const hands::State& s, float dt, glm::vec3 out[2], Stats& stats)
 
     body::HolsterPositions holsters{};
     glm::vec3 pouch{0.f};
+    glm::vec3 ammoPouch{0.f};
     bool holstersMade = false;
     const auto away = [&](int h, bool weapon) {
         if(!holstersMade)
@@ -824,9 +847,14 @@ void solve(const hands::State& s, float dt, glm::vec3 out[2], Stats& stats)
             {
                 pouch = body::pouchPosition(s);
             }
+            if(body::ammoPouchEnabled())
+            {
+                ammoPouch = body::ammoPouchPosition(s);
+            }
             holstersMade = true;
         }
-        return awayFromHolsters(s, h, holsters, body::pouchEnabled() ? &pouch : nullptr, weapon);
+        return awayFromHolsters(s, h, holsters, body::pouchEnabled() ? &pouch : nullptr,
+            body::ammoPouchEnabled() ? &ammoPouch : nullptr, weapon);
     };
 
     // Each contact's shapes and weight.
@@ -1348,6 +1376,10 @@ void endView(hands::State& s, const Drawn& d)
         if(s.grip2HValid[h])
         {
             s.grip2H[h] -= drawn[h];
+        }
+        if(s.magBoxValid[h])
+        {
+            s.magBox[h][0] -= drawn[h]; // (its attached magazine: grips and hits on it are the tracked hands')
         }
     }
 }

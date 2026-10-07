@@ -88,11 +88,13 @@ string(entity e) VR_Decap_HeadModel =
     if(c == "monster_ogre" || c == "monster_ogre_marksman") { return "progs/h_ogre.mdl"; }
     if(c == "monster_enforcer")      { return "progs/h_mega.mdl"; }
     if(c == "monster_hell_knight")   { return "progs/h_hellkn.mdl"; }
+    if(c == "monster_ranged_knight") { return "progs/h_hellkn.mdl"; } // (Dawn of the Machine's: its gib head, upstream's)
     if(c == "monster_dog")           { return "progs/h_dog.mdl"; }
     if(c == "monster_wizard")        { return "progs/h_wizard.mdl"; }
     if(c == "monster_zombie")        { return "progs/h_zombie.mdl"; }
     if(c == "monster_demon1")        { return "progs/h_demon.mdl"; }
     if(c == "monster_shambler")      { return "progs/h_shams.mdl"; }
+    if(c == "monster_super_shambler") { return "progs/h_shams.mdl"; } // (Dawn of the Machine's: the shambler's head gib)
     if(c == "monster_gremlin")       { return "progs/h_grem.mdl"; }
     if(c == "monster_shalrath")      { return "progs/h_shal.mdl"; }
     if(c == "monster_scourge")       { return "progs/h_scourg.mdl"; } // (Hipnotic's centroid)
@@ -242,7 +244,7 @@ float(float xHand, vector xAt, float xLive) VR_Decap_Slash =
     float thing = b.mh_thing;
     vr_decap_no = "not a blade held by its handle";
     if(b.mh_free || (thing != VR_MTHING_SWORD && thing != VR_MTHING_AXE && thing != VR_MTHING_SAW) ||
-       (thing == VR_MTHING_AXE && b.mh_wid != WID_AXE))
+       (thing == VR_MTHING_AXE && b.mh_wid != WID_AXE && b.mh_wid != WID_SUPERAXE))
     {
         return 0; // (held off its handle: its pommel, hilt or handle struck with; Mjolnir: a hammer, not a blade)
     }
@@ -656,7 +658,7 @@ void(entity e, vector xAt, vector xVel) VR_Decap_PopEffects =
     VR_Gore_Burst(xAt, xVel, VR_DECAP_POP_SIZE);
     VR_SmallGib_Burst(xAt, xVel, VR_DECAP_POP_SIZE, e); // its small gibs (vr_smallgibs.qc)
     VR_SmallGib_Brains(xAt, xVel, TRUE, e); // and its brain (vr_smallgibs.qc)
-    sound(e, CHAN_AUTO, VR_Gib_SquishSound(FALSE), 1, ATTN_NORM);
+    VR_SoundVaried(e, CHAN_AUTO, VR_Gib_SquishSound(FALSE), 1, ATTN_NORM);
     sound(e, CHAN_BODY, "player/udeath.wav", 0.8, ATTN_NORM);
     vr_decap_pops++;
 };
@@ -696,7 +698,7 @@ void(entity e, vector xVel, float xHow) VR_Decap_Effects =
     woundevent(e, neck - side2 * 4, side2, QVR_WOUND_MELEE, 50, 0);
     if(!pop) // (a head pop's burst is there already)
     {
-        sound(e, CHAN_AUTO, VR_Gib_SquishSound(FALSE), 1, ATTN_NORM);
+        VR_SoundVaried(e, CHAN_AUTO, VR_Gib_SquishSound(FALSE), 1, ATTN_NORM);
         sound(e, CHAN_BODY, "player/udeath.wav", 0.5, ATTN_NORM);
         VR_BloodMist(neck, xVel, 0.6);
         VR_Gore_Burst(neck, out, 0.5);
@@ -1107,7 +1109,7 @@ float(entity targ, entity xThing, entity by, float xDamage) VR_Decap_HeadThrownA
     }
     float quad = VR_Decap_QuadPops(by);
     if(xThing.classname == "thrown_weapon" && !quad &&
-       (xThing.weapon == WID_SWORD || xThing.weapon == WID_AXE || xThing.weapon == WID_CHAINSAW))
+       (xThing.weapon == WID_SWORD || xThing.weapon == WID_AXE || xThing.weapon == WID_CHAINSAW || xThing.weapon == WID_SUPERAXE))
     {
         return FALSE;
     }

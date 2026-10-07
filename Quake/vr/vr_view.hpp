@@ -39,6 +39,21 @@ struct ViewEntity
 [[nodiscard]] glm::vec3 entityAnchorPosition(
     const entity_t& e, bool mirrored, float zeroBlend, int anchorIndex, const glm::vec3& extra);
 
+// Immersive reloading: the reference point of the round `hand` holds (a magazine's top, moved by its
+// vr_reload_mag_<kind>_x/y/z, and its radius in `radius`; a shell's middle, radius -1), as drawn. False: it holds none.
+[[nodiscard]] bool heldRoundRef(int hand, glm::vec3& out, float* radius = nullptr);
+
+// Where `hand` goes for its fingertip to be `units` off the ammo button of the other hand's gun: `angle` degrees off the
+// way its face looks (0 in front of it, 90 beside it, 180 behind it), turned `azimuth` degrees round it, as drawn last frame (the mock's "vr_mock_hand_to <hand> wbutton"). False: no
+// button shown.
+[[nodiscard]] bool weaponButtonHandTarget(int hand, float angle, float azimuth, float units, glm::vec3& out);
+
+// Immersive reloading's super shotgun broken open (phase 2b): how far (degrees) the barrels of the gun in `hand` are
+// drawn turned down about its hinge now (0: closed, or not a super shotgun), and a point (or a direction, `point`
+// false) of its model (v_shot2.mdl's space) turned with them by `deg` (vr_shells.cpp: its casings out of the chambers).
+[[nodiscard]] float ssgOpenAngle(int hand);
+[[nodiscard]] glm::vec3 ssgTurned(const glm::vec3& p, float deg, bool point = true);
+
 // World position of a point given in `ve`'s model space (as its frames' vertices).
 [[nodiscard]] glm::vec3 modelPoint(const ViewEntity& ve, const glm::vec3& point);
 

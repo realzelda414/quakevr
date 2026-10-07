@@ -358,6 +358,42 @@ buttons) kills it. It rises when its targetname is triggered." []
 @PointClass = monster_shalrath : "Vore (shalrath)
 
 400 health; throws homing spikes." []
+// Dawn of the Machine's monsters (QC/vr_mg3_*.qc; MG3_PLAN.md M3-15..18). The infected are stock monsters.
+@PointClass base(Monster) size(-16 -16 -24, 16 16 40) model({ "path": ":progs/soldier.mdl" }) = monster_army_infected : "Infected grunt (Dawn of the Machine)
+
+30 health, a grunt's shotgun. Killed, he bursts and gets up as a zombie (counted once, as the zombie). Any campaign." []
+@PointClass base(Monster) size(-16 -16 -24, 16 16 40) model({ "path": ":progs/knight.mdl" }) = monster_knight_infected : "Infected knight (Dawn of the Machine)
+
+75 health, a knight's sword. Killed, he bursts and gets up as a zombie (counted once, as the zombie). Any campaign." []
+@PointClass base(Monster) size(-16 -16 -24, 16 16 40) model({ "path": ":progs/enforcer.mdl" }) = monster_enforcer_infected : "Infected enforcer (Dawn of the Machine)
+
+80 health, an enforcer's laser. Killed, he bursts and gets up as a fiend (counted once, as the fiend). Any campaign." []
+@PointClass base(Monster) size(-16 -16 -24, 16 16 40) model({ "path": ":progs/hknight.mdl" }) = monster_hell_knight_infected : "Infected death knight (Dawn of the Machine)
+
+250 health, a death knight's sword and flames. Killed, he bursts and gets up as a fiend (counted once, as the fiend). Any campaign.
+Corpse A or B: he lies as a corpse (his death's last frame, not solid) until woken (his targetname used, or hurt), then rises: his death backwards (tried again every 5 seconds while something stands where he would)."
+[
+	spawnflags(flags) =
+	[
+		65536 : "Corpse A (lying until woken)" : 0 : "Dawn of the Machine's CORPSE_FLAG_A: lies in his first death's last frame (In Dawn of the Machine's maps; elsewhere this bit is also Honey's Silent wake-up)."
+		8388608 : "Corpse B (lying until woken)" : 0 : "Dawn of the Machine's CORPSE_FLAG_B: lies in his second death's last frame."
+	]
+]
+@PointClass base(Monster) size(-32 -32 -24, 32 32 64) model({ "path": ":progs/ogre.mdl" }) = monster_ogre_rocket : "Rocket ogre (Dawn of the Machine)
+
+200 health; a chainsaw up close, volleys of two rockets at range (40 each). Needs the Dawn of the Machine data (its model, progs/ogre_rocket.mdl, read from its pack in place); the preview is the ogre's." []
+@PointClass base(Monster) size(-32 -32 -24, 32 32 40) model({ "path": ":progs/dog.mdl" }) = monster_demodog : "Demo dog (Dawn of the Machine)
+
+25 health; a rottweiler with a bomb pack. Its leap onto you kills it; however it dies, three grenades spill (60 each, 2.5 seconds). Needs the Dawn of the Machine data (its model, progs/dog_explosive.mdl, read from its pack in place); the preview is the rottweiler's." []
+@PointClass base(Monster) size(-16 -16 -24, 16 16 40) model({ "path": ":progs/hknight.mdl" }) = monster_ranged_knight : "Ranged knight (Dawn of the Machine)
+
+250 health, no melee: fans of glowing diamonds at range (9 each). Walks: it walks to fight. Needs the Dawn of the Machine data (its model, progs/rknight.mdl, read from its pack in place); the preview is the death knight's."
+[
+	spawnflags(flags) =
+	[
+		2 : "Walks" : 0 : "It walks to fight (its walk at its run's pace), never runs."
+	]
+]
 @PointClass = monster_tarbaby : "Spawn (tarbaby)
 
 80 health; bounces, and explodes when it dies." []
@@ -503,16 +539,17 @@ after speed seconds per letter of the page. A point entity, despite its name."
 
 A tip for new players, placed by hand: a small CRT screen floating near the player, with a cable to what the tip is
 about (the same look as the map text boards), shown when he comes within range of it. Once, unless it repeats: shown
-tips are remembered in vr_tips_seen (vr_tips_reset shows them all again). Its own origin is the point it is about; if
-its target or targetname names another entity, it follows that entity instead, live (its model moves with it). Its
+tips are remembered in tips_seen.txt in the game folder (vr_tips_reset shows them all again). Its own origin is the point it is about; if
+its target names another entity, it follows that entity instead, live (its model moves with it). Its
 range, text size and delay default to what the player sets in VR Settings > Tips; the keys here override that for
 this tip. Try one with vr_tips_test <tipname>." [
 	message(string) : "Text" : : "The tip's text. \n starts a new line."
 	distance(float) : "Range (units)" : 0 : "How near the player must come for it to show (0: his own setting)."
-	target(string) : "Follows (targetname)" : : "Another entity's targetname: the tip follows that entity, live, instead of staying at its own origin. Its targetname works the same way when this is unset (a tip naming itself stays put)."
+	target(target_destination) : "Follows (targetname)" : : "Another entity's targetname: the tip follows that entity, live, instead of staying at its own origin."
+	targetname(target_source) : "Name" : : "Only this tip's name (its name in the remembered-tips list when tipname is unset). Not what it follows (that is target), and nothing finds the tip by it, so it can share a name with a teleport destination or a path."
 	tipname(string) : "Name" : : "Names this tip: its name in the remembered-tips list, and what vr_tips_test takes. Use it when two tips follow the same entity."
 	tip_size(float) : "Text size" : 0 : "Its text size (0: the player's setting). 1 is about 1.5 degrees a character."
-	tip_delay(float) : "Delay (s)" : : "Seconds he must stay near it before it shows (0: his own setting)."
+	tip_delay(float) : "Delay (s)" : -1 : "Seconds he must stay near it before it shows: 0 at once, -1 his own setting (VR Settings > Tips)."
 	spawnflags(flags) =
 	[
 		1 : "Show every time" : 0 : "Not remembered: it shows again whenever he comes near. (The map's worldspawn Repeat map tips makes every tip in the map do this.)"

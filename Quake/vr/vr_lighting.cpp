@@ -6,6 +6,7 @@
 #include "vr_ao.hpp"
 #include "vr_avatar.hpp"
 #include "vr_main.hpp"
+#include "vr_collectfx.hpp"
 #include "vr_cvars.hpp"
 #include "vr_engine.hpp"
 #include "vr_gfx.hpp"
@@ -73,6 +74,8 @@ struct DepthTarget
 
 DepthTarget atlas;        // rendered every frame: dynamic lights, and map lights' moving casters
 DepthTarget staticAtlas;  // map lights' world depth, cached
+DepthTarget noAtlas;      // 1 x 1, bound for an atlas not made (shadows off, no map lights): a shadow sampler on a unit
+                          // without a depth texture is undefined behaviour (a GL debug warning every draw)
 // GPU time of the shadow pass: begin and end timestamps, a few frames in flight.
 constexpr int timerFrames = 4;
 GLuint timers[timerFrames][2]{};
@@ -436,6 +439,26 @@ void collectBrushes(const glm::vec3& light, float radius, bool itemsOnly)
         if(indices.size() > first)
         {
             brushCasters.pushBack({&e, first, indices.size() - first});
+        }
+    }
+    // A box put away, shrinking into its holster (vr_collectfx.cpp): it cast its shadow in the hand a moment ago.
+    for(int c = 0; c < collectfx::maxCopies; c++)
+    {
+        entity_t* e = collectfx::liveCopy(c);
+        if(!e || e->model->type != mod_brush || qvr::modelmeta::has(e->model, qvr::modelmeta::Trait::Submodel) ||
+            !touches(e, light, radius))
+        {
+            continue;
+        }
+        const size_t first = indices.size();
+        const msurface_t* s = e->model->surfaces + e->model->firstmodelsurface;
+        for(int k = 0; k < e->model->nummodelsurfaces; k++, s++)
+        {
+            addSurface(s);
+        }
+        if(indices.size() > first)
+        {
+            brushCasters.pushBack({e, first, indices.size() - first});
         }
     }
 }
@@ -2071,8 +2094,12 @@ extern "C" void VR_PushMapLights(void)
     r_framedata.shadowbias = za::max(0.f, vr_shadow_bias.value);
     r_framedata.dlightangle = za::clamp(vr_dlight_angle.value, 0.f, 1.f);
 
-    GL_BindNative(GL_TEXTURE4, GL_TEXTURE_2D, atlas.tex);
-    GL_BindNative(GL_TEXTURE5, GL_TEXTURE_2D, staticAtlas.tex);
+    if((!atlas.tex || !staticAtlas.tex) && !noAtlas.tex)
+    {
+        ensure(noAtlas, 1, 1, "shadow atlas placeholder");
+    }
+    GL_BindNative(GL_TEXTURE4, GL_TEXTURE_2D, atlas.tex ? atlas.tex : noAtlas.tex);
+    GL_BindNative(GL_TEXTURE5, GL_TEXTURE_2D, staticAtlas.tex ? staticAtlas.tex : noAtlas.tex);
     ao::upload(); // dynamic ambient occlusion's occluders for this eye (vr_ao.cpp; uniform block 2)
 
     if(!frameEnabled)

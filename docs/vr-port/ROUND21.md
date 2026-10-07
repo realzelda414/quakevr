@@ -27411,3 +27411,2448 @@ Checked: the icon groups extracted from the Release ironwail.exe and QuakeVR-Set
 .ico files at all ten sizes. Old and new side by side at 16/24/32/48, 1x and 4x: "QVR:U" reads at 48 and still reads
 at 32 (the old "QUAKE VR" was barely legible at 32 and "UNLEASHED" never); at 24 and 16 the text is a smudge in both,
 the emblem carries the icon.
+
+## Hand sounds from the hand (AUDIO_REVIEW.md row 1, 2026-10-07)
+
+Only the two weapon channels (1 and 5) played from the hand; everything else a hand does (a parry, a bash, a reload,
+drawing and holstering, a dry click, the grenade pouch, a chainsaw's cord, a carry's swish) played from the middle of
+the head on `CHAN_AUTO`/`CHAN_BODY`.
+
+- **Engine.** Two new channels, `SND_CHAN_HAND` 8 and `SND_CHAN_HAND2` 9 (`protocol.h`): "any free one" as channel 0
+  (`S_AUTOCHANNEL`, `snd_dma.c`: they never cut a sound off), played from the main and the off hand (`vr_audio.cpp`
+  `handOf`; the hand itself, `handSoundAt`, where the weapon channels keep the muzzle), in the Steam Audio voices and
+  in Quake's own panning alike (`VR_SndSpatialize`), with `vr_snd_hands` (on) as before. `SV_StartSound` takes channels
+  0 to 9 (`SND_MAX_CHANNEL`); 8 and up go with `SND_LARGEENTITY` (the channel a byte: FitzQuake's message carried it,
+  and the old `SND_LARGESOUND` choice for `channel >= 8` did not). NetQuake's protocol (3 bits) sends them as channel 0.
+  Old demos: unchanged messages, parsed as before (`demo1` played); a demo recorded with them plays them back.
+- **QC.** `CHAN_HAND`, `CHAN_HAND2` (`defs.qc`) through `VRGetHandChannel(xHand)` (`vr_util.qc`). Converted:
+  `combat.qc` a corpse struck (VR_Corpse blow: fisthit/axhit2), the one-handed parry's ring (`vr/parry`, `axhit2`;
+  the old `axhit2`/`tink1`); `vr_melee.qc` the chainsaw's swing (was `CHAN_AUTO`), the counter's opening chime (its
+  parrying hand; crossed arms stay in the middle), a one-handed bash/shove (`vr/bash`, `bash_parry`, `shove`, or the
+  old `axhit2`/`fisthit` + `dland2`; both hands stay in the middle); `weapons.qc` the axe's hit on a body and on a wall,
+  the dry click (`gunclick`), the lightning gun's `lstart`, the lava nailgun's `snail`, the throw's swish
+  (DropWeaponInHandScaled), holstering (`holster1`: VRPutWeaponInHolster now takes the hand; the quick-slot path's own
+  second `holster1` dropped), reload and unload (`reload1`), the hand-off and the hand switch (`holster0`, `sword2`,
+  from the hand taking it), taking a carried gun back and drawing from a holster (`holster0`); `vr_carry.qc` a torch
+  taken up (`pommel2`), the carry swish, the second hand joining a carry; `vr_grapple.qc` the hook home in the gun
+  (`tink1`), the quick-release and detach clicks, the rope's twang (`grapple_taut`), the reel's and unreel's clicks;
+  `vr_juice.qc` a deflection (`tink1`, `axhit2`); `vr_enemyguns.qc` a burst's rounds and the dry click;
+  `vr_grenade.qc` the pouch (taking one out, putting one back); `vr_chainsaw.qc` the cord's pulls (weak, failed) and
+  the dry click. Left in the middle of the head: gasps, the counter's landing, the headbutt, the Quad's sound, item
+  pickups (row 13).
+- **Debug.** `snd_show 2` prints each channel's place (`at x y z`) and, for a hand's, the hand and how far the sound is
+  from it and from the head. `vr_snd_test hands` checks channels 8 and 9 too (from the hand, panned to its side).
+
+Checked (`run.sh -Sound`, `snd_show 2`): the off hand's empty shotgun clicks on channel 9 from the off hand
+(`at 471 -342 102 | off hand 471 -342 102 (0.0 off)`); the main hand reaching a holster reloads on channel 8 from it
+(`reload1.wav at 491 -348 99 | main hand ... (0.0 off; the head 23.5)`); `vr_snd_test hands` 4 PASS.
+
+In VR: parry with one hand, reload at a holster, holster and draw, dry-fire an empty gun, pull a grenade from the pouch:
+each should sound from that hand (turn your head: it stays with the hand).
+
+## Ragdoll impact sounds (AUDIO_REVIEW.md row 2, 2026-10-07)
+
+Bodies fell, tumbled down stairs, were flung and hit by props in silence: Box3D's hit events played only for props
+(`vr_box3d.cpp` soundHits). Now a ragdoll's parts and a pushable corpse (`vr_corpse_collide` 2/4: its body now asks
+for hit events) knock too, through the props' path (`physsound::hit` with `body`): as flesh (`vr/phys/flesh_*`,
+`squish*`; the light set, `vr/squish_s*`, for a part under 1.5 kg), the part's own mass and the contact's speed
+(a pelvis of 23 kg lands heavy, a forearm medium, a hand light), from the contact. Per body, not per part: the
+frame's loudest part plays, and a body knocks at most every two `vr_physsound_interval` (0.24 s; a hit twice as loud
+sooner; the bounce rule as props). Two bodies meeting knock once (the lower-numbered one's), not once each. A prop
+hitting a body: the prop's knock and the body's thud. Living monsters knocked down (their ragdoll) likewise.
+Detached limbs and heads were already props of flesh (`vr_limb`, heads, small gibs) and keep their knocks.
+
+- `vr_physsound_bodies` (1; 0 off, up to 2): their volume. `vr_physsound_body_min_speed` (2 m/s): a body's slowest
+  hit that knocks (props' is 1.5): a settling pile's twitches stay silent. Menu: Carrying > Physics Sounds, **Bodies**
+  and **Quietest Body Knock**.
+- Test: `Misc/quakevr/ragdoll/ragdoll_sound_test.sh [flat stairs blast pile]`.
+
+Checked (`vr_debug_physsound 1`): a grunt dying on e1m1's floor knocks twice (0.9 kg at 6.5 m/s, 6.8 kg at 9.9);
+down vrclimb's stairs 5 knocks over 2 s (0.16-0.42); blasted, 3; a pile of 6 dying on one spot 19 knocks while they
+fall (2-6 s), then none in the next 10 s of settling (0 body knocks from 6 to 16 s); cut limbs knock as `vr_limb`
+flesh (2-8 kg, medium) and small gibs as light squishes.
+
+In VR: kill a grunt on stairs, throw a body (grab a limb), drop a crate on a corpse, blow up a group: thuds, not
+silence; a pile left alone goes quiet.
+
+## Pitch from QuakeC, and pitch variation (AUDIO_REVIEW.md row 3, 2026-10-07)
+
+QC couldn't play a sound at a pitch, so the most frequent sounds (one recording each: `fisthit`, the swings, `tink1`,
+`pkup`, the holster and reload clicks, the squishes) sounded identical every time.
+
+- **Engine.** `sound()` takes a sixth argument, the pitch in percent (100 as recorded; DP's and FTE's `speedpct`:
+  `PF_sound`, `qcvm->argc > 5`), sent as `SND_PITCH` (`protocol.h`, bit 5: DarkPlaces' `SND_SPEEDUSHORT4000`, a short
+  of the rate * 4000 after the attenuation, 0.25 to 4), only when it isn't 1 and not in NetQuake's protocol: other
+  sounds' messages are unchanged, and old demos play as before. `SV_WriteSound` writes the message for
+  `SV_StartSound`/`SV_StartSoundPitch` and the physics sounds (`vr_physsound.cpp` emit, which wrote its own copy). The
+  client keeps it on the channel (`channel_t.pitch`, `S_StartSoundPitch`, `S_CHANPITCH`): Quake's mixer paints such a
+  channel at that rate (`SND_PaintChannelRate`, as slow motion, the two multiplied), the voices read at it (times the
+  Doppler and slow motion: `VoiceInput.pitch`); `snd_show 2` prints each channel's pitch.
+- **QC.** `sound_pitch(e, chan, samp, vol, atten, pct)` (`frikbot/bot.qc`, beside `sound`: the bots hear it too) and
+  `VR_SoundVaried(e, chan, samp, vol, atten)` (`vr_util.qc`): at 100 +/- `vr_snd_pitch_jitter` percent at random.
+  Every call playing `fisthit`, `axhit1/2`, `ax1`, `knight/sword1/2`, `weapons/tink1`, `weapons/pkup`,
+  `holster0/1`, `reload1`, `vr/headshot`, a squish (`VR_Gib_SquishSound`, `squish*`), a melee hit
+  (`VR_Melee_HitSoundOn`) or a footstep (`misc/foot1..7`) now goes through it (84 calls), and the swing's whoosh
+  (`VR_Melee_Whoosh`).
+- **Engine-side sounds:** the physics knocks (props' and bodies') and the casings' tinks (`vr_shells.cpp`, client) vary
+  by the same setting.
+- `vr_snd_pitch_jitter` (4; percent, 0 off, up to 25): Audio > Movement and Nearness, **Pitch Variation**.
+
+Checked (`-Sound`, `snd_show 2`): walking e1m1, the footsteps at 0.965 to 1.025, the shells' tinks 0.980 to 1.034, a
+body's and its gear's knocks 0.968 to 1.031; other sounds (`guncock`, the ambiences) 1.000.
+
+In VR: punch a wall or a grunt a few times, swing a sword in the air: each a little different; Audio > Pitch Variation
+0 to compare.
+## VR Settings follow-ups: no Advanced or Search rows, Reset All keeps calibration, the menus' red (2026-10-07)
+
+Vittorio's decisions after the VR Settings revamp and the menu colours:
+
+- **No *Search Settings* or *Advanced VR Options* rows** at the top of VR Settings. The main menu's *Advanced VR* row
+  and the corner's *Advanced VR* and *Search* buttons open them. Search, the boards' menu paths (`menu::pathTo`) and
+  `menu_vr dump` walked the links from VR Settings only, so the Advanced pages would have dropped out: they now walk
+  from both roots (`menuRoots`: VR Settings, then Advanced VR Options). Search shows "Advanced VR Options > Combat" as
+  before (the entries' paths lost their "VR Settings > "; recent searches saved under the old path are moved over as
+  `search_recent.txt` is read); board paths read "Advanced VR > Movement > Locomotion" (what the main menu row and the
+  corner button say), without a Menu Detail note for Advanced, which the row raises itself. `vr_menu_path_check
+  maps/vrcalibration.map`: 14 found, 0 missing. Back from the Advanced VR Options opened from the main menu's row goes
+  back to the main menu (VR Settings no longer links them); from anywhere else, to VR Settings as before (`menu_vr 1`,
+  the corner).
+- **Reset All to Defaults keeps the calibration** (`keptOnResetAll`): `vr_height_calibration`, `vr_floor_offset`,
+  `vr_bodycal_*` but `vr_bodycal_preview` (the measurements, seated, Undo), `vr_body_tweak_*`, `vr_body_arm_length`,
+  `vr_body_eye_forward`/`_up`, `vr_body_torso_back`, `vr_handcal_*`, `vr_gunangle`/`vr_gunyaw`,
+  `vr_offhandpitch`/`vr_offhandyaw` (Reset Hand Offsets resets the hands). World Scale and the body preview are choices:
+  reset. Test: those set off their defaults, Reset All pressed twice by `vr_mock_key enter`: all kept, `vr_world_scale`,
+  `vr_bodycal_preview`, `vr_turn_speed`, `vr_menu_recolor_hue` back to their defaults.
+- **The menus' red as Vittorio has it:** `vr_menu_recolor_saturation` 3 (was 1.25; hue 0 and strength 1 were the
+  defaults already). Config 96 moves a config still at 1.25; a custom value (1.8) stays.
+- **Docs:** README, FEATURES, SETTINGS, INSTALL, RELIGHTING and the vr-port notes no longer send players to rows that
+  moved off VR Settings (Search Settings, Handedness, Gun Angle, Tips, Sound, Changed Settings, Body Calibration) or
+  through "VR Settings > Advanced VR Options". RELIGHTING.md said VisPatch doesn't vis lava: it does (`vis_maps.py
+  --check` on the relit maps: 33 of 73 vised for lava, start among them), so `r_lavaalpha 0.9` shows it a little
+  through; GRAPHICS.md's "lava is opaque by default (`r_lavaalpha 1`)" was stale too.
+## Map tips: the review's open decisions (2026-10-07)
+
+Vittorio's calls on what "Review of the map tips" left open, one commit each.
+
+**The tips seen are a file** (`Quake/vr/vr_tips.cpp`, `SeenList`): `<gamedir>/tips_seen.txt`, one key a line, sorted,
+no limit (the `vr_tips_seen` cvar was read back from the config cut at 1023 characters, some 80 keys). Read the first
+time a tip asks in a game folder (another `game`: read again); written whole through `tips_seen.txt.tmp` and a rename
+as a key is added; Show Tips Again (`vr_tips_reset`) writes it empty. **Migration**: an older config still sets
+`vr_tips_seen`; its keys, and the config line's whole value read from `ironwail.cfg` (the keys past the cut), are added
+to the file once, and the cvar is emptied. The cvar stays registered for that, no longer archived: the next config
+written leaves it out. Reset All keeps the file (it was kept as a cvar). Proved headless: a config with a 2717-character
+`vr_tips_seen` (150 keys, `vrstart:testwelcome` last, past the cut) gives `moved to tips_seen.txt (150 keys new, 150 in
+all)`, the file's 150 lines and `testwelcome ... seen`; the next run (the baseline config, no `vr_tips_seen`) reads
+it back seen, `vr_tips_reset` makes it unseen, it shows again (`tips: "testwelcome"`) and the file is that one key.
+
+**A tip follows only its `target`** (`QC/vr_tips.qc`): `targetname` is only the tip's name (its seen key when it has
+no `tipname`), kept in the new field `tip_targetname` and cleared from `.targetname` as the tip spawns, so no
+`find(world, targetname, ...)` (a teleporter's destination, a monster's path, a trigger's targets) ever finds a tip.
+A tip with no `target` whose old targetname another entity has (made for the old rule) stays at its own origin and
+says so in the map's first frame with `developer 1`: `func_vr_tip at -300 -300 300: its targetname "dest1" names a
+info_teleport_destination, which it no longer follows ...: set its target to "dest1" to follow it`. FGD: `target` is a
+`target_destination` (TrenchBroom draws the link), `targetname` has the tip's own help. `vrstart.ent` gets a second
+example tip, `testbutton`, following the Snap Turn (30) button by its `target`. Proved headless on `tiptest` (a copy
+of vrstart, its tips in the `.ent`: a tip named `dest1` placed before the `info_teleport_destination dest1`, the
+first changelevel trigger made a `trigger_teleport` to it; a tip named like a health box; a tip whose `target` names
+the other health box): before, the teleporter put the player at the tip (`Player pos: (-300 -300 300)`) and the
+named tips followed entities 13 and 53; after, the player lands at the destination (`64 448 307`), both tips stay
+at their origins with the warning, and the `target` tip still `follows entity 52`.
+
+**`tip_delay`: 0 is at once, -1 the player's** (`QC/vr_tips.qc`): the field is a string now (`.string tip_delay`, read
+with `stof`, declared in `builtins.qc` as FRIK_FILE's #81), so no key differs from 0: no key, an empty one or below 0
+leave the engine's -1 (`vr_tips_delay`, as before); 0 or more is the tip's own delay, 0 showing it the frame he comes
+near. The FGD's default is -1. A map that set `tip_delay 0` meaning the player's setting now shows that tip at once.
+`vr_tips_test list` prints a tip's own delay (`d0: at 64 448 600, range 64, delay 0 s, any angle`). Proved headless
+on `tiptest` with `vr_tips_delay 3`, a tip with `tip_delay 0`, one with `-1`, one without the key, each 30 frames
+near then 400 more: before, none was seen after 30 frames; after, `tip_delay 0` shows within the 30 frames
+(`tips: "d0"`, `seen`) and the other two still only after the player's 3 s.
+
+## Test runs: quit with no map, and kit fixes (2026-10-07)
+
+A test script with no map loaded (`wait5; toggleconsole; quit`) or after `menu_vr dump` hung at its end until the
+kit's 120 s timeout. Without a map the console is up (forced); `toggleconsole` closed it, so `quit` (Host_Quit_f, not
+from the console) opened the quit confirmation, which waited for a key forever; `menu_vr` left the VR menu with the
+keys the same way. `quit` now quits at once in a test run (`QVR_TEST_BACKGROUND`: the kit's run.ps1 and the motion
+review's child copies set it); a player's quit outside the console still asks. Proved headless: the three scripts
+(`wait5;toggleconsole;quit`, `menu_vr dump` then `quit`, and with `toggleconsole`) went from TIMEOUT to `exit=0` in
+2-3 s; e1m1 with `toggleconsole;quit` still `exit=0`.
+
+The kit's side (outside git; kit/README.md): eval.sh skips canary takes missing from the motions folder and runs the
+rest (it failed on the first missing one), never counts `eval_status.csv` as a take, and prints `0 takes` when there
+are none; run.sh `-Debug` runs the Debug build (`build.sh <name> --debug`; TESTING.md, "Debug build assertions");
+`-Instance k` handles an `id1/maps` that `bench_maps.ps1` made a real folder; `quakevr/tips_seen.txt` is put back
+after each run as `ironwail.cfg` is; a relative `-Out` lands in the worktree's `scratch/`.
+
+## GL errors in Debug builds (2026-10-07)
+
+A Debug build's short e1m1 run printed 760 `GL api error [#1282] GL_INVALID_OPERATION ... Invalid component count`
+and 16 `GL api undefined [#131222] ... a sampler ... with a texture object (0) with a non-depth format, by a shader
+that samples it with a shadow sampler`. To find them, the GL debug callback (gl_vidsdl.c, GL_DebugCallback) now prints
+the caller's stack after an error or undefined-behaviour message, once per distinct stack (`GL error caller: ...`;
+vr_crash.cpp's VR_DescribeCallers, DbgHelp loaded on the first one, symbols from the .pdb).
+
+- **Invalid component count** (every eye, every frame): vr_bloom.cpp's `pass` set `Params` (`glUniform4f` at location
+  0) for every pass, the mean pass too, whose shader has no uniforms. `pass` takes `withParams`; the mean pass leaves
+  it out. The failed call changed nothing, so the bloom is the same.
+- **Shadow sampler on texture 0**: the world and alias shaders' `ShadowAtlas` / `ShadowStatic` (units 4 and 5,
+  `sampler2DShadow`) had no texture when the atlas wasn't made (shadows off, or no shadowed map lights: no static
+  atlas), so every draw sampled texture 0. vr_lighting.cpp binds a 1 x 1 depth placeholder (`noAtlas`, made the first
+  time it is needed) for a missing atlas. The shaders don't read it then (the shadow flags), so nothing draws
+  differently.
+
+Debug runs, `GL api (error|undefined)` count, all 0 after: e1m1; vrstart; vrfiringrange; start, and start at its
+slipgates (`setpos 232 1320 24 0 90 0`) in VR with `vr_light_test`, `vr_eyeshot 3`, the spectator and
+`vr_portals_maxviews 8`, and flat with `vr_portals_shot`, `r_scale 2`, `viewsize 80`; the bench's `combined` and
+`particles_dense`; the menus (`menu_vr`, Debug > Checklist, Recording, the main menu, the console) and no map; both
+eyes (`vr_mirror 2`, `vr_eyeshot 1`); the spectator with Bullet Time; flat e1m1 with `r_showtris`, `r_lightmap`,
+`r_fullbright`; `vr_profile_overlay 2`, `vr_parallax_debug 1`, `vr_bloom 0`, `vid_restart`; vrcalibration; shadows off
+and back on. Release screenshots (e1m1, vrfiringrange, start's slipgates, e1m1 with shadows off) differ from the old
+build's no more than two runs of the old build differ from each other.
+## The calibration room: calibration only, id's base textures (2026-10-07)
+
+Your request: nothing in `vrcalibration` but calibration (no buttons, weapons or props), a small polished room, good
+lighting, a little more interesting geometry, texture alignment checked; then: id's own textures (your decision: the
+committed `.bsp` embeds them; the WAD is made from your paks at build time and never committed).
+
+- **The room** (`Misc/quakevr/make_vrcalibration_map.py`, rewritten): an octagonal chamber 320 units (9.75 m) across,
+  176 (5.4 m) high. Every side is one `tech14_1` panel (straight sides 128, cut corners 136, their panel fitted), riveted
+  pilasters (`tech04_3`) over the joints with a small lamp (`tlight01`) each, a `tech04_1` skirting and rail round a
+  `metal4_4` wainscot, a bevelled cornice, `sfloor4_2` floor plates and an `sfloor4_1` ceiling with a stepped coffer: a
+  ring of `ceil1_1` light tiles under its step and a `light3_3` panel in its middle. The calibration spot: an octagonal
+  pad with our `qvrc_pad` (a glowing ring; `quakevr_dev.wad`). North, ahead of the player: a framed black board, its
+  texts (what happens; where height, body, hands and Position are in the menus: `{menu:...}`, 4 paths). South, behind:
+  a cased doorway, a short passage and a `*teleport` glow; walking into it (`trigger_changelevel`, no intermission) takes
+  you to the vrstart hub. Worldspawn `_vr_debris 0`, `_vr_crates 0` (no rocks or crates).
+- **Texture alignment by rule**: the script builds every brush as a convex hull and places each face's texture by a
+  rule (world-aligned so coplanar faces continue: the floor and ceiling tiles meet the walls and the coffer at their
+  joints, the south side's panel runs on above the doorway; or fitted: each strip fills its band's height exactly, the
+  cut corners' panels, the lamps, the board's frame and the spot fill their faces). Compiles clean (qbsp, vis, light
+  with bounce, dirt and the light grid; no leaks, no warnings).
+- **id's textures**: `Misc/trenchbroom/make_id_wad.py` writes `quakevr/wads/id_textures.wad` (git-ignored) from
+  `id1/pak0.pak` and `pak1.pak`: every texture of id's maps (573), each once, the same bytes every time. The map's
+  generator reads the textures' sizes from the WADs (and stops, saying how to make it, when the id WAD is missing).
+  `make_assets.py` keeps only one new texture, `qvrc_pad` (and no longer fails after writing the WAD when PIL is
+  missing).
+- **No buttons, so the calibration's text changed** (`vr_setup.cpp`): in the room the menu button **pauses** it: the
+  menu opens on Body Calibration's page (its first row is Position: standing or seated) and the calibration starts over
+  when the menu closes (elsewhere, `vr_setup here`, it still stops). The intro says "Playing seated? Open the menu: set
+  Position to Seated, then close it."; the summary and the console say the glowing doorway behind you leads to the hub;
+  a stop says the main menu's VR Calibration runs it again. The main menu's confirmation no longer mentions a main-hand
+  step ("your height, then your body").
+- **The old room became the test hall**, `maps/vrtesthall.bsp` (`make_vrtesthall_map.py`: the old generator, renamed,
+  its title board "VR TEST HALL"): its setting buttons (`vr_setup_option`), pool, climbing platform and pickups. The
+  tests that used the old room's water and open floor use it (`physbench.py` water, `parryinterrupt/test.py`;
+  TESTING.md). Delete it if you don't want it shipped: the two scripts point at it.
+- Checked headless: `vr_setup_pending 1; vr_startgame` loads the room and starts; `togglemenu` pauses on Body
+  Calibration (row Position), closing the menu starts over; the height is taken (1.70 m), `vr_setup_skip` past the body,
+  done; walking into the doorway loads `vrstart`. `vr_menu_path_check`: the room 4 found, 0 missing; the test hall 14,
+  0. Screenshots (flat and the headset's eye) from the spot, the corners, the doorway and the coffer.
+- **To try in the headset**: the room's scale and light (the lower wainscot is dark by design: the light comes from the
+  coffer and the pilasters' lamps), reading the board from the spot (letters 0.28-0.7), the pause on the menu button and
+  Position: Seated, walking out through the doorway.
+## Slipgate test map (2026-10-07)
+
+`map vrslipgates` (Debug > Slipgates: Test Map, with rows that put you at the flush, framed, turning and
+heights/water gates): slipgate pairs to test walking, props and monsters through. Made by
+`Misc/quakevr/slipgates/make_vrslipgates_map.py [--compile]` (the .map, then qbsp, vis and light as MAPPING.md's Full
+profile without `-dirt`, for even light to debug by); id's textures (the author's decision: the committed .bsp embeds the
+ones it uses) from `quakevr/wads/id_textures.wad`, which `Misc/trenchbroom/make_id_wad.py` makes from the player's own
+id1 paks (git-ignored; the same script as the calibration map's). No leak, 28 gate sides built.
+
+- **Rooms.** The hub (start; a sign, a tip, five weapons to grab, ammo). North: the flush galleries, FA's north wall and
+  FB's south wall face to face with four gates each, bottoms at the floor: crate (48x48), player (64x96), large
+  (128x160: shambler, fiend, vore), very wide (256x128). FB lies behind FA's gates, so a monster chasing you through
+  walks straight at them. East of them the framed galleries (GA/GB): the same in protruding frames (id's `slipside`)
+  with sills: a crate hatch (sill 24), player (sill 16: a step), player (sill 32: a jump), large and wide (16). West:
+  the turns room T (its west and east gates loop into each other: walk west for ever; its north gate comes out of U's
+  east wall, 90 degrees; its south-west corner is a 45-degree wall whose gate comes out of U's south wall). South: LV,
+  a floor-level gate that comes out over a 128-high platform (stairs back down), and two gates beside a sunken pool that
+  come out facing it. Every gate goes both ways; each side's destination stands 48 units out from the other side's face
+  (56 framed): clear of its trigger and frame for a shambler-sized monster (Quake's teleport puts monsters there).
+- **Props and monsters.** Each room has five buttons (grunt, dog, ogre, shambler, scrag: `func_enemy_dispenser`s by its
+  far wall). Crates, ammo boxes by the gates, a crate on a ramp in FA rolling at the crate gate, one floating in the
+  pool. `_vr_crates 0`, `_vr_debris 0`: nothing placed at random.
+- **Sheet depth.** The large flush pair's `*teleport` sheets are 48 deep, every other gate's 8 (as id's, a wall right
+  behind). A prop's box stops against that wall before its middle reaches the gate's plane when its half-width is more
+  than the sheet's depth (the split collision at the plane is the player's only): a small crate thrown at 46 u/s (a
+  crate's throws are slow) stays at the 8-deep player gate (y 626, its box against the backing) and goes through the
+  48-deep one. Fast light things (a shells box at 335 u/s) cross the 8-deep ones. Worth an engine fix (props' collision
+  split at the plane as the player's); the map shows both.
+- **Views black at some gates (fixed).** R_MarkSurfaces takes the fat PVS round the view's origin when the view leaf
+  holds a liquid's or a gate's face; in the view through a gate that origin is the camera carried behind the
+  destination (in a wall: an empty PVS), so the world through the gate was black, entities still drawn (the loop, the
+  turns, the platform gate: their destinations' leaves touch a gate's face; the galleries' don't). `VR_PortalPVSOrigin`
+  (vr_portals.cpp, from r_world.c) takes it round the destination's point instead, the point VR_PortalViewLeaf finds
+  its leaf by. `r_novis 1` showed it before the fix.
+- **Headless results** (`Misc/quakevr/slipgates/slipgates_test.sh <agent> [walk|throw|chase|views]`): the player walks
+  through every player-sized and bigger gate, both ways, flush and framed (sill 16 stepped over); the crate gates and
+  the 32 sill stop him, a jump takes him through the 32 one; the loop, 90 and 45 degree turns, the heights (out at z 152
+  on the platform) and the pool gates (into the water) carry him with the right yaw. Thrown: above. Chased (the player
+  put 150 units past the gate in the north room, the monster 200 behind him): a dog through the flush player gate in 75
+  frames, through the sill-16 frame in 60; at the sill-32 frame it bumps, slides along the wall and takes the sill-16
+  gate next to it (135 frames: out at that gate's destination); a fiend through the flush large gate in 30 frames and
+  the framed large one in 45-90 (one run of three it never left its spot). Grunts (and shamblers, ogres) stand and shoot
+  through the gate instead (PORTAL_AI.md: ranged monsters see through one gate and don't walk to you). Views: both
+  eyes, every kind of gate (`scratch/slipgate_views.png`).
+- **To try in VR:** each gallery's buttons with you on the far side; throwing crates and boxes through the 8-deep and
+  48-deep gates; walking the loop; the 45-degree gate's turn; the pool gates.
+## Blunt blows sound of what they hit (AUDIO_REVIEW.md row 4, 2026-10-07)
+
+A punch, a gun's butt, a headbutt, a pommel or a club, a struck or held gib, a prop flung or thrown into something
+and a thrown weapon's blunt landing all played `fisthit.wav` (one recording) whatever they hit. Each now plays a second,
+quieter layer of what it hit, from the hand (its any-free channel, `VRGetHandChannel`) or from the thrown thing
+(`vr_crates.qc` VR_Blunt_HitLayer), with the pitch variation (`VR_SoundVaried`):
+
+- a body (a monster, a player, a corpse, a gib or head): `vr/phys/flesh_m1..4` at 0.8 (RMS 9%: about 13 dB under the
+  thud's 32%);
+- an armoured one (`monster_knight`, `monster_hell_knight`, `monster_enforcer`, their corpses too): `vr/phys/metal_l1..4`
+  at 0.8 over the flesh slap at 0.4;
+- wood (a crate, its pieces): `vr/phys/wood_m1..4` at 0.8;
+- a wall or the floor (the fist's own path; `!takedamage`): `vr/phys/soft_m1..4` at 0.6;
+- metal (an explosive box, a door, a lift: `VR_Hit_Metal`): none, its heavy knock already replaces the thud.
+
+Every existing recording; `flesh_m3/4` precached in `world.qc` (the engine's bodies' set has only 1 and 2). The call
+sites: `weapons.qc` W_FireAxe, W_GunMelee, W_ChainsawMelee, W_FistMelee (not when a held rock or brick knocks as
+itself), a thrown weapon landing; `combat.qc` a corpse struck; `vr_carry.qc` a flung prop, VR_Gib_Blow, a gib struck by
+the other hand; `vr_crates.qc` a thrown prop; `client.qc` the headbutt. `vr_snd_hit_layer` (1; 0 none): Audio >
+Movement and Nearness, **Blow Material Layer**. `developer 1` prints `blunt hit layer: <sounds> on <class>`.
+
+Checked (`-Sound -RealTime`, `vr_snd_spatial 0`, `snd_show 2`; a shells box flung with `impulse 232`): into a grunt
+`fisthit.wav` (pitch 0.975) and `flesh_m4` (0.988) on the box's channel 0; into a knight `fisthit` and `metal_l4`
+over `flesh_m3`; into a zombie `fisthit` and `flesh_m1`.
+
+## The foregrip clicks (AUDIO_REVIEW.md row 6, 2026-10-07)
+
+The other hand closing on a weapon's foregrip (a gun's, a sword's grip or blade, a weapon carried off its handle, a
+free grip anywhere on it) had no sound and no haptic. Now (`vr_twohand.cpp` gripFeedback, at the end of `apply`, on
+the edge of the hand's `helpingHand`): a short metal click from that hand (`vr/phys/grab_metal1..3`, the climbing
+hand's and the explosive box's grabs, RMS 9%; client `S_StartSoundPitch` on the player's hand channel, `SND_CHAN_HAND`
+or `SND_CHAN_HAND2`, so it plays from the hand and follows it) at `vr_2h_grip_sound`, pitch-varied by
+`vr_snd_pitch_jitter`, and a 30 ms pulse (0.45) in that hand; letting go, the click at half that, no pulse. At most one
+per hand every 0.25 s (a grip at the edge of its reach). `vr_2h_grip_sound` (0.6; 0 no sound, the pulse stays): Aiming >
+**Grip Click**. `developer 1` prints `2h click: <hand> takes hold / lets go`.
+
+Checked (`-Sound -RealTime`, `vr_snd_spatial 0`, `snd_show 2`; a shotgun in the main hand, the off hand put on it at
+0.75 with `vr_mock_hand_to off held` and gripped, then let go): `grab_metal1.wav` on channel 9, pitch 0.998, `at 486
+-326 102 | off hand 486 -326 102 (0.0 off)`; letting go `grab_metal3.wav` (0.978) the same way.
+
+## Burning bodies crackle (AUDIO_REVIEW.md row 7, 2026-10-07)
+
+A burning monster, corpse, crate or crate piece was silent after the catching whoosh (`vr/torch_light.wav`). Its fire
+now crackles (`vr_burning.qc` VR_Burn_Crackle, from VR_Burn_Think): Quake's torch loop (`ambience/fire1.wav`, the wall
+torches' crackle; now precached in `world.qc`, as it was only on maps with torches) on the body's own channel
+(`CHAN_BURN`, 6, new in `defs.qc`: no monster uses it but Armagon, who is fireproof; 5 and 7 are the bodies' drag
+scrapes, below), so it follows the body, heard only
+near (`ATTN_STATIC`), at `vr_burn_sound`. It starts 0.3 s after the fire (the whoosh first); in the flames' last 1.5 s
+it plays at 0.6 of that, in the last 0.75 s at 0.3 (the loop restarted lower: a three-step fade), back to full if the
+body is lit again; every way a fire ends goes through VR_Burn_Out (burnt out, gibbed or removed, doused, a crate broken
+or a piece burnt away, the scene cleared), which stops it with `misc/null.wav`. At most `vr_burn_sound_max` fires
+crackle at once (`vr_burn_crackles`, recounted over the `vr_burn` entities when it says the most do, so it can't drift):
+the others burn silent and look again every 0.25 s, taking a slot as one goes out (not in their own last 1.5 s). None on
+you (you cry out: VR_Burn_OnYou). `vr_burn_sound` 0.6 (0 none) and `vr_burn_sound_max` 4: Combat > Burning,
+**Crackle Volume** and **Most Crackling**. `developer 1` prints `burning: <class> crackles at <volume> (<n> crackling)`.
+
+Checked (`-Sound -RealTime`, `snd_show 2`, `vr_burn_sound_max 2`, `vr_burn_corpse_time 4`; three things set on fire
+with `vr_burn_test 1`): a crate and the first grunt's corpse crackle (`ambience/fire1.wav [L]` on channel 6 of each),
+the second corpse stays silent (2 crackling); the first corpse fades 0.36, 0.18, then stops (1 crackling) and goes out;
+the second, then in its own last second, doesn't start.
+
+## Your own weapon taken back: a grip, not the pickup chime (AUDIO_REVIEW.md row 8, 2026-10-07)
+
+Taking back a weapon you had thrown, dropped or let go of (or catching it, or pulling it with the force grab) played
+Quake's pickup chime (`weapons/pkup.wav`, RMS 32%, the loudest UI-like sound) at 1.0 and a full 0.3 s pulse, as for a
+weapon new to you. A weapon leaving a player's hand (`DropWeaponInHandScaled`, both throw modes) now remembers him
+(`.vr_wpn_from`, `vr_fields.qc`); taken back by him (`wpnthrow_handtouch_impl`), it plays the hand closing on its
+handle instead: `vr/phys/grab_metal1..3` (an axe's `grab_wood1..3`; RMS 9%, 0.17 s) at 0.9 from the hand (its own
+channel), pitch-varied, and a 0.12 s pulse at 0.7. Weapons from the level, a monster, a crate or ammo box, the test
+spawns and a player's death keep the chime. Drawing from a holster was never the chime (`weapons/holster0/1.wav`).
+`developer 1` prints `weapon: <class> taken back (<sound>)`.
+
+Checked (`-Sound -RealTime`, `snd_show 2`): a crowbar dropped ahead (`impulse 217`) taken (`impulse 216`):
+`weapons/pkup.wav` on its channel 0; let go of and taken again: `vr/phys/grab_metal1.wav` on the player's channel 8
+(the main hand), pitch 0.997; the shotgun let go of and taken by the mock hand (`vr_mock_hand_to main weapon 0.3`):
+`grab_metal2.wav` on channel 8.
+
+## Bodies dragged along the floor (AUDIO_REVIEW.md row 2, the drag left from it, 2026-10-07)
+
+A ragdoll dragged by a limb, shoved along or blown across the floor, and a pushable corpse pushed, slid silently (row 2
+gave them knocks only). Box3D's scrape detection (`vr_box3d.cpp` noteSlide, the props') is now `bodySlide` for any
+body, and `noteBodySlide` looks at each awake part of a ragdoll (not its cut ones) or the corpse's body after it is
+written: the part sliding hardest on the level, a door, a fixture or a prop (not on another body or its own parts:
+`catCorpse`, a hand or a player), reported to the physics sounds as flesh (`physsound::slide`'s `body`: the soft scrape
+grains, `vr/phys/scrape_soft1..4`, on the body's channels 5 and 7, its weight the part's, times `vr_physsound_bodies`
+and 0.7 under a prop's scrape). Only while the body as a whole goes along the floor (its parts' mass-weighted level
+speed at least 0.4 m/s): a ragdoll crumpling as it dies or settling is all but silent. A body's scrape starts after
+0.15 s of sliding (a prop's 0.08), slides 0.2 s apart count as one, it stops only after 0.2 s without one (its parts'
+contacts come and go), and never restarts within 0.6 s of stopping (`vr_physsound.cpp` bodyScrapeDelay,
+bodySlideGrace, bodyScrapeGap). The burning crackle moved to channel 6 (it was on 7, a scrape channel: a burning body
+dragged would have cut it).
+
+Checked (`vr_debug_physsound 1`; `-Sound -RealTime`, `snd_show 2`): a settled grunt's ragdoll blown along with
+`vr_ragdoll_blast_test 60`: `scrape starts, flesh at 0.55 m/s`, `vr/phys/scrape_soft2.wav` on channel 5 then
+`scrape_soft1` on 7 of the corpse for 2 s, then `scrape stops`; `ragdoll_sound_test.sh flat pile`: a body dying on the
+floor shuffles 0.2-0.4 s at volume 0.1 (before the speed gate: 2.5-3 s), the knocks as before. Dragging by a limb uses
+the same contacts; its mock (`vr_mock_hand_to off ragdoll near 3` and a grip) failed to take the limb in most runs here
+(the stock `ragdoll_test.sh grab` too, once of two): to try in VR.
+
+## Bullet time's "off" sound no longer outlasts a short burst (AUDIO_REVIEW.md row 5, 2026-10-07)
+
+The sounds are still the placeholders (`items/inv1.wav` on, `items/inv2.wav` off: the Ring of Shadows'; Vittorio picks
+the real ones), but the 3 s "off" sound ran on long after a short burst. Now (`vr_bullettime.cpp` OffSound): it plays at
+most `vr_bullettime_sound_off_max` real seconds (1; 0 the whole sound), then fades out over 0.25 s and stops; started
+again (or a denied press), it fades out over 0.06 s at once (the "on" sound, a local sound on the same channel, already
+replaced it; this covers an empty `vr_bullettime_sound_on`). The fade lowers its channel's `master_vol` each frame
+(advance); the channel is found again each frame by its sound, the player's entity and the local channel -1, so a
+channel another sound took is never touched. Menu: Recording > Bullet Time, **End Sound Plays At Most**.
+`vr_debug_bullettime 1` prints `the off sound cut <t> s after its fade began`.
+
+Checked (`-Sound -RealTime`, `vr_snd_spatial 0`, `snd_show 2`; `vr_bullettime` on, 40 frames, off): `items/inv2.wav`
+at L/R 255 for 1.0 s, then 253 down to 1 over 0.25 s, then gone (`cut 0.25 s after its fade began`); started again
+0.3 s after with `vr_bullettime_sound_on ""`: 85, 68, 51, 34, 17, then `cut 0.06 s after`.
+
+## Dawn of the Machine (MG3): world and progression (2026-10-07)
+
+Phase B of [MG3_PLAN.md](MG3_PLAN.md) (M3-05..10), following Vittorio's decisions and the agglomeration principle (an
+official expansion's entities work in any map when their data is there). MG3 stays gated (`nativeReady` false); MG3
+tests use `vr_campaign_native mg3`, `-nomapindex -noaddons`, developer 1.
+
+- **M3-05 map triggers I.** `QC/vr_mg3_triggers.qc` (adapted `mg3_triggers.qc`/`triggers.qc`, GPL header kept), in
+  every campaign (none needs MG3's data): `trigger_always` (fires 0.1 s after load), `trigger_door_relay` (toggles its
+  func_doors/func_buttons by state; flags 1/2 leave open/closed ones), `trigger_teleport_silent` (moves the player by
+  `height`, default -2048, +1 going down; telefrags; what the hands carry comes along: `VR_Carry_Teleported`),
+  `trigger_multitouch` (first touch / emptied after 0.2 s; flags 16/32/64), `trigger_explosion_repeater` (after
+  `delay`, a 120-damage blast every `wait` + random `pausetime`; flag 4 counts), `trigger_music` (CD track `style`),
+  `trigger_heal` (`dmg` every `wait`), plus upstream's unplaced `trigger_doorgroup_relay`, `trigger_quad`,
+  `trigger_relay_killmonster` (all official, for other maps). Coop flags 32768/131072 as upstream. Measured
+  (`vr_mg3_test 6`, Map Triggers Check, any campaign; `7`, Explosion Repeaters Check): secret6 31/31 silent teleports
+  moved by their height into the open, 14/14 door relays toggle their targets; map7 4/4 relays; spawned
+  always/multitouch(x3)/heal/music/quad/doorgroup/repeater/killmonster 13-15/0 on secret6, map7, hub, boss, map3 and
+  stock e1m1; secret2's 60 repeaters (all `explosions`, count 2..8) all fired, 325 blasts = the counts' sum. Checker:
+  35 missing, 1,189 placements (from 42/1,328). Regression: MG3 map1 shared triggers 34/0; Dopa triggers 34/0, world
+  19/0; MG1 hub 20/0, Horde 24/0; e1m1.
+- **M3-06 map triggers II and keys.** `health_target` (T_Damage, before the blow as upstream: each
+  `trigger_health_relay` it names fires once when the monster is hit with less than its fraction, default 0.5, left,
+  then is removed), `aggro_target` (FoundTarget: a waking monster uses what it names 0.1 s later, waking sleeping
+  monsters at its enemy; every monster sharing the key forgets it). **Upstream ships aggro commented out**, so it is
+  off unless `vr_mg3_aggro_groups 1` (archived, default 0; Debug > Tests > Dawn of the Machine Tests > Aggro Groups);
+  it follows the key's documentation, not the commented code (which counted the group's other members and so ignored
+  a lone monster's target). `trigger_lore`: its text while standing in it, cleared `MG3_LORE_DWELL` (3 s; upstream
+  0.5) after leaving (PlayerPostThink), shown by VR's centre print (in view or the wrist hologram); hub rune hints
+  switch to their "complete" text, map4's Bloody Nightmare hint goes once it is known. New MG3 serverflag names
+  (`MG3_SF_RUNE1..4`, `MG3_SF_BN_ACTIVE/DISCOVERED/NEWGAME`, `MG3_SF_TETTE`). Keys declared: `wave1..3`,
+  `tele_target` (the finales' tasks), `comment`, `dirt`, `fog_sky_factor`; the engine reads `fog_sky_factor` as
+  Ironwail's worldspawn `skyfog` (gl_sky.c; developer 1 prints "sky fog"). All work in any campaign. Measured
+  (`vr_mg3_test 8`, Monster Keys and Lore Check): map3 demon 300/300, relay 0.5: 14 hits of 5%, fired on the first
+  hit below half, once (4/0); map8 shambler with two relays (0.75, 0.5) both on their first hit below, once (3/0);
+  map8 aggro group `second_room_shambler_01`: off 0 of 1 woke, on 1 of 1 and the key cleared; lore map3/map5
+  localized ("Look at the heavens..." for `$mg3_map5_mural`), cleared after the dwell; secret4/dm1 "sky fog 0.2".
+  Checker: 33 missing classes, 1,146 placements, 1 unknown key (`property 1`, editor noise on two secret1 lights:
+  not a valid field name). Regression as M3-05 (all pass).
+- **M3-07 items.** `QC/vr_mg3_items.qc` (adapted `mg3_items.qc`/`items.qc`): `item_armor_shard` (+5 armour, green
+  0.3 when none is worn, at most 200; touch pickup like ammo), `item_draught_insight`/`_stupor` (rings that move the
+  player by `height`, -2048/+2048 by default, with the teleport flash; OVERRIDE_DEST: to the target destination by
+  `teleport_touch`; they stay; carried things come along), `item_artifact_lavasuit` (powerup: 30 s without lava or
+  slime damage nor drowning, `lavasuit_finished`, the "wearing out" warning; a holster object like the biosuit;
+  authored `wait` respawns it), `item_head_hellknight` (a holster object: Bloody Nightmare ACTIVE|DISCOVERED, skill 3,
+  and the new archived `vr_mg3_bn_discovered 1`, which M3-09's menu reads; in a Bloody Nightmare game a megahealth,
+  or the bunny once in its new game). MG3 item flags: SPAWNED (4: hidden until a trigger uses it, then back with the
+  respawn sound, through Honey's item_unspawn/item_spawn) and DROPTOFLOOR_DISABLE (65536: placed, then stays put),
+  campaign 5 only (MG1's upstream has DROPTOFLOOR_DISABLE too; not applied there). Agglomeration: each needs its model
+  on the search path (skipped otherwise), the lava suit falls back to the biosuit's model and the head to the hell
+  knight's head gib. Measured (`vr_mg3_test 9`, Items Check): shards map3 16 -> 80, map2 25 -> 125, boss 22 -> 110,
+  map2b 46 and map4 44 -> 200 (cap), one on yellow 150 -> 155 kept yellow; map2b 6 draughts (5 by height into the
+  open, 1 to its target), map2 1 to its target; boss lava suit 30 s, lava and slime hurt before, not while worn, again
+  after; taken, back after its wait; map4 head: serverflags 0 -> 192, skill 3, discovered 1, killtarget lore1 gone;
+  `changelevel map4` under Bloody Nightmare: the head is a megahealth (7 = 6 + 1); map3's 4 trigger-brought items
+  hidden, one appears when used. Checker: 28 missing classes, 701 placements. Regression as before (all pass).
+  Unrelated: `map map2` crashed 2 of 7 loads in `vr_hull.cpp:450` (hull walk on a worker thread, before any test
+  ran); the other 5 and every other map loaded.
+- **M3-08 runes and hub.** Campaign 5's `item_sigil` (`MG3_item_sigil`, vr_mg3_items.qc: end1..4 models,
+  `$mg3_qc_rune1..4` centre-printed to everyone, the bit in `style`, spawnflag 128 hidden until a trigger uses it:
+  map8's; a holster object); `trigger_rune_relay` (passes a use on 0.1 s later with every rune its flags name) and
+  `trigger_rune_counter` (fires with at least `count` runes, default 2), in any campaign. Upstream's
+  RemovedRuneCheck (`MG3_RuneRemoved`, vr_mg3_defs.qc): an entity with NOT_IF_<n>_RUNES (262144 << n) for the runes
+  home is not there: items (StartItem), monsters (every start, through `MG_MonsterPrepare`, and the spawn functions'
+  `MG_MonsterInhibited`), triggers, corpses, intermission views; campaign 5 only. `trigger_door_relay` now also takes
+  VR's door classname "door" (id's doors.qc renames func_door; upstream MG3 does not): the M3-05 relay check had passed
+  without moving a door, and now counts the doors moved (secret6 24, secret4 11; map7's four only close open doors,
+  0 at load). The hub is worldtype 0, so the inventory carries through it (map3 -> hub -> map5: weapons, ammunition,
+  holsters kept; keys dropped as on any changelevel). Measured (`vr_mg3_test 10/11/12/13/14`): secret1 -> secret5 ->
+  hub -> secret3 -> map8 runes 1, 3, 7, 15 (map8's hidden rune brought out first); the hub's entry check with 2 runes
+  opens rune 1 and 2 doors, not 3/4 nor the exit; with 4 all four and the exit (2/0 each); `save`, `map start`
+  (serverflags 0), `load`: 15; map1 with 0 runes 88 monsters, 2 corpses, 1 intermission view, with 1 rune 66, 13
+  and 1 (the map's two versions; before, both at once); secret2's exit: changelevel to boss (intermission, next map
+  boss). Checker: 26 missing classes, 675 placements. Regression: Dopa triggers 34/0, world 19/0, MG1 hub 20/0, Horde
+  24/0, e1m1.
+- **M3-09 start, skill and Bloody Nightmare.** `trigger_relay_setskill` (hub buttons: 0..3 set the skill and end
+  Bloody Nightmare, 4 starts it: skill 3, ACTIVE|DISCOVERED and `vr_mg3_bn_discovered 1`; localized messages) and
+  `trigger_bloodynightmare_relay` (flags 1/2/4 require ACTIVE/NEWGAME/DISCOVERED, 8/16/32 their absence), any campaign.
+  Campaign 5 (`vr_mg3_defs.qc`): `MG3_BloodyNightmareStrip` in DecodeLevelParms (skill not 3: ACTIVE cleared; else
+  the hands' and holsters' level parms lose every weapon but the axe, shotgun, Super Axe (WID_MJOLNIR until M3-11)
+  and, with the bloody bit, the super shotgun, with their records; the axe and shotgun go back to their default
+  holsters (or the first free) when gone; items = axe|shotgun|best armour (+SSG); ammunition and armour kept);
+  boss2 on skill 3 is Bloody Nightmare (upstream's level select); damage (T_DamageDeal): the player's blows on others
+  80%, others' on the player 120%; the hub's exit to secret2 goes to boss2 in Bloody Nightmare's new game. **Official
+  Campaigns > Dawn of the Machine: Bloody Nightmare** (Vittorio's decision): the row exists only once
+  `vr_mg3_bn_discovered` is 1 (found in a game: the hell knight's head or the hub's button; the page is rebuilt when
+  it changes); it sets skill 3 and `vr_mg3_bn_start 1` (unarchived) and starts the campaign as its row does (refused
+  with its reason while MG3 is gated), and the start map's first second makes the game Bloody Nightmare (centre
+  print). The start map's own skill brushes are id's `trigger_setskill` (already there). Measured (`vr_mg3_test`
+  15-20): hub at load, serverflags 0: the head, the Bloody Nightmare button and the new-game lore gone, the skill
+  buttons kept; with 192 the head and button kept; buttons 4/1/4: 192 + skill 3 + discovered 1, then 128 + skill 1,
+  then on (3/0); a seeded loadout (holsters SSG, LG, -, sword, shotgun, Super Axe; yellow 120; ammo) after hub ->
+  map3 on Bloody Nightmare: holsters -, -, axe, -, shotgun, Super Axe, armour and ammunition kept (2/0); with the
+  bloody bits the super shotgun stays (2/0); `skill 1` + changelevel: ACTIVE cleared, nothing stripped; damage 50 ->
+  40 dealt, 10 -> 12 taken on Bloody Nightmare, 50/10 otherwise; menu path (`vr_mg3_bn_start 1`, `skill 3`, `map
+  start`): serverflags 192, skill 3, "You activated BLOODY NIGHTMARE difficulty."; `vr_menu_search Bloody Nightmare`:
+  the row with discovered 1 (2,999 rows), gone with 0 (2,998); NG+ flags (`vr_mg3_test 19`) and the hub's exit:
+  secret2 -> boss2 (plain game: secret2). Checker: 24 missing classes, 660 placements. Regression as before. Seen
+  once: a crash in `GL_BuildBModelMarkBuffers` (r_brush.c:828, R_NewMap) on hub -> map3 after a test seeded holster
+  ids without weapon records (2 of 5 such runs; 0 of 6 plain hub -> map3, 0 of 5 with records): unrelated engine
+  fragility, noted.
+- **M3-10 endings and credits.** `MG3_BossEnding` (upstream boss_end; monster_boss_final, M3-24/25, will call it 8 s
+  after Chthon dies): a dead single player completes nothing; every player back to 25 shells, no other ammunition,
+  no armour (VR: its plating items too); a Bloody Nightmare game goes to its new game (map1, serverflags
+  ACTIVE|DISCOVERED|NEWGAME: runes cleared, capacity upgrades cleared, health 50; the bloody weapons stay; the level's
+  strip leaves the axe and shotgun), otherwise the next map is `start` (the credits); the finale text
+  `$mg3_qc_boss_finale`. Upstream sends the normal ending to the credits, not the hub as the plan's M3-10 line says.
+  `MG3_ShubEnding` (upstream oldnew_credits; monster_oldone_new, M3-26/27): its final text (upstream's
+  `$map_dopa_endtext_final`), then the credits. ExitIntermission's native completion (disconnect, `menu_credits`)
+  covers campaign 5; the credits menu's title is "Dawn of the Machine" for it (menu.c). map8's and start's authored
+  `endtext` already showed through the MG framework (checked). Measured (`vr_mg3_test 21/22/13/14`): boss: finale text
+  "You did it! ...", stages 1-3, next map start (the credits' command queued); Bloody Nightmare (menu path) + seeded
+  upgrades, bloody bits and loadout: next map map1, then serverflags 448, masks 0 (bloody 3 kept), health 50/50,
+  ammunition 25/0/0/0, armour 0 (no plating bit), holsters SSG, -, axe, -, shotgun, Super Axe; its hub's exit leads
+  to boss2; boss2: "CONGRATULATIONS AND WELL DONE!", next map start; map8 -> hub "You have gained a rune of
+  power!..."; start -> map1 "You are drained..."; the credits menu titled Dawn of the Machine (screenshot). Loads:
+  start, hub, map1, map4, boss, boss2, secret6 exit 0. Regression as before.
+
+## Map load crash: the cache's LRU list from the pool (2026-10-07)
+
+Seen by the MG3 work: loading MG3's map2 crashed now and then on a pool worker in `vr_hull.cpp:450` (the hull build's
+walk: a hull 0 node whose plane number was garbage), and `R_NewMap` crashed in `GL_BuildBModelMarkBuffers`'
+`CompareMarkSurface` (garbage marksurfaces; the hub -> map3 crash "after a test seeded holster ids" was this one too:
+it came on a plain map2 load as well). Measured before the fix: 8 crashes in 65 map2 loads (fresh processes), always
+the same node (25591) with the same garbage plane number, through the hull build, R_NewMap or the GL driver.
+
+- **Not the hull build.** With hull 0's nodes and the planes made read-only (VirtualProtect) for the build, every
+  node checked good when the build started, the page still read-only at the crash and the node still wrong: the
+  value was written before (at the map's load), into the hunk.
+- **The culprit:** the hunk, cache and zone checked for their thread (a crash with the caller's stack): the ragdoll
+  rigs' warm-up at every map load (`warmRigs`, vr_ragdoll.cpp) runs `derive` for each monster model on the pool, and
+  `derive` called `Mod_Extradata`, whose `Cache_Check` unlinks and relinks the model's block in the cache's LRU list:
+  several workers at once corrupted the list (10 of 10 runs flagged it). Through stale LRU links a later cache
+  allocation, flush or move wrote cache links into memory the hunk had since given to the map (the world's nodes),
+  hence the same deterministic garbage. Not mimalloc, not the hull containers or the kept hulls.
+- **Fix:** the alias headers are taken on the main thread (`Mod_Extradata` while the jobs are listed, then again with
+  `Cache_Check` once every model is loaded, as a later load may have let an earlier one go) and handed to `derive`,
+  which touches no engine state. After: 0 crashes in 50 map2 loads (fresh processes); with the check on, no other
+  use off the main thread over e4m7, e1m1, start, hub (`vr_mg3_test 16`) -> map3 (`17`), map2, Release and Debug.
+  The rigs are the same (start's zombie/soldier/dog: 12/12/13 bones).
+- **`vr_zone_threadcheck`** (default 0; Debug > Threads > Catch Memory Use off the Main Thread): `Z_Malloc`,
+  `Z_Free`, `Z_Realloc`, the hunk's allocations and frees, `Cache_Alloc`, `Cache_Check` and `Cache_Free` from any thread
+  but the main one crash at once (`Zone_WrongThread`, with the culprit's stack in qvr_crash.txt). For tests: set it
+  first in the script (`vr_zone_threadcheck 1; map ...`).
+## vrstart2: the island hub at night (2026-10-07)
+
+Your request: a new, much bigger and more polished hub in vrstart's spirit (a grassy island with a rocky beach in a
+lake ringed by cliffs, at night, torches and lights under the water), the player starting in a corner and led along
+one path (bridges, staircases, natural paths) past the campaign buttons and their slipgate, a settings area, a
+makeshift firing range and a ladder; props, banners and tips. Added beside vrstart, not replacing it (yet).
+
+**Made by a script** (`Misc/quakevr/maps/vrstart2_gen.py`, its geometry in `mapgeom.py`; MAPPING.md, "vrstart2"):
+reproducible, the .map editable in TrenchBroom (groups), every brush's planes exact (points on a 1/8 grid, planes
+from integer arithmetic). Terrain: a height function sampled on a jittered lattice plus the places' outlines,
+Delaunay-triangulated (exact predicates; 10,500 triangles), a prism under each. The lake is 8000 units across (244 m):
+1800-2200 units (55-67 m) of water between the island and the cliffs, 300 deep (the shelf by the island shallow),
+six rock ledges at the cliffs' feet to climb out on, four islets (braziers on two). The cliffs: a noisy ring (bays,
+headlands), faces faceted by six rings of points, mountains rising behind to 1300-1900.
+
+**Textures: id's** (the coordinator's change, your decision): `Misc/trenchbroom/make_id_wad.py` extracts every texture
+the paks' maps embed into `quakevr/wads/id_textures.wad` (git-ignored); the .bsp embeds the ones used. Planks show
+one of woodflr1_2's 16-texel boards each (their texture offsets computed per plank); cliffs at twice the scale; wood
+grain along each beam. Ours: the night sky box (`make_vs2_sky.py`: stars, the Milky Way, thin clouds, the moon where
+the moonlight comes from; 6 x 1024 PNG, 2.8 MB) and `qvr_target` (a bullseye) in quakevr_dev.wad.
+
+**Night lighting**: moonlight from the north-east (`_sunlight` 230, blue) and a dark blue sky dome, bounced light,
+fog; 32 wall torches on posts and brackets (they can be taken, as anywhere), 10 large flames (braziers, the
+campfire), lanterns, the slipgate's violet glow, 34 crystal clusters glowing cyan on the lake's floor. The fires and
+lamps have no ambient occlusion (`_dirt -1`: with it the pavilion stayed black under its roof).
+
+**Gameplay**: the campaign lecterns use the old hub's commands (`vr_activestartpaknameidx 0/1/2`, so buttons.qc's
+"(unavailable)" for a missing mission pack still works; the slipgate is a `trigger_changelevel` to `start`, now
+without intermission); Dimension of the Past's lectern runs `vr_campaign_select dopa` (starts at once: the slipgate
+only knows the three that share their folders). New engine bits: `VR_IsVrMap` (the four VR maps, replacing three
+copies of the list in vr_gamedir.cpp), **`vr_hub_map`** (archived, default `vrstart`; `vrstart2` makes the island the
+hub VR starts in and `vr_campaign_hub` returns to), vr_setup_option's `holsters`, `reload`, `twohand`, `tips` (the
+old hub's raw cvar buttons, with value screens now), and SELECTED over the chosen campaign lectern. The pavilion: 19
+setting buttons on two boards, two rows each. The range: physics guns lying on the benches (shotgun, super shotgun,
+nailgun, crowbar), shells, nails, a health box, target boards, crates, the training dummy, an explosive box, rocks
+and bricks on a shelf. The ladder: rungs every 20 units from 16 over the ground (vrclimb's heights).
+
+**Performance** (`vr_profile`, exclusive, the start, mock eyes): vrstart 0.65 ms CPU busy, GPU 0.81; vrstart2 GPU
+about 1.3 (world+brush 0.6). 88-100k faces (the terrain's prisms cut each other's faces about four times over in the
+BSP). Everything is func_detail (as func_walls the faces were no fewer and the dynamic lights' caster search dearer);
+ropes and brackets are func_detail_illusionary. CPU busy about 1.5 ms (vrstart 0.65), most of it the dynamic lights' shadow
+caster search walking the big world tree (`dlight casters` 0.6 ms); fine against the 11.1 ms budget.
+
+**Tested headless**: the path walked leg by leg with the mock stick (`Misc/quakevr/maps/vrstart2_walktest.py`: 18
+legs, pier, stairs, terrace, bridge, pavilion, stairs, range, shore path, the ladder's foot); a swim from the pier to a cliff ledge and out (40 s);
+`vr_setup_option turning` pressed by hand (Snap 30), the Scourge of Armagon lectern pressed
+(`vr_activestartpaknameidx` 1, its echo), the slipgate's changelevel; a rung held and pulled up (`vr_climb_debug`:
+"main hand holds at 132", the body rising); `vr_climb_probe` lists the rungs as ledges;
+`vr_menu_path_check maps/vrstart2.map`: 4 found, 0 missing. Notes: the climbing plays (`climb_plays.py ladder`) find
+no hold on vrclimb either in this harness (a hand 5 units off); qbsp needs `-maxnodesize 0` (the midsplit's portals
+lost visible faces: holes in the cliffs) and `-forcegoodtree` (an invisible bump on the shore path's clip hull).
+
+**The snag on the shore path, found and fixed: nearly coplanar terrain.** The player stopped dead on flat ground
+(the shore path near (470, -280..-390), and elsewhere): not at a fixed place (a walk from y -262 stopped at -266, one
+from -265 went through), the box free everywhere there (`vr_stuck_test` every unit), with every hull (Quake's,
+the compiled 16-wide one, the brush sweep), the body off, the tips off, and on the terrain alone (a map of only its
+prisms). The cause: the ground's triangles nearly but not quite coplanar (the noise, the zones' blends, heights
+rounded to units), so the hulls' planes cross at tiny angles and a trace can start "solid" at their seams. Proved
+with the terrain alone: flattening that area exactly to 56 removed every stop there. **Fix**: the island's ground
+heights are multiples of 8 (`GROUND_STEP`, at the end of `height()`; not below 8, so no ground lies in the water's
+surface): most neighbouring triangles are now exactly coplanar (one plane), the rest meet at clear angles. A walk
+test of 36 legs (24 random 300-unit legs over gentle ground, 12 across the shore path) on the terrain alone: 24
+stopped short before, 7 with steps of 4, 3 with steps of 8 (two of them swims in the ravine); a second seed: 2, both
+swims. The ground reads as gently faceted; things are placed from the same `height()`.
+
+**To try in VR**: the whole walk at night (is it bright enough? `_sunlight`, the torches' `light` in the script's
+`TORCH`); reading the boards and the lecterns; the ladder; the dive; swimming out to the islets and the crystals;
+the cliffs from the water. `vr_hub_map vrstart2` to make it the hub.
+
+**Smaller buttons, one texture each** (the author: "the buttons are too big and the texture repeats"): every button
+(tutorial, calibration, campaigns, settings) is now 18 square (`BUTTON_SIZE`; they were 28 tall and 30-38 wide, the
+32x32 `+0basebtn` at scale 0.5 tiling about twice each way; e1m1's are 32 square at scale 1), centred where it was and
+as deep (6, the settings 8). `button_tex()` lays the texture as Valve 220 axes fitted to the box: on the front one copy,
+its frame on the face's edges (scale = size / 32, shifts putting texel 0 on the left and top edges); on the sides, top
+and bottom the texture's outer 4-texel frame band across the depth from the front edge, the front's fit along the
+other way, as if the front were folded round. `+abasebtn` (the pressed frame) is the same size, so it fits the same.
+The labels: QC's `func_button` put them 12 over the button's centre (6 in front), which on the small buttons
+overlapped the settings' value screens (vr_setup.cpp, 9 over the top). Now a button shorter than 24 has its label
+board 2 over its top (its half height from the label's rows and scale, as vr_text3d.cpp draws boards), and keeps the
+board's top in `vr_button_label_top`; vr_setup.cpp puts the value screen (and a campaign's SELECTED) 2 clear above
+that, never lower than before. Taller buttons (the test hall's, every other map's) are as they were.
+## Dawn of the Machine (MG3): weapons (2026-10-07)
+
+Phase C of [MG3_PLAN.md](MG3_PLAN.md) (M3-11..14), by Vittorio's decisions of 2026-10-06 and the agglomeration
+principle (an expansion's weapons usable in any campaign when its data is there). MG3 stays gated (`nativeReady` false).
+
+### M3-11 The Super Axe
+
+**A weapon of its own.** MG3's `weapon_mjolnir` is not Hipnotic's hammer but a great axe ("Super Axe"). It is now
+`WID_SUPERAXE` 18 (`IID_SUPERAXE` 48, `HIP_IT_SUPERAXE` bit 10), beside Mjolnir (`WID_MJOLNIR`, unchanged):
+`weapon_superaxe` (FGD), `impulse 168`/`188` (a hand), `QC/vr_mg3_weapons.qc`. An MG3 map's `weapon_mjolnir` spawns as
+a Super Axe in campaign 5 only (`hip_items.qc`); Hipnotic's maps keep Mjolnir.
+
+**MG3's model in any campaign.** The engine reads a file of an owned expansion's folder in place, unmounted:
+`owned/<folder>/<path>` (`vr_gamedir.cpp` `VR_OwnedFile`, hooked first in `COM_FindFile`: the discovered Dopa/MG1/MG3
+root, a loose file or the highest pak that has it; any thread; nothing copied or written; `-1` "not there" for such a
+name skips the search path). MG3's own `progs/v_hammer.mdl` is shadowed by Quake VR's (its Mjolnir) even in campaign
+5, so the Super Axe is always `owned/mg3/progs/v_hammer.mdl` (and `_glow`, and `g_hammer.mdl` for the classic
+pickup); `vr_have_superaxe` (`vr_packutil.qc`) says whether it is there, and `VR_Pack_WeaponAvailable(WID_SUPERAXE)`
+removes its pickups and turns a held one into an axe without it (a save from another install). Model traits of an
+owned path are its pack path's (`vr_modelmetadata.cpp` `packPathOf`: a view weapon...), its identity its own
+(`Mg3SuperAxe`, `Mg3SuperAxeGlow`).
+
+**The arm taken off, laid as the axe.** The model is a view model with the arm holding it (795 vertices: the axe 527,
+the arm 268). As it loads (`vr_monstermods.cpp` `superAxePoses`, by its vertex and triangle counts only): every piece
+but the largest (joined where vertices coincide) collapsed onto one handle vertex; every pose the first (the other
+frames swing it across the view); turned and moved so its handle's end and line are the axe's and its blade faces the
+axe's way; requantized, normals turned. Numbers: `Misc/quakevr/fit_superaxe.py` (reads the owned pak, prints):
+rotation, move, scale_origin `-3.578 -2.931 -4.576`, head 27 to 49 units up the handle (the axe's 25 to 37), muzzle
+at its middle.
+
+**Held as the axe.** Weapon settings slot 24 (`vr_wofs_*_25`) is the axe's, Offset moved by 0.66 x the scale_origins'
+difference and the hotspots by the opposite; muzzle anchor 757 (strip order: vertex 745, `vr_anchor_nearest`) and
+offset `-0.071 0.21 -0.82` (the handle's line at the head's middle); Mass 3.5, Balance 24, Span 75 (the axe's 2.5, 20,
+60). Slot 25 is the glow model, `InheritFrom 25` (its anchors repeated: they never inherit). `vr_wofs_version` 36
+resets both (they were unused placeholders). Melee: `VR_MTHING_AXE` (the head an edge; it beheads as the axe;
+blades' small gibs; a thrown one is a blade too), sounds MG3's (`hipweap/mjolslap`, `mjoltink`), envmap shine as
+Mjolnir's, cells counter as Mjolnir's, no sights.
+
+**Official behaviour.** A blow 40 (`vr_dmg_superaxe`, Combat > Weapon Damage > Dawn of the Machine > Super Axe: twice
+the axe's 20, as in MG3), x3 on a zombie, x2 when it kills (it gibs). A second blow on the same monster within
+`vr_superaxe_burst_window` (1.5 s; MG3's 0.5 s is a key-press rhythm) fires Mjolnir's lightning burst from where it
+struck (15 cells, above water only: MG3 never discharges it; `vr_dmg_mjolnir_lightning` 80, then 3/8) instead of the
+blow's damage; another monster in between, a wall or the air ends the chain. The head glows while the burst is ready
+(MG3's `v_hammer_glow.mdl`, 15 cells or more; `VR_MG3_Weapons_Frame` puts it out). The pickup with spawnflag 128 drops
+its taker by `height` (-2048) as MG3's `touch_teleport_silent`, carrying what the hands hold (`VR_Carry_Teleported`).
+
+**Tests** (`vr_mg3_wtest`, Debug > Tests > Dawn of the Machine Weapons; developer 1).
+- e1m1 (id1 campaign, MG3 data owned): `vr_mg3_wtest 2` (two ogres and a zombie; it sets Weapon Grip Mode 1 meanwhile)
+  **19/0**: first blow 40, glow, window 1.5; second within it: burst, 50 -> 35 cells, no direct damage, glow out; the
+  ogre 160 -> -1 by the lightning; after the window a first blow again; another monster ends the chain; under water
+  no burst; 10 cells: no glow, no burst; zombie 120; a killing blow 80.
+- `vr_mg3_wtest 3` (pickup ahead, grip held: `+grabright; vr_mock_button main grip 1`) **5/0**: into the main hand,
+  gone, spawnflag 128 drop (-15 for height -16), target fired.
+- MG3 map2 (`vr_campaign_native mg3; map map2`) `vr_mg3_wtest 4` **5/0**: no `weapon_mjolnir` left; the Super Axe has
+  spawnflag 128, height -2048, target `axe_secret`; taken: dropped 2047 units, secrets 0 -> 1 ("You found a secret
+  weapon!").
+- Real swings (`motion_synth.py slash_horizontal_rtl --weapon superaxe --distance 0.85`, then `slash_overhead`, played
+  in vrfiringrange, window 10): "Dummy: 35.5 damage - melee: Super Axe, chop (horizontal) with the head" (decap
+  candidate), then the burst: lightning 80, 30, 80... on the dummy, 200 -> 185 cells.
+- Changelevel e1m1 -> e1m2 and save/load: the Super Axe in the main hand and holster 0 (`vr_mg3_wtest 5`) kept (18,
+  model `owned/mg3/progs/v_hammer.mdl`). Hipnotic hip1m1: Mjolnir (main) and the Super Axe (off) held together;
+  `weapon_mjolnir` there is Mjolnir. `eval.sh`: no current takes (skipped).
+- Images (kit scratch): `superaxe_hand.png`, `axe_vs_superaxe.png` (the same grip as the axe, the head further up).
+
+**In the headset.**
+- [ ] Debug > Tests > Dawn of the Machine Weapons > A Super Axe in Your Hand: the fist on the handle where it holds the
+      axe, the blade the axe's way; tune Weapon Offsets (slot 25 in the cvars) if it sits off.
+- [ ] Two swings on a monster within 1.5 s: the head glows after the first, the lightning on the second (15 cells).
+      Tune Super Axe Burst Window if two real swings feel too slow or too easy.
+- [ ] Holster it on the hip and the chest (the axe's holstered poses).
+- [ ] MG3 map2: the secret axe drops you into the room below, as in Dawn of the Machine.
+
+### M3-12 Axe buttons
+
+`func_axe_button` (`QC/vr_mg3_weapons.qc`, official `buttons.qc` + `combat.qc`'s check): a `func_button` with health 1
+that only a melee blow opens. Upstream checks the selected weapon (axe or Mjolnir); here, by Vittorio's decision 1, any
+blow (`VR_IsMeleeBlow`, gating `T_DamageImpl`): a hand's melee (`T_Damage_VRMelee` or `vr_hitkind` MELEE: fists,
+axes, the Super Axe, swords, the crowbar, the chainsaw swung, gun butts, a held prop swung), a headbutt, a bash, a
+shove, or a thing thrown at it (a thrown weapon, prop or gib: `VR_Button_Thrown`, never a live grenade); its touch
+also takes a thrown thing as a wall button's does (`button_touch_any`), never the player's body. A shot, a missile or
+a blast does nothing and, to a player, says MG3's `$mg3_qc_axe_button` ("Use the axe"; spawnflag 1 NOMESSAGE: silent;
+at most twice a second). FGD regenerated (302 entities). The checker's 33 placements (map6 1, map7 5, map8 18,
+secret5 9) now resolve.
+
+Tests: `vr_mg3_wtest 6` on map8 **3/0**: 18 buttons, all shut after a simulated shot and blast each, all 18 open to a
+blow (fist, Super Axe, thrown weapon, thrown prop, headbutt in turn); map6 3/0 (1 button). Real path on map6
+(`vr_mg3_wtest 7` stands you 28 units before the nearest closed one, facing it): the super shotgun fired at it, "6 on
+func_axe_button", "Use the axe", still shut; then `motion_synth.py punch_straight` played `noplace yaw 270`: "damage:
+func_axe_button 15.0 by a melee blow ... punch (straight) with the knuckles", opened (`vr_mg3_wtest 8`: state 0).
+
+**In the headset.** [ ] map6's first button: shoot it (the message), then punch it, swing the axe at it, throw a
+weapon at it: each opens one (map8 has 18).
+
+### M3-13 The laser cannon
+
+**One weapon, campaign-specific numbers.** MG3's `weapon_laser_gun` is Hipnotic's laser cannon "taken directly from
+the hipnotic qc" (official `mg3_weapons.qc`): the same bolts (a bounce keeps 0.9 of the damage; the third touch, or one
+in seven, stops it; a second hit on the same monster halves it), the same cell a shot and cadence. The only gameplay
+deltas: a bolt's damage 18 -> 15 and a lit bolt's 25 -> 20. So it stays `WID_LASER_CANNON` with
+`VR_LaserBoltDamage` (weapons.qc: Weapon Damage's Laser Cannon, times `MG3_LaserScale`: 15/18 and 20/25 in campaign 5,
+1 elsewhere). Not ported: MG3's `respawn_ammo` (an out-of-cells laser, lightning gun or nailgun makes the map's
+SAFETY_RESPAWN cell boxes come back): an ammo-items feature for every weapon (client.qc), left to the items' task.
+
+**No Hipnotic install needed.** Quake VR ships the held model (`progs/v_laserg.mdl`, its own remodel), the bolt
+(`progs/lasrspik.mdl`) and the sounds (`hipweap/laserg.wav`, `laserric.wav`); MG3's own `v_laserg.mdl` is shadowed by
+Quake VR's (its offsets are tuned to it). `vr_campaign_probe` on map2b: `v_laserg.mdl`, `lasrspik.mdl`,
+`hipweap/laserg.wav` from `quakevr`; `g_laserg.mdl` (the classic pickup) from MG3's `pak0.pak`.
+
+Tests: `vr_mg3_wtest 9` (bolt damage, then 12 bolts fired at the floor ahead, `HIP_LaserTouch`'s new counters
+`vr_laser_bounces`/`vr_laser_stops`): e1m1 18/25, 19 bounces at 0.9, 12 stopped (3/0); MG3 map2b 15/20, 18 bounces,
+12 stopped (3/0). `vr_mg3_wtest 10` on map2b: the nearest `weapon_laser_gun` taken into the main hand (12,
+`progs/v_laserg.mdl`, 30 cells) (2/0). (A bolt started inside your own box strikes you at once: the test fires from
+28 units ahead.)
+
+### M3-14 The bloody shotguns
+
+`weapon_bloody_sg` (map1) and `weapon_bloody_ssg` (secret4) (`QC/vr_mg3_weapons.qc`, official `mg3_items.qc`): in
+Dawn of the Machine only in a Bloody Nightmare new game (`serverflags & 256`; else the pickup is removed 0.5 s after
+the map starts, as upstream's `bloody_weapon_check`; outside campaign 5 a map's one simply spawns). They are physical
+weapon pickups of the shotgun and the super shotgun ("Bloody Shotgun", "Bloody Super Shotgun"); taken, they set their
+bit in `MG3_bloody` (parm56, M3-02: kept through changelevel, death and saves, cleared by a new game), give upstream's
+30 shells (to the cap) and say "You found a secret weapon!"; their targets fire as any pickup's. The bit changes every
+shotgun of its kind the player fires, as upstream's does: the bloody shotgun's next shot after 0.28 s instead of 0.5
+(`MG3_BloodyShotgunRefire`, weapons.qc W_Attack; reloading unchanged), the bloody super shotgun 28 pellets for 2
+shells, spread wider across (`'0.075 0.025 0'` for `'0.035 0.025 0'`: upstream's 0.3/0.14 widening). Drawn as Quake
+VR's shotguns: their own bloody skins are a BACKLOG item (decision 4). The Bloody Nightmare strip (axe and shotgun,
+plus Mjolnir/the bloody super shotgun) is M3-09's.
+
+Tests (`vr_mg3_wtest` 11 sets both bits, 12 reports, 13 takes the map's (or two spawned) bloody shotguns, 14 sets the
+new-game flag, 15 clears the bits):
+- e1m1: two spawned and taken **6/0**: bits 0 -> 1 -> 3, shells 25 -> 47 (+8 in the clip) -> 75, refire 0.28. Real
+  fire (`vr_debug_shots 1`): the bloody super shotgun "28 world"; the shotgun pressed every 0.3 s six times: 3 shots
+  without the bit, 6 with it.
+- MG3 map1 (`vr_campaign_native mg3; map map1`): not a Bloody Nightmare game: "Bloody Shotgun removed". With
+  `vr_mg3_wtest 14` and `changelevel map1`: it stays, taken **4/0** (bit 1, "You found a secret weapon!"); changelevel
+  map2: bits 1 (parm56 1); `map map3` (a new game): 0; the map2 save loaded: 1, the shotgun in hand, 47 shells.
+
+**In the headset.** [ ] A bloody shotgun (Debug > Tests > Dawn of the Machine Weapons > Bloody Bits On, then any
+shotgun): the shotgun fires again much sooner; the super shotgun's spread is twice as wide and twice as dense.
+
+### Phase C checks
+
+Checker (`check_mg3_entities.py`) after M3-14: 39 missing classes, 1,293 placements (42 and 1,328 after M3-04:
+`func_axe_button` 33, `weapon_bloody_sg`/`_ssg` 2 resolved). Regressions: Dopa e5m1 `vr_mg_trigger_test 1` 34/0, MG1
+hub `vr_mg_hub_test 1` 20/0; Hipnotic hip1m1 laser cannon 18/25, 23 bounces (3/0), Mjolnir and the Super Axe held
+together; e1m1 smoke; QC 0 warnings, statics, QC precedence and FGD (304 entities) checks pass. `eval.sh`: no current
+melee takes (skipped).
+
+## Performance batch: first spawns, the memory log, load allocations, the GPU wait, decoded images, campaign switches (2026-10-07)
+
+The decision list of PROFILING_2026-10.md, items approved by Vittorio, one commit each. Numbers: `bench.sh
+--exclusive`, his settings (`his_cfg_20261006_1237.cfg`), medians of 3 unless said; "base" is da5c33be.
+
+### 1. A kind of monster's first appearance (`vr_probe_kinds`, QC vr_probe.qc)
+
+**Why.** The firing range's first ogre, enforcer and death knight dropped a frame as they appeared (`gore_first_cuts`'
+`spawn1_*`: 19.7, 23.8, 15.1 ms). Two causes, found with `developer 1` (each `late precache` and `hull: ... compiled
+for` line) and the hitch log: their compiled hull built at the first move (the ogre's 40-wide tree 18.7 ms, the
+enforcer's 28-wide 16.9 ms: "quake physics", 33 MB of allocations), and the second row's heads and missiles precached
+at the spawn (`h_hellkn.mdl` 10 ms, `k_spike.mdl` 5 ms, `h_mega.mdl`...: "quakec"). Precaching at run time is what
+modelcorrupt (91b808ca) had to repair for saves; making them ready at the map's load needs none.
+
+**How.** As the map's entities have spawned (`VR_OnSpawnServerSpawned`, still loading), QC's `VR_Probe_Kinds` makes one
+monster of each kind that can appear later, on a new entity, counted nowhere (the dummy's `VR_Dummy_Make`; the
+dispensers' own spawn chain, now `VR_EnemyDispenser_Spawn`, for the four kinds that are no dummy type). Its spawn
+function precaches its models and sounds; the engine then builds the compiled hulls of every monster there (the
+probes' sizes with the map's) and frees every entity the probes made (a snapshot of the free slots before: whatever a
+spawn function made too), before the first server frame: nothing of them is run, sent or saved. The kinds: the
+firing range's dispensers', every type a training dummy can stand as (the menu changes it at any time), monsters
+waiting for a trigger (Honey's trigger-spawned, Machine Games' deferred: their size and limbs unknown until then; their
+limbs made with the map's), and with `vr_probe_test_spawn` 1/2 the debug spawner's kind or every kind (0 by default:
+impulse 241 works on any map). A kind a monster of the map already is needs none. While the probes spawn, QC's
+`random()` draws from its own numbers (`VR_ProbeRandom`), so the map's own spawns and first frames draw what they drew
+before: the firing range's entities at the benchmark's start are the same, field for field (classnames, models,
+origins, angles; without it a weapon rack's draws moved and two more entities stood there).
+
+Limbs: `vr_limbs_prebuild` 1 (the default) makes the map's kinds' (and the waiting monsters') limbs as before; 2 also
+the probes' (132 limb models on the firing range: +0.5 s to its first load of a session, warm disk caches, for first
+cuts that already fit in the frame at 90 Hz: `cut1_*` medians 11.1-11.7 ms either way), so not the default.
+
+| `gore_first_cuts`, worst frame (median of 3; CPU busy) | base | after |
+|---|---|---|
+| `spawn1_ogre` | 19.7 (19.7) | 11.4 (4.7) |
+| `spawn1_enforcer` | 23.8 (23.8) | 11.1 |
+| `spawn1_hknight` | 15.1 (15.1) | 11.1 |
+| any `spawn1_*`/`spawn2_*` over 11.5 ms | 3 | 0 |
+| firing range, the session's first load (3 runs) | 1272-1301 ms | 1399-1426 ms (+130 ms: 19 probes' models, 4 more hull sizes on the pool) |
+| firing range, loaded again | 104-111 ms | 102-104 ms |
+
+The `start` counts (edicts 253, Box3D bodies 142) are the base's. `precache_test.sh` (dummy, death, restart, legacy):
+every `vr_model_check` 0 wrong. `developer 1`: `probes: pass 1/2, N entities ... ms` and `probes: kinds ready <bits>,
+monsters counted N before, N after` (the same). Debug > Profiling and Memory: Ready What Can Appear, Ready the Debug
+Spawner's; Gore > Limb Gore > Make Limbs as the Map Loads is a three-way choice.
+
+### 3. The load's small allocations: debris faces, file lookups
+
+The za::Vector audit's two main-thread sites on a big map's load: `MapFace::pts` (vr_debris.cpp, each world face's
+corners as `debris::plan` reads them: a `za::Vector` grown 1-2-4-8) is a `za::SmallVector<glm::vec3, 8>`;
+`VR_FileCacheHas` (vr_fscache.cpp: every file lookup while loading made three `za::String`s) folds the path in a
+`char[MAX_OSPATH]` on the stack and looks the listings up by `za::StringView` (a transparent hash; a directory's
+listing is made, as before, at its first lookup).
+
+| warden, the session's first load (`vr_image_cache_mb 0`, 3 runs) | base | after |
+|---|---|---|
+| main thread `new` / `delete` over the load (`vr_alloc_sites 8`) | 275-284 K / 288-296 K | 120-121 K / 133 K |
+| `malloc` / `free` | 11.0-11.1 K / 8.2-8.5 K | 11.1 K / 8.5 K |
+| load total | 2748, 3292, 3363 ms | 2847, 2844, 2894 ms |
+| `VR_NewMap: explosion debris` stage | 24.2, 28.5 ms | 26.6 ms (one run of 90.6: the whole load ran slow) |
+| "image files looked for, none found" (1456 lookups) | 31.9, 32.5 ms | 31.4 ms |
+
+163 K fewer allocations a warden load (58% of the main thread's `new`); the time they took (a few ms by the audit's
+estimate) is inside the loads' run-to-run spread, which the hulls' build on the pool dominates. Behaviour unchanged:
+the same lookups (the counts above), the same faces.
+
+### 5. Decoded images kept across loads (`vr_image_cache_mb`, vr_imgcache.cpp)
+
+**Why.** Ironwail frees the world's textures with the map, so every load decodes its image files again: QRP's E1M1 spent
+505 ms of an 818 ms warm load decoding the same 312 files, and every map the shipped Quetoo material maps (70 ms on
+E1M1), and a campaign switch back to id1 its skins (420 ms).
+
+**How.** `Image_LoadImage` (image.c) asks the cache once it has opened a png, tga or jpg, before decoding it, and gives
+it the pixels it decoded (stb_image's buffer, which it freed before: no copy more on a miss). The key is the file as
+opened, not its name: the file on disk (`qvr::files::identity`: Windows' volume and file index, elsewhere device and
+inode), its last write time and size, the image's offset in it (a pak's entry) and its length, with the name looked up.
+A file changed, replaced or touched, another game folder's or pack's file of the same name, another pak: another key,
+and the name's old image is dropped when the new one is kept. The decoding has no settings (always RGBA); the textures'
+settings act on the caller's copy afterwards. Least recently used first beyond `vr_image_cache_mb` (default 512; one
+image at most a quarter of it; 0 none kept, given back). Main thread only, as `Image_LoadImage` (the hunk). Registered
+with `mem::Cache` ("decoded images", in vr_memstats' largest).
+
+| load (median of 3; images = "image files found and decoded" ms) | base | after |
+|---|---|---|
+| E1M1 on QRP, warm | 818 ms (images 505, material maps 126) | **321 ms** (images 38, material maps 54) |
+| E1M1 on QRP, cold | 1489 ms (611) | 1299 ms (561) |
+| E1M1 warm / restart | 197 / 191 ms (images 40, material maps 69) | 158 / 147 ms (6, 34) |
+| hip1m1, then back to E1M1 (a campaign switch) | 985 ms (images 420) | **556 ms** (39) |
+| warden warm | 391 ms | 351 ms |
+
+Held: QRP's E1M1 330 MB (472 images with the start-up's). Checked: E1M1 on QRP warm with the cache and without, the
+same picture (8 pixels of 518400 differ, by 8 levels at most, as between two runs without it); the shipped material
+maps touched while the game ran (`touch quakevr/textures_quetoo/*`): the next load decoded those 94 again and dropped
+their old images (93 dropped), the one after found them. `vr_image_cache_info` (Debug > Profiling and Memory: Decoded
+Image Cache Info, and its size there), `vr_image_cache_clear`.
+
+### 2. The memory log's row off the frame
+
+**Why.** Each `vr_memstats_log` row (every 60 s by default, and 5 s after a load) took 2-12 ms of the main thread.
+Timed by part (`developer 1` now prints each row's): GPU memory query (`glGetIntegerv` of GL_NVX_gpu_memory_info, which
+waits for the driver's thread to drain) 0.05 ms on an idle E1M1 but 4.4-11.7 ms in `combined` (and once 199 ms on
+E1M1); the CSV's open/append/close 0.3-1.6 ms; the rest 0.1-0.2 ms.
+
+**How.** The GPU's memory is read with NVML (`nvmlDeviceGetMemoryInfo`: the device's total and free, every process's,
+as NVX reports them: 24564 MB total, the same used within a few MB) on a worker of the game's pool, half a second
+before the row is due (`gpustats::requestVram`; the row takes `latestVram()`); NVX's eviction counts (GL only) are
+the ones counted at the map's load with the GL objects (`countGlForLog`, already a load-time GL scan). The file is
+written by a pool task (the row's columns moved to it). Without NVML (AMD, Intel) the row asks GL as before. The
+in-headset status line's VRAM figure (sampled each second while shown, the same glGet) reads NVML's the same way.
+
+| `combined`, his settings, `vr_memstats_log 5` (4 rows a run, 2 runs) | base | after |
+|---|---|---|
+| a row's main-thread time | 1.2, 1.5, 5.1, 6.4, 7.6, 9.3, 9.3, 12.3 ms | 0.11-0.16 ms (each run's first: 0.5-1.2 ms) |
+| ... of it the GPU memory query | 0.5-11.7 ms | none (NVML on a worker) |
+
+The CSV: the same 103 columns, every row whole; VRAM used/total/free agree with NVX's (5236 vs 5303 MB used between two
+runs, total 24564 both).
+
+### 6. A campaign switch keeps the unchanged alias models (`vr_campaign_keep_models`, vr_modelkeep.cpp)
+
+**Why.** A campaign switch (`COM_ReloadVRGame`: id1 to Scourge of Armagon and back, a map package) rebuilds the game
+folders and Ironwail then forgets every model (`Mod_ResetAll`, `Cache_Flush`, `TexMgr_NewGame`): hip1m1 and back to
+E1M1, 450-650 ms of alias models each way, though here the folders are the same both ways (quakevr, rogue, hipnotic,
+id1: the campaign changes which start maps are skipped) and so are the files.
+
+**How.** An alias model's load records every file it looks for, found or not (`COM_FindFile` while
+`com_lookups_noted`: its .mdl, .md3/.md5mesh, each skin's external images and normal maps in every format; 10-40 a
+model): the pak, its entry's offset and length, or the loose file's path and size, with the write time. At a campaign
+switch, once the new folders are in, each lookup is made again (the directory listings cached for it,
+`VR_FileCacheEnable`); a model is kept when every one finds the same file again and the ones found nowhere are still
+found nowhere, and the palette's and colormap's files are the same (else none is kept). A kept model stays in its slot
+(`Mod_ResetAll`; the emptied slots are reused by `Mod_FindName`), its cache entry (`Cache_FlushExcept`), its textures
+(`TexMgr_NewGame`; the players' coloured skins, which it owns, are freed first: `R_FreePlayerTextures`) and its
+buffers (`GLMesh_DeleteVertexBuffers`); the VR caches holding models empty as before (`VR_OnGameDirChanged`) and are
+made again. The `game` command keeps none (it runs the new game's configuration, whose settings may load models
+otherwise). The non-kept alias models' buffers are now freed at the reset (they leaked when not in the last map's
+precache list).
+
+| `load_hip1m1` (median of 3) | base | with the image cache (5.) | after |
+|---|---|---|---|
+| back to E1M1 (the switch back) | 985 ms (alias models 647) | 556 ms (271) | **308 ms** (12) |
+| hip1m1 from the start (the first switch: nothing to keep) | 962 ms | 785 ms | 810 ms |
+| hip1m1 again | 226 ms | 183 ms | 179 ms |
+| E1M1 cold / warm / restart (`load_e1m1`, the recording's cost) | 743 / 197 / 191 | 712 / 158 / 147 | 720 / 161 / 147 |
+
+The switch's check: 103-111 models, 3851-4212 lookups, 30-55 ms (without the listings cached: 520-660 ms). Checked: hip1m1
+-> E1M1 -> hip1m1 kept 103/103 and 106/106, `vr_model_check` 0 wrong both; a file put in quakevr/ while the game ran
+(`progs/soldier.mdl_0_norm.png`, an authored normal map the grunt's load had found nowhere): the next switch kept 91 of
+92, the grunt loaded again with it; E1M1 after a switch with and without keeping, the same picture (12-13 pixels differ
+by at most 8 levels, as between two runs). `vr_model_keep_info [model]` (the last switch; a model's recorded lookups),
+Debug > Profiling and Memory: Campaign Switch Keeps Models, Kept Models Info.
+
+### 4. The GPU wait (`GL_AcquireFrameResources`): measured, not changed
+
+**Asked.** Less CPU burnt in the wait for the frame two back (`glClientWaitSync`: 4.7 of 8 s of the main thread in
+`combined` under VTune, PROFILING_2026-10.md), with no latency added: else report.
+
+**Measured with.** Two new per-frame figures in the benchmark JSON (BENCHMARKS.md): `pose_to_submit_ms`, from the
+frame's pose (the runtime's frame begun, the tracking sampled) to its `xrEndFrame` (the fence wait lies between), the
+latency's proxy; `main_mcycles`, the main thread's CPU cycles a frame (`QueryThreadCycleTime`: a spinning wait counts,
+a sleep does not). Tried (not kept): the fence polled (`glClientWaitSync` with no timeout) with 1 a pause loop between
+polls, 2 the same then `SwitchToThread` past 200 us, 3 the same with `Sleep(0)`; never a timed sleep. His settings, 90
+Hz paced, exclusive, the modes interleaved, 3 runs each (2 for the old shadows):
+
+| `combined` (median of runs) | frame p50 / p99 | pose to submit p50 / p99 | main thread Mcycles a frame | GPU 3D |
+|---|---|---|---|---|
+| 2048 eyes, driver's wait (as shipped) | 11.11 / 12.26 | 5.94 / 12.20 | 16.6 | 8.04 |
+| ... polled, pause | 11.11 / 11.51 | 5.04 / 11.41 | 15.3 | 7.56 |
+| ... polled, SwitchToThread | 11.11 / 12.43 | 5.31 / 12.34 | 15.4 | 8.02 |
+| ... polled, Sleep(0) | 11.11 / 12.01 | 5.12 / 11.96 | 15.6 | 8.02 |
+| 3072 eyes (GPU-bound), driver's wait | 16.80 / 21.42 | 16.23 / 21.36 | 14.9 | 13.71 |
+| ... polled, pause | 18.75 / 23.04 | 18.33 / 22.94 | 15.6 | 15.78 |
+| ... polled, SwitchToThread | 18.02 / 23.07 | 17.52 / 22.75 | 15.5 | 15.14 |
+| ... polled, Sleep(0) | 18.20 / 22.84 | 17.61 / 22.72 | 15.4 | 15.25 |
+| 2048, old shadows (`vr_shadow_layered 0`, the profile's state), driver's | 16.31 / 19.92 | 5.78 / 11.44 | 16.1 | 13.74 |
+| ... polled, pause / Sleep(0) | 17.16 / 89.24, 15.93 / 20.27 | 6.34 / 15.32, 5.55 / 10.86 | 18.5, 15.5 | 14.89, 13.40 |
+
+`idle_e1m1`: every mode 11.11 / 11.2-11.35 ms, pose to submit 0.60 / 1.0-1.2 ms, 2.7-3.2 Mcycles.
+
+**Findings.** The main thread does not burn the wait today: with the driver's wait its cycles a frame are the same as
+polling's (15-17 M, about 3 ms of a 5.5 GHz core, in 11-17 ms frames); a GPU-bound frame (3072 eyes) waits ~10 ms in
+the fence and still uses 14.9 M cycles. So NVIDIA's `glClientWaitSync` blocks rather than spins here (VTune's 4.7 s may
+have counted the wait as time in the function, or another driver state). With the layered shadows (`combined` no
+longer GPU-bound at 2048) the fence wait is short; with the old shadows the frame waits in the runtime's calls and the
+swap instead. Polling saved nothing measurable and, GPU-bound, every polled mode came out 1.3-2.1 ms later from pose to
+submit at the median (and its GPU 10-15% slower: polling the driver may cost its thread, or the GPU's two clock states;
+not separated). No mode is latency-neutral with a gain: nothing shipped (the measuring patch:
+`scratch/gpuwait_experiment.patch` and `scratch/gpuwait_experiment_vr_gpuwait.cpp` in the perfbatch worktree). The two
+benchmark figures stay.
+
+## Dimension of the Machine (MG1): headless acceptance (2026-10-07)
+
+What [EXPANSIONS.md](EXPANSIONS.md) ("Dimension of the Machine acceptance") records in full: entity coverage
+(`check_mg1_entities.py`: 25 maps, 128 classes, 0 missing, 0 unknown keys), the whole campaign route through the
+real exits at skill 1 and Nightmare (`mg1_route_test.sh`: 46/46 each), every MG1 monster in the MG1 context
+(`mg1_monsters_test.sh`), the coop arena exit and intermission with two processes (`mg1_coop_exit_test.sh`), and the
+Dopa/MG1/MG3 regressions. No MG1 gameplay bug turned up; MG1 `nativeReady` is flipped in its own commit (single
+player; multiplayer stays on the developer path, as Dopa's).
+
+Test-driver lessons (for whoever writes the next route test):
+- **QuakeC's `changelevel` and `localcmd` append to the console buffer**: a script's remaining `wait`s run first, so a
+  test that walks into an exit must end there. `vr_mg_route_stage` (default 0, not archived) runs
+  `mg1route<stage>.cfg` on each new map's first frame instead (QC `MG1_H_RouteAutorun`, a `nosave` flag); setting it
+  in a map runs that map's script at once, so set it before the `map`.
+- **`kill` in single player restarts at once** (`ClientKill` -> `respawn`): a death test needs a real death
+  (`vr_mg_hub_test 36`) and one release-then-press. A press held over several frames queues one `restart` a frame
+  (stock QuakeC), each an autoload; the presser presses for one `wait`.
+- An exit trigger's centre can be in a wall (the hub's gates) or behind a shut door: the walk takes a free spot
+  inside the trigger (`tracebox` over a grid), else noclip, whose frame still touches the triggers it overlaps.
+- QuakeC builtins take 8 parameters: `sprintf` with more prints garbage for the rest (the vr_mg3_test.qc:543 warning).
+- Unexplained, harness only: `kill`, then a test request left in its cvar that spawned the presser in the restarted
+  map, left the client at signon 3 ("load failed." after 60 s). Neither real play nor the route test does that.
+
+## Dawn of the Machine (MG3): monsters (2026-10-07)
+
+Phase D of [MG3_PLAN.md](MG3_PLAN.md) (M3-15..18; mg3d). Decision 5: Dawn of the Machine's monsters are there wherever
+its data is (Debug > Tests > Ahead of You > Thing 30.., the training dummy's types), each with Quake VR's treatment.
+MG3's sounds and models are read in place from the owned pack (`owned/mg3/...`, M3-11's `VR_OwnedFile`); a sound
+precached as `owned/mg3/<path>` is now found too (`VR_OwnedFile` takes `sound/owned/<folder>/<path>`, the name
+`S_LoadSound` asks for). Tests: Debug > Tests > Dawn of the Machine Monsters (`vr_mg3_mtest`, "mg3mtest:" lines).
+
+### M3-15 The infected
+
+`monster_army_infected`, `monster_knight_infected`, `monster_enforcer_infected`, `monster_hell_knight_infected`
+(`QC/vr_mg3_infected.qc`; official `mg3_*_infected.qc`, `combat.qc`). Stock models, so any campaign. Each is the stock
+monster (its classname the stock one's, as upstream: so every class-keyed table is his) marked `.vr_mg3_infected`.
+Killed the first time (`Killed`, before it counts or does any of Quake VR's dying: no beheading, ragdoll, corpse or
+gore pool), he bursts (the gib sound; the grunt's head thrown as a gib) and gets up as a zombie (grunt, knight) or a
+fiend (enforcer, death knight): not upstream's modelindex swap but a real `setmodel`, the zombie's or fiend's box,
+class, health, frame functions and knockdown, so the engine's rig, limb gore, hit tests and hulls all follow the new
+body. Nothing of the old death carries over: an armed beheading cut is disarmed (`VR_Decap_After` would have taken the
+new zombie's head), a knockdown ends (he stands up on the floor under his ragdoll's pelvis; `vr_ragdoll_list`: 0 left).
+Counted once: the burst not at all, the zombie's or fiend's death as any monster's. Room for the new body: upstream's
+`walkmove(0, 0)`, here on "partial ground" (a body in the air or off a step is not wedged), up to 24 units higher, 24
+to a side (crowds: a monster standing over a knocked-down body, or pushed against him: 2 of 6 runs of request 2 failed
+before), then in the old body's box (upstream never changes the box); wedged even so, he dies at once, gibbed and
+counted, as upstream. Death knights placed as corpses (spawnflags
+65536 / 8388608: MG3's `CORPSE_FLAG_A`/`_B`; map2 has 9, map2b 1, secret5 3) lie in their death's last frame, not
+solid, until woken (their targetname or a hurt), then rise through their death backwards (MG3's `infected/death1_rev.wav`,
+else the death knight's sight sound; tried again every 5 s while something stands in the way). Alive all the while: no
+ragdoll or corpse.
+
+Measured (`vr_mg3_mtest`): e1m1 (`vr_ragdoll 1`) request 2 **14/0**: four counted (23 -> 27), the grunt knocked down
+first (a ragdoll) and the knight killed by an armed beheading cut: four turned, kills 0 -> 0, zombies 60 health
+`'12 12 24'`, fiends 300 `'16 16 24'`, the knight's zombie keeps its head, the grunt's stands (knockdown 0, solid 3);
+killed again: kills 0 -> 4, total 27. Request 3 **3/0**: lying (solid 0, frame 53, health 250), woken: risen (solid 3,
+running), killed: a fiend. MG3 map2 (skill 3): infected to zombie 10, to fiend 10, lying 7; request 4 killed the 13
+present: 13 turned, kills 0 -> 0. Checker after M3-15: 17 missing classes, 411 placements (the four infected classes,
+214 placements, gone).
+
+**In the headset.** [ ] An infected grunt or knight (Debug > Tests > Dawn of the Machine Monsters) killed by a sword
+cut at the neck: he bursts and a zombie stands up with its head. [ ] map2's lying death knights rise when the fight
+reaches them.
+
+### M3-16 The rocket ogre
+
+`monster_ogre_rocket` (`QC/vr_mg3_ogre.qc`; official `ogre.qc`'s `.aflag` branches, `OgreFireRocket`,
+`T_OgreMissileTouch`, `ai.qc`'s sight, `client.qc`'s obituary). Quake VR's ogre (`orig_mon_ogre.qc`: frames, knockdown,
+chainsaw, drops) drawn with MG3's model read in place (`owned/mg3/progs/ogre_rocket.mdl`; `self.wad`, as the
+marksman's), marked `.vr_mg3_mon` 1, its class the ogre's (as upstream). Removed where the data is not
+(`VR_Pack_RequireSpawn`). Its own: Armagon's voice (MG3's `armagon/idle1..4`, `pain`, `sight`, `sight2`; "rode a rocket
+to hell"), a flinch only when `random() * 200 <= damage`, its pain 2 s longer, no chainsaw dropped (`VR_DropOgreChainsaw`
+skipped: it holds a rocket launcher), and at range (`ogre_nail4`) a volley of two rockets: led at the enemy's place
+after the flight at 1200, the second 64 units aside, 600 u/s; a hit 40 (zombie 60, shambler 20) and a 40 blast; within
+0.2 s of its launch a 20 stab. The rockets are monsters' `MOVETYPE_FLYMISSILE` missiles: batted and parried as any
+(`VR_Deflect_IsProjectile`). Never Honey's random multi-grenade boss outside the official campaigns.
+
+**Frame order** (`Misc/quakevr/ragdoll/frameorder.py ogre ogre_rocket`: per-frame height of Quake VR's `ogre.mdl`
+against MG3's): 147 frames, id's ogre's order (Quake VR's has 149: two appended). Both stand to 1.0 until 112, fall to
+0.42/0.38/0.36 (theirs 0.47/0.46/0.46) at 123-125 ($death12-14), stand again at 126 and lie at 132-135 ($bdeath7-10):
+the death ranges match.
+
+**Rig** (`vr_ragdoll.cpp` `ogreRocketSeeds`, `Misc/quakevr/ragdoll/ogre_rocket_bones.json`; `RIG_PAK=<mg3>/pak0.pak
+rig.py ogre_rocket`): 982 vertices, 13 bones as the ogre's (the launcher, a box and a long barrel, on the right hand),
+clusters 1.06 units rms, bones 1.19 (Quake VR's ogre: 1.36, 1.52); deaths 112-125, 126-135. Head zone 10 forward, 33
+up, 9 wide (`Misc/quakevr/ragdoll/headfit.py ogre_rocket 28 2 9`: middle 9.4 0 33.5, 9.7; at 31 and 9.5 a body shot
+struck the head: the training dummy's zone test now head 1, body 0, legs 3, as the ogre's). An owned model is always
+its `.mdl` (`gl_model.c`: no `.md5`/`.md3` replacement for `owned/` names: MG3's pack has `ogre_rocket.md5mesh`, whose
+anim was refused with a warning; the rigs and edits are made for the .mdl's frames). Training dummy type 19 (Dummy
+Enemy "Rocket Ogre" when MG3's data is there, `vr_dt_pack` 3); spawner Thing 34.
+
+Measured: `vr_mg3_mtest 5` (e1m1) **7/0**: monster_ogre, the owned model, 200 health, its head zone; made to shoot: a
+rocket in flight that `VR_Deflect_IsProjectile` takes, volleys of two (2 or 4 in 1.5 s: it shoots again on its own), the
+player 500 -> 412; killed: frame 125, no chainsaw. `vr_limb_models owned/mg3/progs/ogre_rocket.mdl`: 13 bones, 11 limbs
+(caps 0..19). `MON=34 decap_test.sh live corpse pop`: beheaded (12 parts left), head pops by shotgun and super shotgun.
+`KINDS=34 limbs_test.sh live`: a slash cuts, fist/shotgun/bolt pop, an explosion pops 8, gibbed gibs; `MON=34 corpse`:
+cut down to the torso. Knockdown (`vr_knockdown_test 0`, then 1): its ragdoll (982 vertices, 13 bones), up again (state
+0, no ragdoll left). Dummy (`vr_dummy_type 19`, `vr_dummy_test 1`/`3`): "Rocket Ogre (monster_ogre) model
+owned/mg3/progs/ogre_rocket.mdl", killed as it. MG3 map5 (skill 2): 12 rocket ogres alive; map1's 11 are all "not with
+0 runes" (spawnflag 262144: none on a new game's map1, as upstream).
+
+**In the headset.** [ ] A rocket ogre (Debug > Tests > Dawn of the Machine Monsters > A Rocket Ogre Ahead): bat its
+rockets back with a sword or a gun; behead it; knock it down. [ ] Its ragdoll: the launcher stays in its right hand.
+
+### M3-17 The demo dog
+
+`monster_demodog` (`QC/vr_mg3_demodog.qc`; official `mg3_demodog.qc`, `client.qc`'s obituary). Quake VR's rottweiler
+(`orig_mon_dog.qc`: frames, bite, leap and its parry, knockdown) drawn with MG3's model read in place
+(`owned/mg3/progs/dog_explosive.mdl`), `.vr_mg3_mon` 2, its class the rottweiler's (as upstream), removed without the
+data. Kamikaze: its leap landing on a player at speed (the rottweiler's bite of it, 10..20) kills it (upstream's 200
+from the player), unless the leap was parried (Quake VR's stagger). However it dies, its pack spills: three grenades
+(a fourth 30% of the time on Nightmare), tossed about and ahead, 60 each after 2.5 +- 0.25 s, owned by the dog,
+catchable as a monster's (`VR_Grenade_Make`); "was blown up by a demo dog". It always bursts (gib3 x3 and its head),
+as upstream; beheaded or a limb cut off by the killing blow it lies as its ragdoll instead (Quake VR's treatment, as a
+beheaded zombie: `VR_Decap_ZombieDie`; the grenades spill all the same).
+
+**Frame order** (`frameorder.py dog dog_explosive`): 86 frames in id's order, the death runs low at 12-16 and 20-25 in
+both. **Rig** (`dogExplosiveSeeds`, `dog_explosive_bones.json`): 915 vertices, the rottweiler's 13 bones (keepHinge on
+the lower legs, as his), the bomb pack's two barrels on the pelvis and the chest; clusters 0.58 units rms, bones 0.71
+(the rottweiler: 0.62). Its head is the rottweiler's mesh (`headfit.py dog -9 15`: 259 vertices, 24.0 -0.3 -1.3 r 8.6;
+the demo dog's 23.9 -0.4 -1.5 r 8.7): the rottweiler's head zone (23, 1, 7) as it is. Training dummy 20 ("Demo Dog"),
+spawner Thing 35.
+
+Measured: `vr_mg3_mtest 6` (e1m1) **6/0** (3 runs): a demo dog (monster_dog, the owned model, 25); shot dead beside a
+grunt: 3 grenades, burst (its head), kills 0 -> 1; 3.2 s later the grunt 289 -> 187; its leap's landing on the player
+(`Dog_JumpTouch` at 400 u/s): dead, 3 grenades, the player 500 -> ~390; beheaded by an armed cut: 3 grenades, lying
+headless in its own model. Knockdown: its ragdoll (915 vertices, 13 bones), up again. `MON=35 decap_test.sh live pop`:
+beheaded (head and jaw cut off, 11 parts left), popped. `KINDS=35 limbs_test.sh live`: a slash cuts, a fist pops,
+gibbed gibs (the shotgun's pop missed: the earlier dog's grenades go off among the next ones). Dummy 20: "Demo Dog
+(monster_dog) model owned/mg3/progs/dog_explosive.mdl", zones as the rottweiler's. MG3 map6 (skill 2): 18 demo dogs.
+Checker: 15 missing classes, 178 placements.
+
+**In the headset.** [ ] A demo dog leaping at you: parry it (it staggers, no blast) or let it land (it dies on you,
+its grenades at your feet); catch one of its grenades and throw it back. [ ] Behead one: it lies headless, the grenades
+still spill.
+
+### M3-18 The ranged knight
+
+`monster_ranged_knight` (`QC/vr_mg3_rknight.qc`; official `mg3_rknight.qc`, `ai.qc`'s sight sounds, `client.qc`'s
+obituary). A class of its own (as upstream) with its own frame functions, MG3's model read in place
+(`owned/mg3/progs/rknight.mdl`, the death knight's frame order), removed without the data. No melee; at range three
+fans of MG3's glowing diamonds (`owned/mg3/progs/diamond_trail.mdl`), launched as knight spikes (9; 400 u/s, 600 in a
+Bloody Nightmare game: batted, parried, blocked as any monster missile): a rising fan of five (magic a), six across
+(magic c, the death knight's), or six then up to eight more scattered (magic b: 60% of its attacks from 300 units, else
+20%). Spawnflag 2: it walks to fight. 250 health, gibbed under -40 (the death knight's head). Upstream's
+`EF_CANDLELIGHT` on the diamonds is the rerelease's effect only (not in Quake VR's engine): left out.
+
+Quake VR's treatment, wired by class or by its death function (`rknight_die`), as the death knight's: beheading's head
+(`VR_Decap_HeadModel`), ragdoll settings (`ragdollClasses`: Ragdoll Settings > Death Knight), hull width
+(`vr_mhull_hknight`), grapple weight 150, armour (`VR_Hit_Armoured`), corpse gibbing (`VR_Corpse_Parts`: the death
+knight's head and corpse health), small gibs (the death knight's), highlights' score, knockdown (its death backwards,
+`VR_Knockdown_SetupReverse` as the death knight's), the obituary ("slain by a Death Knight", upstream's). Its own:
+**rig** (`rknightSeeds`, `rknight_bones.json`: 1155 vertices, the death knight's 14 bones, its right claw the hand; the
+pauldrons on the upper arms; clusters 0.63 units rms, bones 0.77; deaths 42-53, 54-62; `frameorder.py hknight rknight`:
+the same low runs at 51-53 and 61-62); **head zone** 7 forward, 33 up, 6.5 wide (`headfit.py rknight 28 0 6`: 7.7 -1.1
+33.0, 5.9: a narrow helmet); training dummy 21, spawner Thing 36.
+
+Measured: `vr_mg3_mtest 7` (e1m1) **7/0**: monster_ranged_knight, the owned model, 250, no melee; its head zone, the
+death knight's head; made to cast (magic c): a diamond in flight (MG3's model, `VR_Deflect_IsProjectile`), 10 in 2.3 s
+(its own next cast began), the player 500 -> 464; killed: frame 53; another gibbed: `progs/h_hellkn.mdl`. `MON=36
+decap_test.sh live pop`: beheaded (13 parts left), head pops by shotgun, super shotgun, lightning. `KINDS=36
+limbs_test.sh live`: a slash cuts, fist/shotgun/bolt pop, an explosion pops 8, gibbed gibs. Knockdown: its ragdoll (1155
+vertices, 14 bones), up again. Dummy 21: zones head 1, body 0, legs 3 (the death knight's too). MG3 maps (skill 2):
+map2 7 rocket ogres and 2 ranged knights, map2b 17 rocket ogres and 7 demo dogs, map4 14/2/5, secret5 9 rocket ogres
+and 15 ranged knights with 26 + 9 infected (3 lying): every map loads, exit 0. Checker after M3-18: **14 missing
+classes, 135 placements** (M3-15..18 resolved 8 classes, 1,262 placements counted from 411 before M3-16; the rest are
+M3-19.. and the bosses).
+
+Demo dog follow-up (M3-17's test): its grenades are counted as they go off (`vr_mg3_demo_blasts`) and the test reports
+the nearest blast to the player instead of failing when a random toss lands behind a step (4 of 4 runs hurt him).
+
+Checks (M3-15..18): QC 0 new warnings (the 3 left are `vr_mg3_test.qc:543`'s, from before), statics, QC precedence and
+FGD (332 entities) pass; Release built. Regressions: e1m1 `vr_mg3_test 6` 13/0, Dopa e5m1 triggers 34/0 and world
+19/0, MG1 hub 20/0 and horde 24/0, MG3 weapons `vr_mg3_wtest 2` 19/0, MG3 items (map2) 5/0, monsters 2/3/5/6/7 all
+passing on e1m1 in one run. No melee code changed: `eval.sh` not run.
+
+**In the headset.** [ ] A ranged knight's fans (Debug > Tests > Dawn of the Machine Monsters > A Ranged Knight Ahead):
+bat the diamonds back, parry them; behead it (its helmet is small: the head zone is 6.5 wide).
+
+Numbering (additive, to merge with M3-19..23's): spawner Things 30..36 (30-33 the infected, 34 rocket ogre, 35 demo
+dog, 36 ranged knight), training dummy types 19-21 (`VR_DUMMY_TYPES` 22), `.vr_mg3_mon` 1-3 (`MG3_MON_*`,
+`vr_mg3_ogre.qc`).
+## Dawn of the Machine (MG3): monsters II, the orb to Bloody Nightmare (2026-10-07)
+
+Phase D of [MG3_PLAN.md](MG3_PLAN.md), M3-19..23 (M3-15..18 are another worker's), by Vittorio's decision 5: MG3's
+monsters spawn wherever its data is (any campaign: the Debug spawner, the training dummy), read in place from the owned
+pack (`owned/mg3/...`). Numbers kept apart from the other worker's: the spawner's (`vr_test_spawn`, `func_enemy_dispenser`
+`weapon`) from **40**, the training dummy's (`vr_dummy_type`) from **30** (19..29 left to theirs; the dummy's tried/available
+bits now go past 24 types: a second pair of floats). Tests: `vr_mg3_btest N` (`QC/vr_mg3_bestiary_test.qc`, developer 1;
+Debug > Tests > Dawn of the Machine Bestiary).
+
+**Sounds read in place too.** `VR_OwnedFile` (vr_gamedir.cpp) now takes `sound/owned/<folder>/<path>` as that folder's
+`sound/<path>`: a QC sound named `owned/mg3/orb/orb_pain.wav` (precache_sound and sound() put `sound/` before it) plays
+MG3's file in any campaign. Model traits: `teleporter_eye*` and `shambler_blood.` are monster files
+(`vr_modelmetadata.cpp` monsterFiles).
+
+### M3-19 The orb
+
+`monster_orb` (`QC/vr_mg3_orb.qc`, upstream `mg3_orb.qc` and its `ai.qc` branches): a flying eye
+(`owned/mg3/progs/teleporter_eye_blink.mdl`: three frames, hover and two blinks), 300 health, the shambler's box. It
+blinks and bursts 4-6 spheres (`owned/mg3/progs/rogue/sphere.mdl`, 18 each; 400/450/500 a second by skill, leading you a
+quarter of the way) one to three times, then strafes or closes in (the scrag's attack check). **Its second eye**: it sees
+you behind it in the same cone as ahead (`infront`); a blocked strafe turns it at you (`ai_run_slide`); sight sound
+`boss2/sight.wav`. Hurt (8 s apart, the harder the likelier): eyes shut, three bolts of lightning about it
+(`MG3_PainLightning`, upstream's `pain_lightning`, kept for the super shambler and the bosses; Quake VR's beam message
+has the beam id byte). Killed: flung (monster_death_use takes its flight: it falls), and from its third death frame the
+first thing it touches that is not a trigger nor a projectile (the floor, a wall, you) blows it up (`TE_EXPLOSION2`,
+100 radius damage). Counted once. Its spheres pass through orbs, lava men and super shamblers (upstream).
+- **Upstream's bug, fixed:** at RANGE_FAR its attack check called `wiz_run1` (left from the scrag it was made from): the
+  eye ran the scrag's 14 run frames, which it has not, with the scrag's idle sounds, until its next check. Here
+  `orb_run1` (the same 16-unit run).
+- **VR:** no ragdoll (a rigid eye: no rig), no head zone, no limbs, no decapitation (none to cut); not a melee monster
+  (no parry); grapple mass 120 kg (`VR_Grapple_MonsterMass`: between the small ones you reel in and the huge ones that
+  reel you); small gibs and corpse damage as any unknown monster (it never lies as a corpse: it blows up). Its dead
+  body can be grabbed while it falls and thrown: it blows up where it lands.
+- **Anywhere:** the Debug spawner's Thing 40 "Orb" (Debug > Tests > Thing; `func_enemy_dispenser` 40: "Needs Dawn of the
+  Machine (mg3)" without the data), the training dummy's enemy 30 (Weapons > Firing Range > Dummy Enemy, listed when MG3's
+  data is there), FGD `monster_orb` (326 entities). Without the data a map's orb is not spawned (`VR_Pack_RequireSpawn`).
+
+Tests (`vr_mg3_btest 2`, e1m1, the id1 campaign with MG3 owned) **11/0**: an orb ahead (its model, 300, counted once,
+120 kg, dummy type 30 available); it flies; its eyes: ahead 1, behind 1, aside 0; woken, 21 spheres in 6 s; a hard hit:
+its pain (lightning; the first run found the beam message lacking Quake VR's beam id: `Bad server message`, fixed);
+killed: counted once, flung (-458 529 260), blown up where it landed (1), still counted once. MG3 map7 (`vr_campaign_native
+mg3`): 11 orbs alive (the 12th has a rune flag: `NOT_IF_0_RUNES`); map1's 12 all have rune flags (later visits). Checker
+after M3-19: 20 missing classes, 577 placements (21 and 625 before).
+
+**In the headset.** [ ] Debug > Tests > Dawn of the Machine Bestiary > An Orb Ahead: its spheres (dodge them, bat them),
+walk behind it (it still sees you), shoot it till it falls and blows up; grab its falling body and throw it at a monster.
+
+### M3-20 Ghosts, sacrifices, the slime
+
+- **`monster_ghost`** (`QC/vr_mg3_ghost.qc`, upstream `mg3_player_ghost.qc`; map1 4, secret5 3): a player's ghost
+  (Quake's `progs/player.mdl`, no MG3 data needed) drifting about its home (a few stand loops, then a run of six frames
+  at 150 to a point `wait` away, 128 by default), 10 health, flying, not a monster (not counted). A living player's
+  touch lays it to rest, and in Quake VR **a hand's touch too** (`handtouch`); so does a blow: one of the player's
+  five deaths, then a teleport flash and it is gone. (Upstream's fifth death ends on the fourth's last frame: kept.)
+  Named `mg3_ghost_touch` (Honey has a `ghost_touch`).
+- **`misc_sacrifice`, `trigger_sacrifice_counter`, `trigger_check_sacrifices`** (`QC/vr_mg3_sacrifice.qc`, upstream
+  `mg3_sacrifice.qc`, `mg3_sacrifice_triggers.qc`; map7 1, map8 11 and map8's counter of 8): a hanging victim
+  (`owned/mg3/progs/player_hanging_animated.mdl`, swaying through frames 5-75; spawnflag 2 `player_hanging.mdl`, bobbing
+  16 units every 4 s and turning 36 degrees a second: upstream's `cos` takes degrees), 100 health (spawnflag 1: only
+  its use gibs it), gibbed when used or killed, firing its targets. **Upstream's bug, fixed:** a victim killed fired its
+  targets twice (Killed's `monster_death_use`, then the gib's own `SUB_UseTargets`): one shot down counted two on map8's
+  counter. Here its death gibs it without firing them again. The counter says "N more" to every player (MG3's
+  localized lines) and "complete" when it fires (once; never again).
+- **`monster_slime`** (`QC/vr_mg3_slime.qc`, upstream `tarbaby.qc`; map6 1 (not in skills 0-1), map8 1, secret2 1):
+  a spawn (`monster_tarbaby`, skin 0, no Rogue mitosis: Quake VR's spawn picks those at random outside the official
+  campaigns) with two generations to come (`mg3_slime` 2). Blowing up (`tbaby_die2` calls `MG3_Slime_Split`) it throws
+  two or three blobs (the vore's ball model, bouncing, 200 out and 200 up): where one lands it becomes a spawn (80
+  health, hunting its parent's enemy) with one generation fewer; on something alive it blows up instead (120, radius);
+  a child that starts in a wall goes off harmlessly. A child counts among the level's monsters only once started, so
+  every kill matches the count. Quake's models: no MG3 data needed.
+- **Anywhere:** Debug spawner 41 Slime, 42 Ghost, 43 Sacrifice (Debug > Tests > Thing; Dawn of the Machine Bestiary's
+  rows); training dummy enemy 31 Slime (always listed: Quake's model; killed with Dummy Dies, it splits). FGD: 331
+  entities.
+
+Tests (`vr_mg3_btest 3`, e1m1) **16/0** (run three times): a ghost (not counted, flying, a hand's touch set) laid to rest
+by your touch, another by a blow, both gone 2.5 s later; a sacrifice ahead struck down: gibbed, its target fired once
+(the first run caught upstream's double firing); a counter of 3: 1 left after two, fired on the third, never again; a
+slime: 2 blobs, 2 children started, counted (+3 monsters); killed: 4 blobs, each a spawn or a blast; the grandchildren do
+not split; all dead: 6 killed of 6 counted. MG3 map8 (`vr_mg3_btest 4`) **3/0**: the 8 victims used in turn (as their
+levers would), gibbed, the counter `human_killed` 8 -> 0, its target fired. Reports: map8 11 victims, the counter, 1
+slime; secret5 3 ghosts; map1 4 ghosts (0 runes). Checker: 16 missing classes, 551 placements.
+
+**In the headset.** [ ] Dawn of the Machine Bestiary > A Ghost Ahead: reach out and touch it with a hand: it dies and
+fades. [ ] A Sacrifice Ahead: punch or cut it till it bursts. [ ] A Slime Ahead: kill it and its children (watch the
+blobs arc and become spawns); the kill count should end even.
+
+### M3-21 Dawn of the Machine's lava man
+
+MG3's `monster_lava_man` is Rogue's "with a few tweaks" (upstream `mg3_lavaman.qc` and `combat.qc`): here Rogue's
+(`rogue_lavaman.qc`) with `.mg3_lavaman` branches, set for every `monster_lava_man` in campaign 5 and by the new
+`monster_lava_man_mg3` (`QC/vr_mg3_lavaman.qc`: any map, MG3's data needed). Rogue's lava man is untouched (r2m3's 4:
+MG3's 0). MG3's:
+- **Rises when its trigger fires** (a targetname; else at once: upstream dropped Rogue's Sleeping flag 2), the lava
+  splash 50 below it (in the lava), and **stays at the lava's surface** (it flies: no drop to the floor).
+- **Stands as it throws** (Rogue's steps forward on seven attack frames), its two lava balls from lower hands (90 up,
+  65 aside; Rogue's 130/125, 65/75).
+- **Its first hit always staggers it**, with Chthon's pain cry (then 5% a hit, 2 s apart, as Rogue's).
+- **Takes 0.8 of a blow** but the lightning gun's bolt and the laser cannon's (upstream: the attacker's selected weapon;
+  here what struck: a laser bolt, or a shot from a hand holding the lightning gun), **nothing from Chthon**
+  (`MG3_LavaManDamage`, from `T_Damage`).
+- **Used again once risen it dies** (counted, its targets fired: upstream `lavaman_force_death`); sinks without Rogue's
+  blast. Model MG3's own, read in place (`owned/mg3/progs/lavaman.mdl`: no Dissolution of Eternity needed).
+- **VR:** a head zone (MG3's model, `$walk1`: 31 forward, 70 up, radius 13; Rogue's has none); grapple mass 3000 (both);
+  no ragdoll (it sinks), not a melee monster; lava never burns it (`vr_liquids.qc`, both). Obituaries "was burned to a
+  crisp" (MG3's) and, with this commit, MG3's for the slime ("was slimed"), the super shambler and the orb.
+- **Anywhere:** Debug spawner 44, training dummy enemy 32 "Lava Man (Dawn of the Machine)" (listed with MG3's data).
+
+Tests (`vr_mg3_btest 5`, e1m1) **13/0**: MG3's ahead (model, flying, 1500 health at skill 1, counted, a use kills it,
+its head zone) and Rogue's beside it unchanged (walks, Rogue's model, no head zone); a blow 80 of 100, its first hit
+staggers it (frame 80); a laser bolt and a lightning shot 100; nothing from Chthon; Rogue's takes 100; its throw (forced:
+e1m1's start walls hide you from where it walks) puts a ball in flight; it never fell; used again: dead, counted once,
+sunk and gone. MG3 map2b (`vr_mg3_btest 6`) **4/0**: its 2 lava men waiting for their trigger, risen (flying, MG3's
+model, after you), used again: dead, counted, gone. FGD: 332 entities.
+
+**In the headset.** [ ] MG3 map2b's lava men: they rise from the lava, throw standing; the first hit staggers them.
+[ ] Bestiary > A Lava Man Ahead: aim at its head (the zone: Debug > Show Hit Zones).
+
+### M3-22 The super shambler (blood shambler)
+
+`monster_super_shambler` (`QC/vr_mg3_supershambler.qc`, upstream `mg3_super_shambler.qc`; map2, map4, map8, secret5 x2):
+the shambler's frames on MG3's model (`owned/mg3/progs/shambler_blood.mdl`: 1076 vertices, 96 frames, unnamed; the
+shambler's 94 first), 2000 health. Up close it smashes (80%) or claws; each smash sprays 11 plasma balls in a fan
+(`owned/mg3/progs/rogue/plasma.mdl`, the knights' spike's touch: 9) and each claw 9 in a block, thrown up or down at you
+by height and distance; after three or four blows (Bloody Nightmare one fewer) its lightning. From 110 to 200 units it
+claws by the side you are on; further off (and its lightning rested) it casts: a long cast (60%, then 5 s) or a fast one
+(3 s), each three bolts reaching 600-1000 units (the shambler's 600), the glow over its hands while it winds up. Half
+damage from blasts and rockets as the shambler (`VR_IsShambler`: radius damage, rockets, Rogue's multi-rockets; its
+lightning a zap wound from afar). Gibbed below -60 (the shambler's head gib). Dying, the super shamblers it owns die too
+(upstream `cleanup_orbs`). Dropped: the KEX achievements. Upstream pathfinding (bot nav) has no Quake VR counterpart:
+it moves as the shambler.
+
+**The model is the .mdl.** Ironwail loaded MG3's KEX `shambler_blood.md5mesh` beside it (enhanced models): skeletal
+poses that the QC frames, the hit model and a vertex-animation rig cannot read ("not the model its seed table was made
+for", now with the reason: pose type 1). An owned expansion's model read in place now refuses its md5 companion
+(`VR_ModelReplacementOk`, vr_handrig.cpp: `owned/` paths), so it draws, hits and ragdolls as its .mdl (the plan's "keep
+that").
+
+**Its rig** (`vr_ragdoll.cpp` `shamblerBloodSeeds`, `Id::Mg3ShamblerBlood`): the shambler's 13 bones (pelvis, chest,
+head, upper arms, forearms (hinges), claws, thighs, shins (hinges; capsules 5.5, 5)), fitted with
+`RIG_PAK=<MG3 pak0> rig.py shambler_blood 24` then `shambler_blood_bones.json` (Misc/quakevr/ragdoll): clusters 1.29 units
+rms, bones 1.77 (the shambler's 1.21 / 1.57: the hi-poly model's hump and claws bend more). Four seed centres set by hand
+where the fit's would hand a cluster to another bone (rig.py's warnings: the belly's front to the head, the hip to the
+left thigh). Death frames 83-93. Its ragdoll settings, head gib, knockdown chance, corpse health, small gibs, hull
+width: the shambler's (`ragdollClasses` row, `VR_Knockdown_SetupReverse`, `VR_Corpse_Parts`, `VR_SmallGib_Mult`,
+`monsterClasses`). Head zone 30 forward, 53 up, radius 13 (its face at the hump's front: the head bone's vertices 33-72
+up); parried as a melee monster; grapple 800 kg.
+
+**Anywhere:** Debug spawner 45, training dummy enemy 33 (with MG3's data), Bestiary rows (A Super Shambler Ahead, ... Its
+Ragdoll There, the test). FGD 333 entities.
+
+Tests: `vr_mg3_btest 7` (e1m1, ragdolls on) **10/0**: spawned, counted, its head zone and gib, parried, 800 kg, dummy 33;
+started: a rig, knocked down as a shambler; a blast at it: half (50 of 100 at most); its smash 11 plasma balls, a claw
+9, a fast cast 3 bolts and its glow gone; killed: counted, a ragdoll ("rigged: 13 bones, clusters 1.29, bones 1.77 units
+rms, 43.7 ms"; 13 parts asleep in 11 s, 280 kg, nothing below the floor). `decap_test.sh live pop` (MON=45): a slash
+beheads it (its head thrown); shotgun, super shotgun, overkill and lightning headshots that kill pop the head; body shots
+don't; a left claw cut off on the way. MG3 map8 (`vr_mg3_btest 8`, save, load, `9`) **2/0 + 2/0**: its health relay
+(read before a blow, as upstream: the blow after the threshold fires it) fired at 899 of 2000; after the save and load
+899, its model and death; killed, counted once. map2's has rune flags (later visits). Screenshot (kit scratch
+`ss_orb.png`): the blood shambler and an orb in e1m1. Checker: 15 missing classes, 546 placements.
+
+**In the headset.** [ ] Bestiary > A Super Shambler Ahead: parry its claws, dodge the plasma sprays, its lightning from
+afar; shoot its head (the zone), behead it with a slash; kill it and push his ragdoll about (Ragdoll Settings > Shambler).
+
+### M3-23 Quake's monsters in Dawn of the Machine, and Bloody Nightmare
+
+Upstream's changes to the stock monsters (MG1 -> MG3 diffs: soldier 28 lines, enforcer 106, hknight 39, wizard 42,
+shambler 74, shalrath 89, zombie 18, ogre 306 (most of it the rocket ogre: M3-16's), tarbaby 171 (the slime: M3-20),
+the rest Horde fades), campaign 5 only (`QC/vr_mg3_bn.qc`, one call each in `orig_mon_*.qc`, `combat.qc`, `items.qc`):
+- **No backpacks** from grunts, enforcers and ogres (`DropBackpack` drops none for a monster in campaign 5; Quake VR's
+  enemy weapon drops stay).
+- **Skill 3:** grunts (100) and enforcers (200) shrug off light blows (no pain when random() x that > damage); the
+  nightmare pain rest (5 s after a pain) no longer holds zombies (they must flinch to go down) and Chthon; shamblers
+  cast lightning after three or four blows (`MG3_ShamblerCasts`, reset as they cast).
+- **Vores' balls** (any skill) steer every 0.1 s (Quake's 0.2), nudged apart from each other within 32 units, at 285 on
+  skill 3 (Quake's 350, MG3's "bringing back the pain").
+- **Zombies:** spawnflag 8388608 hangs one (still in its first pain frame, as the crucified; secret3's 2), spawnflag 128
+  throws flesh only up close (secret5's 7).
+- **Bloody Nightmare** (`MG3_BloodyNightmare`: campaign 5, serverflags 64): an enforcer fires a second laser beside each
+  (15 damage, 600, alternating sides); a death knight's spikes fly at 500 (300); a scrag's spikes bring one or two more
+  each (MG3's `w_spike2.mdl`, read in place); an ogre's volley brings two more grenades 70% of the time, 0.3 s apart,
+  thrown higher or lower by where you are and up to 64 aside (upstream loops the volley's frames; here a helper throws
+  them while the ogre lives: its frames untouched, M3-16 edits them).
+- Not ported: the fish's idle sound rate limit (sound only), upstream's commented-out vore trail, the hell knight's
+  infected offset fix (M3-15's).
+
+Tests (`vr_mg3_btest 10`; `11` sets Bloody Nightmare): MG3 map1 at skill 3 in Bloody Nightmare **11/0**: no backpack;
+the grunt and the enforcer flinched 0 of 20 light blows; the fiend's pain rest 5 s, the zombie's none; the shambler cast
+after 4 blows; 1 more laser; a spike at 500; the vore's ball steered at 285 every 0.1 s; six scrag spikes brought 4 more;
+the ogre's burst 2 more grenades; a hanging zombie; a close-thrower. MG3 map1 at skill 1 (no Bloody Nightmare) 11/0;
+e1m1 at skill 3 (the id1 campaign: none of it) **10/0** (a backpack, 20 of 20 flinches, both pain rests 5 s, no cast,
+no extras, 300). Regressions: Dopa triggers 34/0, MG1 hub 20/0, MG3 weapons 19/0, e1m1, hip1m1 and r1m1 load clean.
+
+**In the headset.** [ ] Dawn of the Machine in Bloody Nightmare (the hub's skill 4): enforcers' double lasers, ogres'
+triple volleys, scrags' spike fans; zombies flinch at every hit on skill 3.
+
+### Checks after M3-19..23
+
+Checker: **15 missing classes, 546 placements** (21 and 625 before M3-19: `monster_orb` 48, `monster_ghost` 7,
+`misc_sacrifice` 12, `trigger_sacrifice_counter` 1, `monster_slime` 6, `monster_super_shambler` 5 resolved). Release
+build, QC 0 warnings (the 3 of `vr_mg3_test.qc`'s 10-argument sprintf fixed in M3-19), statics, QC precedence and FGD
+(333 entities) pass. `eval.sh` not run (no melee change). Test saves in the worktree's game folder: `mg3btss.sav`.
+
+## Dawn of the Machine (MG3): the Shub finale (2026-10-07)
+
+Phase D of [MG3_PLAN.md](MG3_PLAN.md), M3-26/27 (M3-24/25, Chthon, are another worker's). Numbers kept apart from
+theirs: the Debug spawner's from **60**, the training dummy's from **50** (the dummy's tried/available bits: a third pair
+of floats for 48 on). Tests: `vr_mg3_shubtest N` (`QC/vr_mg3_shub_test.qc`, developer 1; Debug > Tests > Dawn of the
+Machine: Shub): 1 report, 2 phases and children, 3 zombies and pillars, 4 death and the credits, 5 the training dummy.
+
+### M3-26 Shub and her children
+
+`monster_oldone_new` (`QC/vr_mg3_shub.qc`, from upstream `monsters/mg3_oldone_new.qc`): id's Shub model, 12000 health,
+killable. Her 46-frame loop faces you and attacks on frames 14/29/44: a volley of diamonds (one row; two in phase 4),
+every third attack her phase's child in turn (1: spammer, swiper; 2: vortex, swiper, spammer; 3: blasters, three
+swipers; 4: spammer, seeker, swiper, blasters); her autoguns on frames 21-25 and 36-40 (the c-th of a run up to her
+phase + 2 and skill + 1, none on skill 0); a shub zombie on 23 and 45 (M3-27). Phases: her first wound 1, then under
+3/4, 1/2, 1/4 of her health 2, 3, 4 (a seeker at 2; her `wave1` key's target fired at 2, `wave2`'s at 3 and at 4, as
+upstream: boss2 sets only wave2). Each change: her thrash (1.5 s, no damage taken: `T_DamageDeal`'s early return on
+`.mg3_shub_immune`, upstream combat.qc's boss_immune) ending in a sphere of 100 spheres (skill 3: as many volleys as
+her phase). Children: the spammer (13 plasma lobs; each a splash where it lands, 2 s later a lightning bolt and a blast,
+100 radius, Shub included, as upstream), the swiper (a lightning beam swept 180 degrees in 1.3 s: 25, 100 to a shub
+zombie), the blasters and the vortex (eyes, `teleporter_eye.mdl`, 120 health, counted as they appear, 72 spheres
+spiralled at you then a burst; where one appears anything is telefragged, a player or Shub there kills the newcomer),
+the seeker (300 health, chasing, its touch 500, not counted). Killed: immune, her children told to finish (the
+upstream spammers and swipers, left thinking nothing, now removed), a zombie cleaner (one a 0.2-0.7 s), a last sphere,
+three thrashes, the lights dimmed to `a`, then 50 gibs up and about, lights back, CD track 3 and `MG3_ShubEnding`
+(M3-10: `$map_dopa_endtext_final`, next map start, the credits). A single player dead by then completes nothing (she
+idles, as upstream). VR: her and her eyes' beams carry Quake VR's beam id byte (`VR_ParseBeamEntity`); rerelease
+`EF_CANDLELIGHT` (64) is masked out by the engine for this progs (`PR_FindSupportedEffects`) and not set; no shove or
+knockback moves her (`VR_Push`), 10000 kg to the grapple, out of liquid rules, an obituary ("became one with
+Shub-Niggurath", her eyes too); a grenade striking her deals its damage to her and blasts round her (upstream
+weapons.qc; her box is far bigger than her body). Rigid models, no rig: no ragdoll or head zone (as the orb).
+
+**Anywhere** (decision 5): Debug spawner Things 60 Shub (free: `.mg3_shub_free`, killed she bursts but ends nothing), 62
+an eye (`monster_shub_eye`), 63 the seeker (`monster_shub_seeker`); training dummy 50 Shub (free), 51 her eye. She
+raises zombies only where the map has `info_szombie_spawn`.
+
+Measured: boss2 (`vr_campaign_native mg3`) `vr_mg3_shubtest 2` **31/0**: her model, 12000, 10000 kg, awake, unmoved by a
+700 shove, phases 1-4 at 11990/8990/5990/2990 with the thrash's immunity (a 100 hit ignored), a seeker at 2, waves 1/2/3,
+each phase's rotation of children exact, a volley between, none while immune, autoguns 2 of 5 at skill 1, 5 eyes
+counted; spammers' 52 plasma (13 each), the swipers gone, a fresh blaster pair spiralling spheres, one killed and one
+spent (72 shots), both counted dead, every plasma accounted for (blown up where it landed, on something alive, or still
+about). e1m1 (a free Shub ahead) **31/0**. `vr_mg3_shubtest 4` boss2 **9/0**: killed, counted once, immune, her
+children gone, 5 s of thrashes, 50 gibs, intermission with next map start and the final text, the presses to the text
+and on: "Credits: native campaign end presentation opened" (a run left at the menu); e1m1's free Shub ends nothing.
+Training dummy (`5`, e1m1) **6/0**. Checker: boss2 2 missing (`func_breakable` 8, `info_szombie_spawn` 36: M3-27), all
+maps 7 missing classes, 55 placements (8 and 56 before). Regression: `vr_mg3_btest 2` 11/0, `7` 10/0, `vr_mg3_mtest 2`
+14/0, MG1 hub 20/0, e1m1 smoke exit 0; QC 0 warnings, statics, precedence, FGD (343 entities) pass. Found while testing: the eyes of one attack rotation run at once share their spots
+and telefrag each other (upstream's spawn_boss_tdeath), so the test kills them before their next frame.
+
+### M3-27 Her zombies, the pillars, the ending
+
+**Shub zombies** (`QC/vr_mg3_shub_zombie.qc`, from upstream `monsters/mg3_shub_zombie.qc`): she raises one on frames 23
+and 45 of her loop at one of the map's `info_szombie_spawn` (boss2: 36, in a ring 163-245 units round her), none past 33
+alive; a point used rests 8 s, and the pick is upstream's (a random index under the count of rested points, counted
+over all). A shub zombie is Quake VR's `monster_zombie` with `.mg3_szombie`: the zombie's rig, ragdoll, head zone,
+beheading, limbs, knockdowns, chainsaw and Super Axe rules come with it; it lies where it rose (`$paine13`, not solid)
+and gets up 7 s later where there is room (the zombie's own paine11/12), hunting you, its flesh thrown only up close
+(Quake VR's MG3 close-throw zombie: upstream's melee "missile"). Her spheres pass it; its flesh passes her and her eyes
+(`ZombieGrenadeTouch`, upstream SzombieGrenadeTouch); her swiper does it 100; her death's cleaner gibs them one by one.
+Killed whole it throws its head too (upstream's shub zombie threw none). Debug spawner Thing 61 (`monster_szombie`).
+
+**The "ceilings" are pillars.** boss2's 8 `func_breakable` (upstream in `mg3_oldone_new.qc`) are columns round her, 206
+to 494 units tall, some with items on top (red armour, shards). Any damage sinks one 20 units (20 a second for a second
+from its last hit), its 10000 health restored each hit (only a single 10000 blow, a telefrag, removes one). Her
+diamonds, spheres, beams and plasma blasts hit them all fight long, so they come down over it: after `vr_mg3_shubtest
+2` and 70 s more of her phase 4 (god mode, at the arrival point) they had sunk 189 to 477 units. Nothing raises them;
+standing on one you go down with it, and when its top passes the floor the floor holds you (Quake's pusher, as upstream):
+no trap. The plan's "lower on phases" is this: no phase drives them.
+
+**The ending** (M3-26's death; M3-10's `MG3_ShubEnding`): see above; `vr_mg3_shubtest 4` now also raises two zombies
+first and finds them gibbed by her cleaner.
+
+Measured: boss2 `vr_mg3_shubtest 3` **14/0**: 36 spawns unused, 8 pillars (solid pushers, 10000); one raised (lying at
+a spawn point now resting, 60, counted, after you), at most 33 alive (40 asked), her sphere and its flesh pass each
+other, 20 of 33 up 8 s later (the rest wait for room: several share points), a 100 kills one, all killed and counted;
+a pillar hit sinks 20 and stops, a blast beside one sinks it, you on pillar `*52` ridden down 17 hits until its top
+passed the floor, then on the floor (feet -15.97, on the ground, not in solid). `vr_mg3_shubtest 4` **10/0** (her
+zombies gibbed), the credits reached. A live fight (test 2, then 70 s, god mode): no error, 10 shub zombies up, 618
+edicts. Debug spawner 61 on e1m1: a shub zombie, counted. Checker: boss2 **0 missing**; all maps 5 missing classes, 11
+placements. Regression: `vr_mg3_btest 2` 11/0, `7` 10/0, `vr_mg3_mtest 2` 14/0, MG1 hub 20/0, e1m1 smoke exit 0; QC 0
+warnings, FGD 346 entities. For VR QA: the pillars sinking under you (comfort), her zombies' rise and their rigs, her
+beam and blasts, the lights going out at her death.
+
+## Dawn of the Machine (MG3): the Chthon finale (2026-10-07)
+
+### M3-24 Chthon: spawn, fits and phases, waves, the second arena
+
+`monster_boss_final` (`QC/vr_mg3_chthon.qc`, upstream `boss_final.qc`; boss.bsp): id's Chthon (`progs/boss.mdl`, classname
+`monster_boss` as upstream, `.mg3_chthon` 1) waits under the lava until his map's trigger uses him (`chthon_count` ->
+`chthon`, which also opens the arena's doors and plays track 12), then rises at whoever woke him: 12000 health. Killable
+(spawnflag 2, the map's): fans of MG3's spheres from either hand (4/8/11/15 by skill, along the ground), and from his
+second phase on, after a throw, a volley 30% of the time (15-25 blasts of 0-6 spheres on skill 0 .. 30-40 on 3, at 10 a
+second, leading you a quarter of the way, spreading as it goes); without spawnflag 2, id's lava balls. Six fits as he
+is hurt (first blood, then 83, 66, 50, 33, 16%: shock a or b, lightning from his body), immune during each, none while
+he rises or throws a volley (skill > 0), several thresholds in one blow give one fit (upstream). After a fit his phase
+steps up: 2 fires `wave1` (`rein1`: relays open the doors of the knights' pits 1-7 s on), 3 fires `tele_target`
+(`boss_tele1`) and moves every player to his own `info_boss_teleport_first` point (popped up, turned, a teleport flash,
+what his hands carry along: `VR_Carry_Teleported`) while Chthon sinks (frame 0), frozen and immune, until
+`trigger_boss_teleport` (the lower room's countdown, 10 + 5 s after the player lands) moves him to
+`info_boss_teleport_boss` (he rises there) and the players to the `info_boss_teleport_second` points; 4 fires `wave2`, 5
+`wave3` and the spiral (four arms of plasma from above his head, 5 degrees a step every 0.15 s, 0.2 on skills 0-2, half
+the steps skipped on 0-1, while he lives). Damage (killable): none during a fit or from lava men, 0.8 of anything but the
+lightning gun's bolt and a laser cannon's (`MG3_ChthonDamage`, read by T_Damage as the lava man's); a grenade that
+touches him puts its whole blast into him (upstream GrenadeTouch: his middle is 116 units above his feet). Killed:
+counted once (upstream counts him twice), three rings of 72 spheres (1, 3, 5 s on), he sinks, his targets used up to
+five times in all (upstream), 49 gibs up and out over the lava (upstream get_org's directions: Quake VR's gibs, grabbable,
+sticking, bleeding).
+
+**Fixed on the way (the map needs them):** MG3's `trigger_teleport` spawnflag 8 (with a targetname: off until its first
+use; upstream 2026) was missing: the lower room's teleporter (`tele_c2`) was on from the start and threw the player
+straight into the second arena, skipping the countdown; boss.bsp is the only map that uses it. MG3's
+`SPAWNFLAG_NO_CONTENTS_DAMAGE` (16384) was missing: the 48 knights of the three waves stand in lava pits behind the
+doors and burned to death before the fight (`VR_Liquid_Immune`, campaign 5; MG1's source has the flag too, left as it
+was).
+
+**Quake VR:** a head zone (80 forward, 240 up, radius 45: `PositionalHead`, his head and jaw on walk1, 210-276 up); the
+precise hit model's standing pose for models that begin under the lava (frame 0 `rise*`, no `stand*`: id's boss.mdl and
+MG3's lavaman.mdl, whose M3-21 head zone was fitted on walk1) is now their first `walk*` frame (`vr_hitmodel.cpp`
+`restPoseOf`); no head to cut off, no ragdoll (he sinks, then bursts); his spheres are any monster's missiles (batted);
+grapple 5000 kg and lava immunity as id's (classname). The KEX candle light on every other sphere is not drawn (no such
+effect here). **Anywhere:** Debug spawner 50 (killable, woken at you once placed; `mg3_chthon` 2: never the ending),
+training dummy 40, Debug > Tests > Dawn of the Machine: Chthon. Without the second arena's points (any other map) phase 3
+fires `tele_target` and he fights on where he is.
+
+Tests (`vr_mg3_ctest`, developer 1): `2` in e1m1 **43/0**: the spawner's (killable, counted, head zone 80/240, no
+decapitation, 5000 kg, dummy 40), woken: rising (nothing while he rises); a plain blow 80 of 100 and fit 1 (immune,
+nothing during it); phase 1: the lightning gun's bolt 100, nothing from a lava man, 8 spheres thrown; shots on his drawn
+model: zone 1 at his head, 0 at his chest (`hitmodel_segment`); fits 2-6 at 9837, 7797, 5877 (shock b), 3837, 1797, each
+phase's target fired once (wave1, tele_target with no arena: he fights on, wave2, wave3 + the spiral); killed: counted
+once, gone under, 49 gibs, a ring of 72 spheres and two more to come, his target used once (every fit had), no ending
+9.5 s on; a second one killed before any fit: his target used 5 times. `3` on boss.bsp (`vr_campaign_native mg3; map
+boss`) **42/0**: his waves and teleport target, 4 + 4 + 1 points, trigger_boss_teleport BOSS on `tele`, 17 lava suits at
+skill 1 (of 21), the player walked into the trigger: woken at him, track 12; every fit; wave1: 12 of rein1's doors open;
+phase 3: the player at a first point, he sank, immune; 15.6 s on (the countdown) he rose at his point (2496 2400 72) and
+the player at a second point; wave2 and wave3: 9 doors each; killed: 49 gibs, the first ring. Checker: boss **0 missing**;
+all maps **3 missing classes, 45 placements** (8 and 56 before). Regressions: `vr_mg3_btest 2` 11/0, `7` 10/0,
+`vr_mg3_mtest 2` 14/0, MG1 hub `vr_mg_hub_test 1` 20/0, e1m1 smoke; QC 0 warnings, statics, FGD (345 entities).
+
+**In the headset.** [ ] Debug > Tests > Dawn of the Machine: Chthon > Chthon Ahead (an open map): dodge his sphere fans
+and volleys, shoot his head (the zone), bat a sphere back, throw a grenade at him; his fits' lightning; kill him: the
+rings, the gibs flying over you.
+
+### M3-25 Chthon: the boss teleport's comfort fade, the music, the ending
+
+- **Comfort fade** (`Quake/vr/vr_comfortfade.cpp`, new): `vr_comfort_fade [seconds]` turns the view black and brings it
+  back over `vr_comfort_teleport_fade` seconds (default **0.6**, 0 off; Locomotion > Comfort > Fade on Scripted
+  Teleports), in real time, drawn as the bonus colour shift (the eyes' blend, as the lightning-in-water flash), its last
+  share cleared at the end rather than left to the bonus flash's slow decay; `vr_comfort_fade_info` prints its state.
+  QC `VR_ComfortFade(p)` (vr_mg3_chthon.qc) stuffs it to a human player's client; Chthon's moves of the players (phase
+  3 to the first points, trigger_boss_teleport to the second) use it. Measured: a 1 s fade 0.56 s in: 114 of 255
+  (alpha 0.45); after it 0.
+- **Music:** the map's `trigger_music` (track 12) is on `chthon` with Chthon's wake (M3-05's trigger; upstream changes no
+  track at his death).
+- **The ending:** the map's Chthon (`mg3_chthon` 1) in Dawn of the Machine, once sunk (death10), calls M3-10's
+  `MG3_BossEnding` 8 s on (upstream boss_end): the finale text `$mg3_qc_boss_finale`, then the credits (`start`), or in a
+  Bloody Nightmare game its new game (map1, serverflags 448, upgrades cleared); a dead single player completes nothing.
+  The Debug spawner's Chthon, or a map's elsewhere, ends nothing. Shub's death (M3-27, `MG3_ShubEnding`) is the Bloody
+  Nightmare new game's own end (boss2); Chthon's Bloody Nightmare branch leads to it through map1 .. hub -> boss2.
+
+Tests: `vr_mg3_ctest 3` on boss.bsp **46/0** (M3-24's 42, the two fades, the finale text in the intermission, next map
+`start`); `vr_mg3_test 14` then leaves the intermission: the credits (campaign 5's native completion, M3-10). `vr_mg3_ctest
+4` (the same fight in a Bloody Nightmare game: serverflags 64 + 128 set first) **46/0**: the blows at 0.8 (64 of 100),
+the ending: next map map1, serverflags 448 (`vr_mg3_test 14` leaves the intermission towards it). `vr_mg3_ctest 2` (e1m1) 43/0
+(no ending). Rebased onto the Shub finale (M3-26/27): checker **0 missing classes, 0 placements** on all 22 maps;
+`vr_mg3_ctest 2/3/4` 43/0, 46/0, 46/0, `vr_mg3_shubtest 2` 31/0, `vr_mg3_btest 2` 11/0, `vr_mg3_mtest 2` 14/0, MG1 hub 20/0.
+Headless note: the kit's `wait N` (with a space) is one frame; `waitN` is N frames.
+
+**In the headset.** [ ] Dawn of the Machine's boss map (or Debug > Tests > Dawn of the Machine: Chthon > The Boss Map's
+Fight): at his third fit you are moved to the lower room, and 15 s later to the second arena: the view goes black and
+comes back (Locomotion > Comfort > Fade on Scripted Teleports: try 0.6 and 1.2 s); kill him: the finale text, then the
+credits.
+
+## vrstart2's load: profiled and fixed (2026-10-07)
+
+Your request: vrstart2 takes very long for a cold start; profile it (VTune) and optimise map loading. Measured with
+`vr_startup_times` (run.sh, fast, exclusive; median of 3) and the new bench scenario `load_vrstart2` (cold, warm,
+restart: `bash kit/bench.sh <agent> --scenarios load_vrstart2`); VTune with `qvrprof.sh ... load_vrstart2` (MODE=2,
+loads only).
+
+| load (ms) | before | after |
+|---|---|---|
+| cold, every disk cache empty (first start ever) | 20,800 | 8,800 |
+| cold, hull files not there yet (a new build of vr_hull.cpp) | 20,500 | 8,800 |
+| cold, disk caches there (every later start) | 20,500 | 1,180 (bench: 1,040) |
+| warm (`map vrstart2` again) | 2,405 | 310 (bench: 283) |
+| restart (a death's reload) | 2,372 | 275 (bench: 261) |
+
+Where it went (VTune, the three loads, 256 s of CPU): the world's hull trees (the player's 16 wide and the monsters'
+24, 28, 40: four trees of 1.2-1.4 million nodes from 33,682 brushes, built at once on 32 threads, 16.4 s waited), of
+which 94 s in VirtualAlloc/VirtualFree (mimalloc giving freed pages back at once, `vr_heap_purge_delay 0`, and asking
+for them again: 32 threads queueing on the kernel), then `choose`, `clipWinding`, `splitPoly`, `finish`; and the
+liquids' wave mesh, 2.16 s on every load (warm and restart too).
+
+Fixed, a commit each (the outputs the same bytes: tree hashes, the mesh's, the ledges', `vr_hull_keeptest` PASS):
+
+1. **Liquids' wave mesh**: the rim samples' "inside another face" test and the pins' nearest rim segment looked up
+   in xy buckets (`XYBuckets`) instead of every face or segment of the group: 2,160 to 118 ms a load.
+2. **Heap held during loads** (`vr_heap_load_hold`, default 60000 ms; Debug > Memory, Heap: Hold During Loads): from
+   a load's start to its first frame drawn the purge delay is raised, so the load's freed memory is used again; at
+   the end all of it is given back (`mi_collect(true)`) and the delay put back. Cold 19.4 to 10.9 s; mimalloc's
+   committed memory after the load the same (2,555 MB against 2,638).
+3. **choose()**: the pieces' planes counted in a table the size of their faces (the pool's ~2,000 builders a tree
+   each made and zeroed 5 MB arrays of all the tree's planes): 10.87 to 10.43 s.
+4. **Hull disk cache** (`vr_hull_cache`, default 1; Debug > Tests, Hitboxes on Disk; HULLS.md, "Kept on disk"):
+   trees that took 250 ms or more written to `cache/hulls/<build>/<world>_<box>.hul`, read at the next load (24 ms a
+   tree): 10.4 s to 1.3 s. Checked on read; a corrupted file is rejected, rebuilt and rewritten; 2 compares (4 of 4
+   the same); e1m1 and e4m7 write nothing.
+5. **Box3D world mesh**: the T-junction search per face on the pool, each nearby cell looked up once: 573 to 154 ms
+   (its wait at the first server frames 149 ms to 0): 1,320 to 1,182 ms.
+6. **Ledges**: the lip pieces found on the pool: 109 to 17 ms: 1,182 to 1,145 ms.
+7. **choose()**: the pieces' bounds laid out an array per axis, branch-free counts: first build 10.42 to 9.57 s.
+8. **The brushes grown on the pool** (`growAllOnPool`): the table's answers to the brushes' own planes found first in
+   order, runs of 256 brushes grown with them, each brush's asks then put to the table in order and kept if every
+   answer has the same values (99.7%; the rest grown again in order): a tree's grow 1.2-1.8 s to 0.4-0.8 s.
+
+Not done (ranked by what they would save):
+
+- **The trees' first build, 8-9 s** (only once per vr_hull.cpp build now): ~150 s of CPU in `choose`, `clipWinding`,
+  `finish`, `splitPoly` and Face copies (240-byte faces with 8 inline double points). Its peak memory is 11 GB
+  (process working set): each shared unit copies its input pieces (`Unit::input`, kept only for a redo that never
+  happened here). A map-side alternative: vrstart2's 33,682 brushes are hull 0's solid leaves (the terrain's prisms
+  cut by the BSP); building from the map's own brushes (BSPX BRUSHLIST, qbsp `-wrbrushes`) would be ~11k brushes, but
+  changes what the hull is built from.
+- **Alias models, 420-460 ms** of every first load of a session (142 models, their normal maps 230 ms even with the
+  cache; 1.2 s with it empty): loaded one by one on the main thread.
+- **The wave mesh, 104 ms on every load** (warm and restart too): it could be kept for a reload of the same map.
+- **"map: campaign (game folders)" 112 ms** and the first map's normal maps (cache empty: 780 ms for 110 skins).
+- The world's brushes (362 ms, `recoverClips`' `boxInTree`) are on the pool and hidden by the spawn.
+
+Map-side: nothing changed in vrstart2 (the fixes are the engine's; the look and the paths the same: the walk test
+18 of 18 legs, screenshots).
+
+## Immersive manual reloading, phase 1: the ammo pouch and the shotgun (2026-10-07)
+
+The author's request: a third reloading mode, loading by hand from a pouch on the belt (design, accounting rules,
+models, menu, tests and phases 2-4: RELOAD_PLAN.md). Phase 1:
+
+- **The mode.** `vr_reload_mode` 3 "Immersive" (0 Off, 1 All Holsters, 2 Hip Holsters as before), the shipped default;
+  `vr_cfg_version` 97 moves a config still at the old default (2) to it (Off and All Holsters stay). Immersion's row,
+  the setup boards' "Reloading" option (vr_setup.cpp) and the new **Weapons > Reloading** page have it. In 3 the guns
+  that load by hand (QC `VR_Reload_ManualFor`: the shotgun) get no holster, button or flick reload
+  (`VRTryReloadWeapon`); every other gun reloads at the hip holsters, as in 2. The shotgun you start a game with comes
+  loaded from your shells (`SetNewParms`; the holsters' reload filled it as it was first drawn), as map pickups do.
+- **The ammo pouch** (`vrpouch_ammo.mdl`, make_ammo_pouch.py: make_pouch.py's leather, wider and shallower, shells
+  standing brass up; frame 1 empty, by your shells): on the front of the belt between the hip holsters, placed as they
+  are (vr_body.cpp `ammoPouchPosition`: the belly's ring with the body, carried by the pelvis; the hips' height and X
+  without it), drawn and lit by vr_view.cpp `setupAmmoPouch`, reached as hotspot `HS_AMMO_POUCH` 12 (the one a hand is
+  most within, holsters and pouches alike). `vr_ammo_pouch_x/y/z/thresh/pitch/yaw/roll/scale/show`. Climbing, the
+  flashlight, self-collision and the QC holster lists know the new hotspot.
+- **The loading port.** polish_weapons.py `loading_port`: under the shotgun's receiver, between the trigger guard and
+  the pump: a black floor a step below the keel, a worn steel frame standing out round it, the brass lifter at its
+  back (parts added; the old vertices, triangles and anchors as they were). vr_view.cpp's `loadPorts` table has its
+  point in model space; the client places it as drawn (like the muzzle) and sends it with each move
+  (`VrMove::loadPort` -> `.loadportpos`, `.offloadportpos`).
+- **The shells** (QC vr_reload.qc; `vr_shell_live.mdl`, `vr_shell_pair.mdl` from make_shell.py: the spent shell's head
+  and hull closed by a star crimp; two side by side in grey tape). An empty hand gripping at the pouch takes a shell for
+  the gun in the OTHER hand (with `vr_reload_shell_pairs`, a taped pair if two are left), out of the reserve at once; it
+  is a carried prop (prop slots 49 and 50, `vr_props_version` 60: held fixed in the fist, its crimp out in front, the
+  fingers fitted round it; tuned in Held Object Offsets). Held within `vr_reload_port_leniency` (4 units) of that gun's
+  port it goes into the magazine (the gun's record); a pair with one place left loads one and leaves a single shell; a
+  full gun takes nothing (a dull tap). Let go of at the pouch (or a holster, or the trigger pressed: its pickup) it is
+  refunded, up to the most you carry; anywhere else it drops, a Box3D prop (tinks: the spent shells' sounds) that can be
+  taken again by hand (`vr_reload_grab_slack` 3 cm: it lies flat under the lowest the fist gets) or force grabbed. At
+  most `vr_reload_loose_max` (24) lie about (the oldest not in a hand goes) and each fades after
+  `vr_reload_loose_time` (90 s): then it is lost. One in a hand at a level's end is refunded. The empty pouch gives
+  nothing: soft pats and a dull knock. Sounds (make_sounds.py): `reload_pouch.wav`, `reload_shell_in.wav`,
+  `reload_empty.wav`; haptics and volume scale by `vr_reload_haptics`, `vr_reload_volume`.
+- **Tests.** Debug > Tests > Reloading (`vr_reload_test <step>; impulse 125`: take, load, drop, put back, empty the
+  gun, report, the self-test); `vr_reload_debug` prints the steps; `vr_mock_hand_to <hand> ammopouch | lport [units]`.
+  `Misc/quakevr/reload/reload_test.sh <agent>`: the self-test (27 of 27), the mock hands' take / port / drop / regrab
+  / refund (6 of 6) and Hip Holsters unchanged (3 of 3). The loaded map guns' transfer and pickup tests pass; the e1m1
+  smoke, the weapon instance steps, `vr_menu_path_check` (0 missing) too; QC 0 warnings.
+
+Open for the author: the shell's pose in the fist (the defaults are a first fit, Held Object Offsets has them); the
+pouch's place and size; whether a shell let go of at a hip holster should go back into the pouch (it does: it is a
+pickup) or drop.
+## vrstart2: the author's screenshots of 2026-10-07 (holes, lanterns, rope, barrels...)
+
+Vittorio's 22 annotated shots (the list and my reading of each: the agent's `scratch/notes/flaws.md`). Fixed:
+
+**Holes** (12 of the shots: grey triangles in the ground, slivers in the cliffs, wedges on the lake's floor) and the
+**foam lines and triangles on the water** (2: the shoreline foam drew round holes in the water's surface) were one
+fault: faces missing from the compiled map. ericw-tools 2.0-alpha11's qbsp said "519 sides not found" (with
+`-verbose`: "couldn't find portal side at ..."): a portal between air and solid with no brush side to make its face.
+A ray test over the BSP (rays from random open points to the first change of contents, the hit point checked against
+the world's faces on that plane: 20 000 rays, 88 hits in 79 places) found them; screenshots aimed along its rays show
+them. Every one had, within a few dozen units, two neighbouring terrain prisms whose tops were 0.002-0.006 degrees
+from coplanar (integer heights; the island's in steps of 8): the wedge between the planes thinner than the
+compilers' epsilons. 0.18.1's qbsp lost faces at the same places (10 hits). Two changes:
+- `terrain_planes` (vrstart2_gen.py): neighbours whose tops come within `TERRAIN_SNAP` (0.5 unit) of each other's
+  planes share one plane exactly (a prism's top written as three points of the group's plane, `mapgeom.prism(top=)`);
+  exactly coplanar neighbours are a group from the start, the smaller group joins the larger's if every corner is
+  within the snap. 1397 of 10 518 tops moved, by under half a unit (a step, never a gap: the prisms are solid to the
+  floor). 0.18.1's qbsp: 0 holes (120 000 rays); 2.0's still 45 hits ("417 sides not found": its losses elsewhere
+  too, by rocks and crystals on the lake's floor, at no near-coplanar pair).
+- **qbsp is now ericw-tools 0.18.1's** (`DEFAULT_QBSP`, `--qbsp`; `-bsp2`), vis and light still 2.0's. Its liquids
+  are TEX_SPECIAL (unlit, and never cut into faces small enough for a lightmap): the lake is now tiles of 160 units
+  (`WATER_TILE`, every other one's texture shifted a whole copy so no two merge) and `lit_liquids` clears the flag on
+  the water's texinfos before light, so the water is lit as before (5728 lit faces, extents at most 160). The slipgate's
+  `*teleport` stays unlit (its face is 304 wide); it looks the same. qbsp takes 40-70 s (2.0: 240 s); the full compile
+  about 13 minutes.
+
+**Lanterns** ("should emit light", the pier's and the tower's): their glass is `qvr_lantern` (quakevr_dev.wad: warm
+fullbright texels behind an iron frame), so they glow at night; the pier's light 180 -> 240, the tower's 150 -> 220
+and now beside it (over it, the lantern's own top shaded the deck round its post). (A light inside the glass, the
+glass func_detail_illusionary, lit nothing: light counts those faces as shadow casters.)
+**The pier's rope** ("abruptly ends"): the second row of pilings rises to short bollards and the ropes from the end's
+bollards run to them. **SETTINGS banner** ("covered by torch"): over the pavilion's way in (z +92, centred), not in
+front of the north torch post. **Targets** ("misaligned texture"): one bullseye fitted to the 52-unit face (scale
+52/64, offsets from the face's corner). **Islets' braziers** ("gap"): the pillar sunk 64 into the rock (was 8; the
+islet's top slopes away under it). **Barrels** ("would be cool if these were new physics props like the wooden
+crates"): `vr_barrel` (QC vr_crates.qc), a crate but for its model (make_crates.py's vr_barrel.mdl: staves, iron hoops,
+three skins and a normal map), a Box3D body as the crates are (the hull of its model: lying, it rolls when pushed);
+Held Object Offsets slot 61 (30 kg; `vr_props_version` 62); Debug > Tests > Thing: Barrel, Barrel Lying.
+
+**Tested**: the ray test 0 hits (120 000 rays); before/after shots from his places (`scratch/views/contact_sheet.png`
+in the agent's worktree); the walk test 18 of 18 legs; the buttons pressed by hand (settings' Turning, the Scourge
+lectern, the tutorial: `vr_debug_wallbuttons` "pressed by player: hand 1", as on the old map); e1m1's smoke test; a
+barrel spawned upright and lying in e1m1, pushed by the hand (it rolled); the load (exclusive, 4 runs each, alternating): cold (a
+new process, the hull files there) 1163 -> 1183 ms median (1138-1212 against 1162-1209), warm (the map again, the same
+process) 283 -> 286 ms; the hull files load in 6 ms (were 8).
+
+## Leaning through stick turns: the body kept on the real one (2026-10-07)
+
+Report: leaning, then turning or moving with the stick, put the game's body out of step with the real one.
+
+**Cause.** The lean (`hands::lean`, the head off the middle of the player's box, vr_hands.cpp) is kept in the world's
+axes, and a stick turn turns the play space about the head (`addTurn`): the head stays, the box stays, the lean stays
+pointing where it did in the world. The real body, though, is a lean behind the head in the room, so it swings round
+the head with the play space. After a half turn leaning forward 24 cm, the game had the body 49 cm off the real one
+(in front of the head instead of behind it): the drawn body leant backwards, its arms reaching back to the hands, the
+holsters and anchors off with it; straightening up, the head went "further out", the body walked or slid after it
+(about 2 s, vr_lean_recenter), and against a wall or a ledge it never came back (25 cm for good). The lean's learnt
+hands (`LeanSense::handsRef`, also in the world's axes) were turned wrong too. Stick movement alone was fine (the box
+moves, the lean is relative to it); the torso's yaw is kept in play-space degrees and was fine.
+
+**Fix (vr_lean_turn, default 2).** Stick turns go through `hands::stickTurn`: the lean and the learnt hands turn with the
+play space. 2: a smooth turn keeps the head where it is and swings the box round under it (room-scale walking, where
+the box fits and has floor under it, the recentring's own checks); else, and for snaps (the view jumps anyway), the
+head swings round the body, which stays. 1: always round the body. 0: the old way. The portal crossing's turn keeps
+its own lean turn (`addTurn`, unchanged); server yaws (teleports, spawns) still reset the lean.
+
+**Measure.** `vr_body_error [mark]` and Debug > Views > Log Body Drift (`vr_debug_body_error`): where the game has the
+body (its box) in the room and which way it faces there, against the mark. Standing still in the room, it should stay
+near 0 whatever the stick does. `Misc/quakevr/lean/lean_turn_test.sh <agent>` (pos cm after the turn / straightened /
+2.5 s later):
+
+| case | vr_lean_turn 0 | vr_lean_turn 2 |
+|---|---|---|
+| lean fwd, smooth 180 | 48.9 / 25.4 / 0 | 1.1 / 1.1 / 0 |
+| lean fwd, smooth 90 | 34.3 / 25.4 / 0 | 1.1 / 1.1 / 0 |
+| lean fwd, snap 90 | 34.6 / 25.4 / 0 | 1.1 / 1.1 / 0 |
+| lean fwd, snap 2x90 | 48.9 / 25.4 / 0 | 1.1 / 1.1 / 0 |
+| lean right, smooth 180 | 43.1 / 25.4 / 0 | 0.8 / 0.8 / 0 |
+| lean fwd, stick move | 1.1 / 1.1 / 0 | 1.1 / 1.1 / 0 |
+| lean right, turn + move | 43.2 / 25.4 / 0 | 0.8 / 0.8 / 0 |
+| at a wall, lean to it, smooth 180 | 44.0 / 25.4 / **25.4** | 0 / 0 / 0 |
+
+The 1 cm left is the lean's first instants, walked before they are known as a lean (vr_lean_detect): head and hands
+alone can't tell a lean from a step at once. The head during a smooth 180 at the default speed with a 24 cm lean:
+mode 2 holds it within 1.5 units (the box's move reaches the server a frame later; it catches up when the turn stops),
+mode 1 swings it 15 units. Turning and moving into e1m1's walls turns the torso 6-11 degrees (the hands stopped at the
+wall pull it, `stopAtWall`), with or without a lean, in either mode: not the turn's.
+
+## Immersive manual reloading, phase 2: magazines (2026-10-07)
+
+RELOAD_PLAN.md's phase 2: the nailgun, the super nailgun and the thunderbolt take magazines (immersive mode; the lava
+nailguns and the plasma gun too, with their ammo).
+
+- **Models** (make_mags.py; normal maps baked): the nailgun's a box magazine under the receiver ahead of the trigger
+  guard, raked forward (the old nailgun pickup's leg), brown with stamped ribs, a steel base plate, nail heads in its
+  lips; the super nailgun's a bigger box out of its outer side (right, mirrored in the left hand), 37 degrees up, a
+  window down its top face showing the nails; the thunderbolt's an octagonal blued cell hung under its body, bronze
+  bands, a copper contact. Each as a prop (`vr_mag_nail/snail/light.mdl`: prop slots 51-53, `vr_props_version` 61: in
+  the palm, one hand) and as drawn in its gun (`vr_mag_on_<gun>.mdl`, made in that gun's model space; the engine gives
+  it the gun's Scale and offsets, vr_weapons.cpp `makeModelTransform`, and corrects for the bounds' corner the Scale
+  is applied about; it moves with the gun's firing kick by an anchor vertex).
+- **State.** The magazine's rounds are the gun's record's clip (it stays with the gun); none in is the weapon flag
+  `QVR_WPNFLAG_NOMAG` (16), which travels with the gun's flags (holsters, throws, level changes). The client draws the
+  attached magazine from the hands' and holsters' flag stats and, for a gun lying about, a new entity bit `U_QVR_NOMAG`
+  (vr_view.cpp `setupMagazines`).
+- **The pouch** gives the magazine of the gun in the other hand, holding min(its size, the reserve). Held within
+  `vr_reload_mag_leniency` (5 units) of the gun's well it seats if the gun has none. With one in, only a **bump** seats
+  it: the hands meeting at `vr_reload_bump_speed` (1.2 m/s) or more knocks the old one out (flying, its count kept) and
+  seats the new one; slower, nothing happens (a dull tap).
+- **Ejects:** (1) B/Y on the gun's controller (`vr_reload_eject_button`; weapon cycling keeps the button off a magazine
+  gun then); (2) the other hand gripping within `vr_reload_pull_reach` (6 units) of the magazine holds it (as a
+  foregrip: nothing comes out), and pulling it away from the gun at `vr_reload_pull_speed` (1.5 m/s) with the wrist
+  turning at `vr_reload_pull_snap` (200 deg/s) takes it out into that hand (a freshly pulled one doesn't re-seat until
+  it has left the well); (3) the bump. Out, a magazine is a round as the shells are: taken again, force grabbed,
+  refunded at the pouch (a part-used one its count), under the loose rounds' cap and fade. Switching a lava nailgun's
+  ammo drops its magazine.
+- **Multiplayer (phase 1's flag fixed):** a new stat `STAT_QVR_RELOADMODE` is the server's mode as it applies; the client
+  draws the ammo pouch, the magazines and the ammo screens' clip by it, not by its own `vr_reload_mode`.
+- Sounds (make_sounds.py): `reload_mag_in.wav`, `reload_mag_out.wav`. Weapons > Reloading has a Magazines group (Well
+  Leniency, Eject Button, Pull Speed, Pull Wrist Snap, Pull Reach, Bump Speed); Debug > Tests > Reloading: Nailgun in the
+  Off Hand, Eject the Off Hand's Magazine (`vr_reload_test 6`).
+- **Tests:** reload_test.sh: the self-test 47 of 47 (the magazines' 20 checks among them), phase 1's 9 mock checks, and 9
+  magazine ones by the mock hands (B/Y drop, take, seat, a gentle pull that holds, a hard pull with a snap, the part-used
+  refund, a second seat, a slow meeting that does nothing, the bump). Loaded map guns' transfer and pickups pass, the
+  e1m1 smoke and the weapon instance steps, `vr_menu_path_check`; QC 0 warnings.
+
+Open for the author: the magazines' size and place on each gun; the pull and bump thresholds; the pouch still shows
+shells whatever the gun (frames per round kind are phase 3's).
+
+## Immersive reloading: the author's first notes (2026-10-07)
+
+His voice notes on phase 1, one commit each:
+
+1. **The pouch rides the legs** (`vr_ammo_pouch_leg_follow`, default 1; Reloading > Follow Legs): with the full body it
+   moves with both thighs' animation as the belt does, half each, as the hip holsters do with `vr_holster_leg_follow`
+   (vr_body.cpp `onBothThighs`).
+2. **Adjustable load points** (Reloading > Load Points): each gun's port or well moved by
+   `vr_reload_port_<shot|nail|snail|light>_x/y/z` (the gun's model units; the lava nailguns' and the plasma gun's with
+   theirs); **Show Load Points** (`vr_reload_show_ports`) draws the point (yellow), its acceptance range (green: Port or
+   Well Leniency) and a well's pull reach (blue), live.
+3. **Collision Leniency** (`vr_reload_collide_leniency`, 12 cm): a held shell or magazine may go that far into the
+   other hand's gun's box (Held Things Collide keeps them apart by the boxes: the gun's goes down to its grip, so the
+   shell stopped short of the port under the receiver) before they are kept apart (vr_held.cpp).
+4. **Ammo boxes into the pouch** (QC `VR_Reload_PouchTakesBox`): an ammo box (shells, nails, rockets, cells, the
+   mission packs', the horde's) let go of at the ammo pouch goes in, whatever `vr_carry_take` says, with its rustle.
+5. **The real count**: the pouch's model (make_ammo_pouch.py, 14 frames) shows what it gives, one in sight per round
+   left: 1-5 shells, 1-3 nailgun magazines, 1-2 super nailgun magazines, 1-3 cells (a part-filled one counting); empty,
+   it falls in (vr_view.cpp `ammoPouchFrame`).
+6. **The counter** (`vr_ammo_pouch_counter`, on; Reloading > Counter, X/Y/Z, Pitch/Yaw/Roll, Size): the reserve of what
+   the pouch gives, on a small screen as the guns' ammo counters, above the pouch facing the eyes as they look down.
+7. and 8. **By ammo, not gun; the last kind kept** (QC `VR_Reload_PouchKind`, `VR_Reload_PlayerFrame`): the pouch gives
+   the other hand's gun's ammo (any shotgun, the super shotgun too: shells, though it has no immersive rules: a shell
+   brought to it does nothing; a nailgun, super nailgun, thunderbolt: its magazine); with nothing of the kind in the
+   other hand (empty, a melee weapon) the last kind held (the main hand's first; shells at first), to take, throw and put
+   back. The server sends what it gives and how many are left (`STAT_QVR_POUCHKIND`, `STAT_QVR_POUCHCOUNT`). The
+   rocket and grenade launchers give nothing yet (phases 3-4).
+
+Also: rebased on the wrist gadget redesign (45425224): `STAT_QVR_RELOADMODE` and the new two stats follow its
+`STAT_QVR_AMMOTYPE`. Tests: reload_test.sh 24 of 24 (the self-test 54 of 54; section 5: the legs, a load point moved,
+Collision Leniency 0 against 12, an ammo box with `vr_carry_take 1`, the pouch's frame for 50 nails), the loaded map
+guns', the e1m1 smoke, `vr_menu_path_check`; QC 0 warnings.
+## A far button pressed at a map load (2026-10-07)
+
+Your report (seen by a headless agent on vrstart2, and on the old vrstart): at a map load the off hand sometimes
+"pressed" a button far from it. Logged with the press's hand, its position and distances (`vr_debug_wallbuttons 1` now
+prints them under each press), the presses were never the hand's touch: they were **the engine's line from a hand to its
+muzzle** (`weaponTouches`: "pressed by player: the line from hand 0 to its muzzle", the hand 53 units from the button,
+the muzzle near the world's origin). Two ways that line crossed the map on a load's first frames:
+
+- **The client's muzzle was the last render's.** Moves are sent before the frame's render, so a move carries the muzzles
+  (and the loading ports) the view placed at the previous render, with the hands as they are now. After a map load the
+  last render was the old map's, or this map's first one with the player's entity still at the world's origin (it is
+  placed by the first entity update): the empty hand's muzzle (the fist is a "weapon" with a muzzle) sat at about
+  (+-9, 10, 21), the hand at the spawn. A teleport left it behind the same way for a frame. The view now records where
+  each hand was when it placed them (`hands::State::placedFrom`, at the end of `VR_SetupViewEntities`) and the move
+  carries the muzzle, a carried gun's tip and the port along by how far the hand has gone since (vr_client.cpp
+  `handMuzzle`). In play this also takes the one frame of hand travel off the muzzle's lag (its turn still lags a frame,
+  as before).
+- **The server's fallback, before the client's first move on the map,** traced from `.handpos` (the player's origin,
+  set at the spawn) to `.muzzlepos`, never set: the world's origin. `PutClientInServer` now sets the muzzles and ports
+  to the origin with the hands (client.qc).
+- And a guard: a line from a hand to its muzzle longer than 4 m (`weaponLineMaxMetres`; no weapon is that long) touches
+  nothing (`developer 1` prints it). It never fires after the two fixes.
+
+Hand touches themselves (buttons, pickups, weapons lying about, carried boxes: `handTouches`, `handTouch`) were never
+wrong at a load: the hands are placed from the move's own origin and moved with the body (`rebaseHands`); what used the
+muzzle line was the wall buttons and the explosive boxes (`vr_wpntouch`), and the QC's muzzle (`.muzzlepos`).
+
+**Tested** (`Misc/quakevr/buttons/stray_press_test.sh <agent>`): vrstart2 and vrstart loaded 5 times each (hands at
+rest), and a save made on the pavilion with the off hand held up by the Turning button loaded 20 times. Before: the 20
+loads pressed Turning each time (20 of 20; the 10 map loads and a save on vrstart 0, their lines blocked or missing
+buttons); after: 0 of 30, no line over 4 m, the same with `-RealTime`, and 5 fresh processes (`+map vrstart2`, then the save) 0. Real presses
+right after a spawn or a load still work (Turning by the off hand 20 frames after the load, the tutorial button 20 frames
+into the map, the Scourge lectern); the walk test 18 of 18; e1m1's smoke test. (eval.sh: no current melee takes.)
+
+**To try in VR:** load vrstart2 and vrstart a few times, from the menu, a save and the slipgates (come back from the
+tutorial or the firing range): no button presses itself; the buttons by the start still press at once.
+
+## White text on the ammo screens (2026-10-07)
+
+Your note: the ammo screens' text in the wrist gadget's white, the frames kept green, the pouch counter too.
+`vr_ammo_screen_text_white` (1, on; Graphics' ammo screen rows "White Ammo Screen Text", and Weapons > Reloading
+"White Counter Text", the same setting): the guns' ammo screens and the ammo pouch's counter draw their numbers near-white
+in the gadget's brightened console font (`gadget::whitened`, `gadget::useBrightFont`: the gadget's own mechanism, now
+shared; its `drawText` uses it too); 0 the screen's colour as before (between: a mix). The face, the frame's glow and the
+CRT's static stay the screen's colour: as a CRT (`vr_weapon_screen_crt`) the screen's image is drawn in its own colours
+(Shade::Screen's trueColor, as the gadget's), its face pre-lit as the one-colour shader showed it; without the CRT look
+the glyphs go in a batch of their own in the bright font. Pictures: `scratch/ammo_text_white.png` (gun screen off/on,
+pouch counter off/on).
+## The menus' corner column moved left; the rows from the top (2026-10-07)
+
+Your note: in the headset the shortcut column (Back to game, Search, ... Relighting) and the vertical Quake VR banner
+under it often overlapped the menus; move them left, and use the room freed at the top for more rows.
+
+- **The column (its buttons, the banner under them, the spectator switch at the bottom) now stands clear left of what
+  the menu draws.** Its right edge was at menu x -8, but a VR page's labels are right-aligned to the values' column and
+  reach left of Quake's 320 columns (a 26-character label from x -32, a 38-character one from -128), and Ironwail's
+  lists (Levels, Mods) span the canvas's middle from about -136: they ran under the buttons and the banner. Its right
+  edge is now at x -136 (`ToolbarLayout::columnRight`) on almost every page, the same place each time for the laser; a
+  page whose text reaches further left (`menu::contentLeft`: its longest label, a long header, the help's width) moves
+  it further, 8 clear: Status Bar's and Wrist Gadget's long links, Debug - Tools' long headers, Debug - Views, a few
+  others (most at Menu Detail: Developer). Ironwail's lists are kept narrower in the headset so that they start right of
+  the column's usual place (`VR_MenuBounds`, now with their left and width): the column stays put on Levels and Mods.
+  On a narrow panel (no room left of the menu) it still falls back to the corner's icons and the rows below them.
+- **The rows start under the page's title, not below the buttons**, wherever the column is beside the menu
+  (`menuui::toolbarBeside`): the VR pages show 27-28 rows instead of 22-24 (VR Settings 23 -> 28 at Developer, 24 ->
+  28 at Standard; Graphics 22 -> 27; Melee 22 -> 27; Debug - Tools 22 -> 27), Levels, Mods, Options' lists and the key
+  bindings about 4-5 more, Search and the Map Library's keyboard and results higher by as much.
+- **The status box in the top right corner stays clear:** a menu reaching right under it (Ironwail's lists, Search, the
+  Map Library) starts below it (`menuui::statusBottom`, the box taken as 40 characters wide at least so that a line
+  growing by a digit does not move the rows). Levels' title now sits under it; the VR pages end left of it.
+- The flat screen's row of icons along the top is unchanged (it never overlapped).
+- `menu_vr pos` prints the layout: where the menu's text starts (menu x), the buttons' right edge and bottom, beside or
+  over the menu, and on a VR page the rows' top and how many are shown.
+
+**Tested** with the mock (vr_eyeshot 3, the left eye's panel): Main, Options, Levels, VR Settings, Status Bar, Graphics,
+Map Library, Checklist, Debug - Tools (a long help) and the key bindings before and after; nothing overlaps the column,
+the banner, the status box or the spectator switch. The laser clicks the moved buttons (Advanced VR from Status Bar,
+whose column is further left; Checklist from Debug - Tools; Levels; the spectator switch). The flat screen's menus
+unchanged (VR Settings and the Map Library start where they did). `vr_menu_path_check maps/vrcalibration.map`: 0
+missing. e1m1's smoke test.
+
+**To try in VR:** open the menu on a few pages (VR Settings, a long Advanced page, Levels, the Map Library): the column
+and the banner stand left of the menu, more rows show at once, and the corner's buttons are as easy to hit with the
+laser. Status Bar and Wrist Gadget (their long "... VR Settings, Body and Display" links) move the column further left:
+say if that jump bothers you (the alternative is a fixed place left of every page, further from the menu).
+## Immersive reloading: rounds 2 and 3 (2026-10-07)
+
+The author's second and third rounds of VR notes on immersive reloading (worktree `reload`).
+
+- **Shells**: spent shells are drawn plainly apart: a darker, scuffed and sooty hull, dulled brass, a dented black primer (make_shell.py `paint_spent`). A shell
+  coming within reach of a full shotgun's port clicks "can't" once (`reload_blocked.wav`, a short haptic), again only
+  after it left the port's range; the last shell in plays a heavier "full" knock (`reload_full.wav`). The insert sound
+  `reload_shell_in.wav` is duller (a muffled "shk-chk"), still synthesized (make_sounds.py) under that name.
+  Open-source candidates for the author to pick (nothing downloaded): see the round's report.
+- **Load points**: each gun has its own point and radius (`vr_reload_port_<shot|nail|snail|light>_x/y/z/_radius`:
+  4, 1, 1, 1); the old `vr_reload_port_leniency` and `vr_reload_mag_leniency` are gone. A magazine's reference point is
+  its top (`vr_reload_mag_<nail|snail|light>_x/y/z`, radius `_radius` 0.5): it seats when that top is within the gun's
+  radius plus its own of the gun's point (where the seated magazine's top sits). Show Load Points draws both.
+- **Magazines**: taken from the pouch top up, in the loading pose (props 50-52 Grip X/Y/Z, GripMode 1; the author's
+  sizes 0.55/0.45/0.45 as defaults; `vr_props_version` 63 takes the shipped slots). The super nailgun's magazine now
+  stands perpendicular to the ridged face it attaches to. Each magazine gun has a visible receiver (`vr_magwell_on_<gun>.mdl`,
+  make_mags.py `magwell`), drawn on the gun at its well, moved and turned by `vr_reload_well_<gun>_x/y/z/pitch/yaw/roll`
+  (looks only). Lava nails' magazines are fiery (skin 1: reds, glowing nails); plasma cells' bluish; the pouch too.
+- **The magazine is the two-handed grip** on the nailgun, super nailgun and thunderbolt: their 2H hotspot is the seated
+  magazine; gripping it aims two-handed and holds it in; it comes out into that hand only by a hard pull
+  (`vr_reload_pull_speed` 2.5 m/s), a wrist snap (`vr_reload_pull_snap` 600 deg/s) or the hands moved apart
+  (`vr_reload_pull_apart` 10 units, about 40 cm); a gentle pull keeps it.
+- **Hits**: a seated magazine pops out when hit at `vr_reload_bump_speed` (2 m/s) or more by a fist, a held prop or
+  magazine, or the other gun (its line from the hand to the muzzle) within `vr_reload_hit_reach` (4 units) of its top;
+  it flies along the blow with the gun's own speed. Not within half a second of a seat (the hand that pushed it in
+  follows through by the well). The bump reload is two steps: a magazine meeting a full well only knocks the old one out;
+  it seats once taken away (`vr_reload_collide_leniency + 4` units) and brought back.
+- **Collision**: a hand holding a round from the pouch goes through the other hand near that hand's gun's port
+  (vr_selfcollide.cpp; `vr_reload_collide_leniency` now 30 cm): pushed apart, the gun's port moved away from the round.
+- **Grips on the rising edge** (`vr_2h_grip_edge` 1, Aiming, "Grip Must Close On It"): a two-handed grip on any gun
+  takes hold only when the grip closes on its hotspot; a fist already closed moved onto it doesn't.
+- **The pouch counter** turns with the pouch (its look and up from the pouch's frame), not the head.
+- **The ammo button** is pressed only by a fingertip coming at it from its front, within `vr_weapon_button_cone` (50)
+  degrees of the way its face looks (Hand/Gun Calibration, "Ammo Button Cone"; 180: from anywhere).
+- Tests: reload_test.sh section 6 (TESTING.md); the self-test 56 of 56.
+
+## Immersive reloading: the recorded shell insert (2026-10-07)
+
+The author picked zer0_sol's "Shotgun Reload Sound effects" (OpenGameArt, CC0; docs/vr-port/CREDITS.md) for the shell
+insert. `Misc/quakevr/make_reload_shell_sounds.py` cuts three takes from the downloaded MP3s (not in the repository) into
+`reload_shell_in.wav`, `reload_shell_in_2.wav` and `reload_shell_in_3.wav` (44100 Hz 16-bit mono, 0.18-0.23 s); QC
+`VR_Reload_ShellInSound` picks one at random per insert (the pitch jitter on top), so a tube filled shell by shell does
+not repeat. The synthesized insert is gone from make_sounds.py.
+
+- **What is cut**: every shell in the takes is two clusters, the shell handled at the port (rattling clicks) and then
+  pushed into the tube (a scrape rising as the spring gives, ending in the shell latch's click on its rim, -80 dB floor
+  between). Only the push: 80 ms of scrape before the click, 100-150 ms after it (two takes keep the thumb's small tick
+  110 ms after the click), faded in 15 ms and out 30 ms. The click lands at 80 ms, where `reload_full.wav`'s second
+  knock and thud fall, so the last shell's click and the full knock coincide.
+- **Level**: the takes are bright (40-70% of the energy above 6 kHz, nothing below 300 Hz; the synthesized insert was
+  74% below 300 Hz), so they are matched by A-weighted loudness, not RMS: -14.6 dB over the loud frames, as the
+  synthesized insert (Quake's weapons/guncock.wav -18.1, the magazine seat -12.3); peaks soft-limited under -1 dBFS
+  (about 1% of the samples). Kept at 44100 Hz: 5-8% of the clicks' energy is above 11 kHz.
+- **Not replaced**: the "full" cue and the "can't" click stay synthesized. "Shell in Chamber" ends in the action
+  closing, a 250 ms bright triple click: over the last insert it smears the latch's click and sounds like the gun being
+  cycled; the synthesized full knock is low (78% below 300 Hz) and gives the bright recording weight under it. "Shell
+  in Chamber"'s first click (0.51 s, a single dull click, 80 ms) would suit the "can't" click if the synthesized one
+  sounds out of place next to the recording.
+
+Test in VR: fill the shotgun shell by shell (the three takes alternate, none too loud or quiet next to the pouch and the
+magazines), the last shell's click with the full knock under it.
+
+## Installer sounds crackled (2026-10-07)
+
+Vittorio heard crackling in the installer's UI sounds. Two causes, measured (`QuakeVR-Setup --screenshots <dir> --extras`,
+report.txt: "device rings" and "offline mix").
+
+- **Underruns (the crackle).** `SoundEngine` queued 4 buffers of 512 frames (46 ms) on wave-out. With the fire's loop
+  and a click every 120 ms while the live window animated, that ring played 20.1 s of audio in 26.1 s (the device's
+  own position, `waveOutGetPosition`): 430 underruns (every buffer done at a refill), a ~14 ms gap every ~60 ms. The
+  event was right (CALLBACK_EVENT on `_deviceEvent`, ~870 device wakes; the old 50 ms timeout was not the cause: with a
+  20 ms timeout the 46 ms ring still drained 428 times). Windows' wave-out, emulated over WASAPI, starves with 50 ms or
+  less queued: 5 x 441 (50 ms) played 21.7 s in 26.0 s, and there WHDR_DONE missed it (one underrun counted; the
+  emulation holds the last buffer while it starves), 6 x 441 (60 ms) held with one buffer to spare, 8 x 441 (80 ms)
+  with six. Now 8 x 441 (10 ms each, the audio engine's period; a click waits at most 80 ms), the wait 20 ms. Reading
+  the device's position at every refill hid the gaps (the emulation's timing changes), so the harness reads it once
+  at the end.
+- **The mixer's own steps (clicks).** Quake's 8-bit sounds start and end off zero (first/last samples up to 0.07, DC
+  up to 0.03; the 8-bit conversion, `(b - 128) / 128`, is centred), a fourth voice of one sound was cut mid-play (a
+  burst of typing: `misc/menu1` is 507 ms), the loop jumped from its last sample to its first, and the mute cut the
+  output. An offline render of a scripted 9 s session with Quake's sounds (clicks, 26 keystrokes 55 ms apart, the
+  install's sounds, a mute): the mixer's own largest step 0.027 with 20 over 0.01, now 0.001 and none. Now every
+  voice fades in over 2 ms and out over its last 4 ms, a stolen voice fades out over 6 ms, the loop's last 40 ms is
+  crossfaded into its start (`SoundMixer.Seamless`), the master volume ramps over 10 ms (the thread keeps sending
+  until it reaches 0), and the limiter is linear to 0.6 then a tanh bend (the old knee `s - 0.15 s^3` jumped from 0.85
+  to 1 at |s| = 1; no session reached it: peak 0.44).
+
+The mixer moved to the core (`Core/Audio/SoundMixer.cs`, no device) with a self-test ("sounds: the mixer never steps
+the output"); `SoundEngine` keeps the device, counts `Underruns`, `MinQueued`, `TimeoutWakes` and played versus
+streamed seconds.
+
+Test on the PC: the installer's clicks, a burst of typing in the folder box, and the mute button, over the fire.
+## Re-gripping a head held in both hands (2026-10-07)
+
+`twohand_regrip_test.sh` had the grunt's head held in both hands once, not 3 times ("Every prop in both hands"). Bisected
+(the head case as the oracle, 773c0cb7 good): **6b655110** (October 5 notes), the heads' Size 0.7 (props v57). A prop
+sits where it was fitted to the drawn fist, not to the fist's test spheres; the smaller head left the hand that held it
+2.58 cm off its surface, past Two-Handed Grab Reach (2 cm), so the hand that let go of it could not grip it again where
+it was ("the other hand is not within reach"). Not the test: in VR the same hand at the same place was refused.
+
+Fix (vr_carry2h.cpp): when one hand lets go of a prop held in both (keep), where it held it (its grip, in the prop's
+frame) is kept; that hand gripping again within Two-Handed Grab Reach of it takes the prop, whatever its size or fit.
+The surface test is unchanged (and still the only test for a first second-hand grip). Forgotten when held in both again,
+the entity is freed, or the map changes. vr_debug_carry 2 prints "carry2h: off hand 0.31 cm from where it let go of it".
+
+Test: twohand_regrip_test.sh 3 of 3 runs: every prop held in both 3, kept by one 2, moved at most 0.01 units; the same
+with vr_2h_grip_edge 0 (weapons only: props never used it); the off hand moved 5 cm away before gripping: refused.
+reload_test.sh section 1 (56/56), grip_state_test.py PASS, e1m1 smoke clean.
+
+In VR:
+- [ ] Hold a monster's head in both hands; let go with one hand and grip it again where it is: taken, no jump.
+## Shotgun auto pump (2026-10-07)
+
+The author: "an auto-slide-pump animation after every shot (properly synchronized with the used shell ejection)", with a
+rail system on the shotgun that makes it believable the gun cycles itself (worktree `shotpump`).
+
+- **The model** (polish_weapons.py `auto_pump`, `split_auto_pump`; anchors unchanged, the loading port and its load point
+  as they were): two polished steel guide rods along the fore-end's shoulders either side of the barrel (seen over the
+  fore-end from the side and from above), from a blued actuator housing on each side of the receiver's front (a stepped,
+  dark front where the rod comes out) to a yoke clamped round the barrel ahead of the fore-end (a band and a lug out to
+  each rod). The fore-end is the id model's ribbed rings, the last three (the first, by the receiver, is gone: room for
+  the stroke, and the rods show there), with a shoe round each rod on its first and last ring, a strap under each rod
+  between them and a short action bar back from the rear shoe towards the housing. The id skin painted the rings on the
+  fore-end's body under them: the rings got their own copy of their texels (6 rows added under the skin) and the body's
+  stripes are painted over in the dark between them, so nothing stays behind as the rings slide. +432 triangles
+  (v_shot.mdl 1216 -> 1648). v_shot.mdl keeps everything at rest (holstered, lying, thrown); the moving fore-end is
+  also written apart, `progs/vr_pump_on_v_shot.mdl`, and the gun without it, `progs/vr_pumpbody_on_v_shot.mdl` (same
+  header, frames and skin; their normal maps are v_shot's, copied by bake_normals.py: normalmaps.py `SHARED`).
+- **The stroke** (vr_autopump.cpp): each shot (QVR_SVC_FIRED) starts one; game time (cl.time: slowed in bullet time,
+  the same at any frame rate). Back over its first 35% (fast, easing into the back), held 10%, home over the rest (from
+  rest, faster and faster, home at full speed). While it runs the hand's shotgun is drawn as the two parts (vr_view.cpp
+  `setupPumps`: copies of the gun's entity, the fore-end slid back along the gun's model x; the gun's own entity not
+  drawn, its frame blending copied back from the body's copy each frame), only for Quake VR's own v_shot.mdl (a mod's,
+  with other frames or header, is drawn as it is).
+- **The shell** leaves the port in the frame the fore-end reaches the back (vr_shells.cpp waits for the stroke the shot
+  started instead of the QC's 0.22 s), thrown back a little with the action (0.4 of the stroke's average speed back).
+  With Auto Pump off it leaves 0.22 s after the shot, as before.
+- **Feel**: a light tick in the hand at the back and home (`vr_autopump_haptics` 1); two clacks, the slide unlocking
+  and starting back as the stroke starts, the slide slamming home timed so its loudest moment is the stroke's end
+  (`vr_autopump_sound` 0.5; cut from zer0_sol's CC0 "Rack.mp3" by make_autopump_sounds.py: CREDITS.md).
+- **Settings** (Weapons > Weapon Effects, "Shotgun Auto Pump"): Auto Pump (`vr_autopump` 1), Time (`vr_autopump_time`
+  0.3 s; 0.1-0.48, under the shotgun's 0.5 s refire), Travel (`vr_autopump_travel` 2.5 model units, about 9.5 cm drawn;
+  0-3.2), Sound, Haptics. Debug > Tests: Hold the Auto Pump (`vr_autopump_hold` 0..1, the stroke held there for a look),
+  Print Weapon Effects (`vr_debug_weaponfx` 1: each stroke's start, back, home and the shell's eject; 2: the travel each
+  frame).
+- Tests: `Misc/quakevr/autopump_test.sh` (TESTING.md).
+- For the author in VR: the look of the rods and the stroke (Travel, Time), the clacks' volume against the shot, and
+  whether the off hand on the fore-end (two-handed) should ride with it (it stays where the controller is now).
+## Menu tweaks: VR Settings rows, section gaps, the flat banner, the main menu, Back where you came from, fine sliders
+
+**VR Settings** (`pageMain`): Weapons > **Reloading Mode** (Immersive 3 / Simple 2 / Disabled 0 on `vr_reload_mode`; a
+config's All Holsters, 1, is shown as "Simple (all holsters)" while it is set and kept until another is picked);
+Locomotion > **Swimming** (Immersive / Vanilla on `vr_swim`); Body > **Leaning Detection** (`vr_lean_detect` 1/0; a
+config's 1.5 shows On); a **Bullet Time** section, **Activation**: Wrist Gadget / Left Thumbstick Press / Right Thumbstick
+Press (`vr_menu_bullettime`, a wrapper over `vr_bullettime_trigger`, `_tap`, `_button`, `_enabled`: a stick leaves the
+gadget doing nothing, as Combat > Bullet Time's Trigger; the gadget sets its tap and button on; a config's other
+combination is shown as it is: Off, tap only, button only, neither); under Hand Calibration a **Holster Calibration**
+section: Forward / Inward / Up for the hip (`vr_hip_offset_*`), chest (`vr_upper_holster_offset_*`) and back
+(`vr_shoulder_holster_offset_*`) pairs, wrappers `vr_menu_holster_<pair>_<x|y|z>` from the shipped place (Inward is the
+offset's Y less; one setting per pair, the left mirrored, as always), the pair drawn on the body while its slider is
+chosen (vr_body.cpp queueDebug), and **Reset Holsters**. The calibration room's board was left as it is (holsters are not
+part of the calibration); `vr_menu_path_check maps/vrcalibration.map`: 4 found, 0 missing.
+
+**Section gaps** (`vr_menu_section_gap`, rows, 0.75; HUD and Menus > Menu > Section Gap, 0 to 2): a gap above each header
+of a VR page (the first too, under the title). The list still scrolls a row at a time; the rows shown are counted from
+the scroll with the gaps (rowsFrom), and the furthest scroll (maxScroll), the scroll that shows the cursor
+(scrollShowing), the scrollbar, the stick, the drop-down lists' rows and the mouse/laser's rows (rowAt: nothing in a
+gap) all use the same layout (rowTop). Checked with `menu_vr rows` at 0, 0.75 and 2, in the headset and flat.
+
+**Flat banner**: the vertical Quake VR banner moves left clear of the menu's text, as the headset's column does: VR pages
+by `menu::contentLeft` (long labels, help), Ironwail's lists by `M_TextLeft`; narrower where the canvas's edge leaves too
+little room, left out under 40 pixels tall (Status Bar's long links).
+
+**Main menu**: Map Library is **Download Maps**, with **Play Custom Map** (Ironwail's Levels) under it; the rows in four
+groups with a gap above each (M_Main_Layout: 20 apart and 10 more per group where the canvas has room, closer where it
+has not; the keys skip a hidden row; the mouse and laser select a row only where it is drawn). **Mods** is hidden unless
+`vr_menu_main_mods` (0; Menu > Mods on the Main Menu); Options > Mods has it. The lettering's D (d two rows taller) and w
+(v with its right stroke twice more) are made by make_bigfont.py. The Multiplayer menu says multiplayer is untested and
+not expected to work properly.
+
+**Back where you came from** (vr_menu.cpp, NavStack): the VR pages keep the way to the page shown as a stack (pages, and
+below them the menu outside they were entered from: main menu rows, Single Player > Official Campaigns, Options > VR
+Settings, a corner button over any menu). Back pops it; a place already on the stack is gone back to rather than added
+again (no loops); with nothing under the page, up the tree (the VR Settings: Options). Ironwail's Levels opened by a jump
+(Play Custom Map, the corner's Levels, also from a VR page) go back there (`VR_NavJump`, `VR_NavEntered`, `VR_NavBack`);
+from their own way in, their own Back. A Search result's page goes up its tree (its natural parent), not back to Search.
+The mouse or laser on a corner button no longer moves the menu's own selection (it used to jump to the first row as
+the laser went to the corner), so Back finds the row it left. Tested (flat, scripted): Single Player > Official
+Campaigns, main > VR Settings, main > Advanced VR > Gore and back twice, main > Play Custom Map, main > corner Search,
+Graphics > corner Levels, Options > VR Settings, Single Player > corner Advanced VR, Levels > corner Search and back
+twice, a Search result (Relighting: back to Graphics, Advanced VR Options, the main menu).
+
+**Fine sliders**: while a grip is held in the headset (the grips do nothing else in the menus) or Shift on a flat
+screen, a slider steps by `vr_menu_fine_step` of its step (0.1; Menu > Fine Step) and shows the decimals that takes; the
+steps' grid is the fine one, so a fine-tuned value keeps its fine part on whole steps. Held Object Offsets > X: 0.5 a
+step, 0.05 with Shift or a grip; 0.55 saved as "0.55". Every slider's help ends with the modifier.
+
+Test in VR: the main menu's groups and Play Custom Map (and Back from the Levels); Back from Official Campaigns and from
+a corner button; the new VR Settings rows and Holster Calibration (the pair shown on the body while its slider is
+chosen); Section Gap 0, 0.75 and 2 on a long page; a grip held while moving a Held Object Offsets slider.
+
+## Foveated rendering: white seams on models in the periphery (2026-10-07)
+
+With vr_foveated on and no MSAA (vid_fsaa 0), models in the coarse-shaded rings (the super nailgun's barrels, the
+pentagram of protection) showed dotted white lines along some triangle edges. Cause: under GL_NV_shading_rate_image a
+2x2 or 4x4 fragment's inputs are interpolated at its block's centre, which can lie past the triangle's edge, so the
+interpolated values run on beyond their vertices' range. The model's own occlusion (in_vao, vr_ao_models: 0 at deeply
+occluded vertices) went below 0 there and `sqrt(in_vao)` (the dynamic lights' share) gave NaN; NVIDIA's clamp turns NaN
+into its upper bound, so the pixel came out at the scene's brightest. Evidence: with the author's settings, vr_ao_models
+0 alone removed the lines (68 of 68 bright pixels in the gun crop); toggling parallax, normal maps, retro, retro light,
+rim light and specular AA did not; `centroid` on the skin's coordinates changed nothing (no MSAA: centroid is ignored).
+
+Fix (vr_glsl.h, QVR_ALIAS_FS_LIGHT): in_vao clamped to 0..1 before its use. Eyeshots at 1440 px, paused (the same
+frame), the author's config, foveated 3 vs 0: the gun's barrels 65 near-white pixels before, 0 after; the pentagram 144
+before, 0 after; foveated 0 unchanged. Left: two or three single coloured pixels on the gun's silhouette (the skin's
+coordinates extrapolated past the triangle into other texels: coarse shading's own, not fixable with centroid without
+MSAA). Cost: one clamp. Foveation still pays: e1m1 start, 2016 px eyes, GPU eyes 3.3-3.8 ms at foveated 3 against
+4.2-4.5 at 0 (world+brush 1.2-1.7 against 2.5-3.0). Scripts in the worktree's scratch (fovshot.sh, pentshot.sh).
+
+In VR:
+- [ ] Foveated rendering on, hold the super nailgun and look past it (and at a pentagram of protection) with the corner
+  of your eye: no white lines on its edges.
+
+## Release script (2026-10-07)
+
+Vittorio asked for one script that prepares and publishes a release, with no branch name in it (`vr-ironwail` will
+become the main branch). `Misc/release/make_release.ps1 -Version x.y.z [-DryRun | -Publish]` (and `make_release.sh`
+for Git Bash); the steps for him are in [RELEASING.md](RELEASING.md). It reuses what was there:
+`package-quakevr.ps1` (new `-Dist`, `-NoZip`, `-Version`), `Misc/quakevr/make_release.py` (the zip and latest.json)
+and the installer's tests. New on the way:
+
+- The version is stamped for the build only: `/p:QvrReleaseVersion` (quakevr.props) makes the engine say
+  `1.0.0 (2026-10-07 afd53921)`; the manifest and latest.json carry the same text; the installer gets `/p:Version`.
+  Nothing is committed; the annotated tag records it.
+- The installer's single-file publish failed (IL3000, warnings as errors) on the `Assembly.Location` test in
+  `MainViewModel.OwnSetupFiles`, which is exactly the "am I a single file?" test: suppressed there with a comment.
+  The publish also needs `IncludeNativeLibrariesForSelfExtract` (WPF's native DLLs inside): one 59 MB exe.
+- `qvr-setup feed --file latest.json --assets <folder>`: the feed parsed as the installer parses it, each file's size
+  and SHA-256 checked (exit 1 on a mismatch).
+- Checks run on the artifacts themselves: the zip against `package-quakevr.ps1 -DryRun`'s allowlist and for id's
+  files; the packaged `QuakeVR-Setup.exe` installs the zip with its off-screen harness, offline, into the output
+  folder, and `qvr-setup verify` checks it; the packaged `ironwail.exe` (from the zip, with linked id paks) loads
+  `start` with the mock headset and names the build in `version`.
+- Tested without publishing (version 0.9.0, nothing tagged): the full local run passes; `-Publish` is refused by the
+  preconditions (no upstream, no ericw-tools source zip); a temporary upstream showed the "not pushed" and "tag on
+  another commit" (local v0.8.2, origin's v0.0.8) checks.
+
+Open: the tags v0.8.0 to v0.8.2 exist only in the local repository (not on GitHub), so the generated notes run from
+v0.8.2 (about 1900 commits, capped at 150): write the first release's notes by hand (`-Notes`). The newest GitHub
+release is the HQ texture pack (`textures-2026-10-03`); a game release published as latest takes over
+`releases/latest/download/latest.json`, which is what the installer wants.
+
+## Immersive reloading: the super shotgun broken open (2026-10-07)
+
+Phase 2b of RELOAD_PLAN.md (worktree `reload`), with immersive reloading on and Weapons > Reloading > Super Shotgun >
+Break Open (`vr_reload_ssg_break`, 1):
+
+- **Fired, its shells stay in** (QC `QVR_WPNFLAG_SSG_SPENT`: 0-2 spent shells, in the weapon's flags; travels with the
+  gun). No holster, button or flick reload for it.
+- **Breaking it open** throws the spent shells out (the engine's casings, out of the chambers as drawn open, with a
+  pop: `reload_ssg_eject.wav`) and any live ones as rounds lying about (taken again or refunded at the pouch). It stays
+  open (`QVR_WPNFLAG_SSG_OPEN`): drawn open, the trigger only clicks (`gunclick.wav`). Two ways:
+  - the flick (the old flick reload's gesture or `+flickreload*`): no reload and no spin any more, it only breaks open;
+  - the pry: both hands on it (the two-handed grip on its fore-end, the grip held), the front hand's angle below the
+    back controller's aim going up by `vr_reload_ssg_pry_angle` (30 degrees) from its least since they took hold, at
+    `vr_reload_ssg_pry_speed` (100 deg/s) or faster: the front hand pushing the barrels down, or the stock lifted. The
+    engine detects it (vr_flick.cpp: the server's hand angles are the two-handed aim, which follows the hands' line) and
+    sends it as the gun hand's flick bit for a moment. A steady two-handed aim moves both together: it never pries.
+- **Loading**: the pouch always gives it a taped pair (`vr_shell_pair.mdl`); open, the pair's middle at its breech
+  (`vr_reload_port_sshot_x/y/z`, radius `vr_reload_port_sshot_radius` 3; the point turns down with the barrels; Show
+  Load Points draws it) loads both. **One chamber free** (a live shell picked up from the floor loaded first): the pair
+  loads one and the other stays in the hand (as the shotgun's pairs); shut, a pair is refused with the "can't" click.
+- **Closing**: the flick again (`vr_reload_ssg_close_flick` 1), the barrels lifted back with both hands (the reverse
+  pry, as far and as fast: `vr_reload_ssg_close_pry` 1), or by itself once both are loaded (`vr_reload_ssg_close_auto`,
+  0). The close: `reload_ssg_close.wav` and a heavier buzz in both hands.
+- **The model**: `Misc/quakevr/make_ssg_open.py` cuts `v_shot2.mdl` at its hinge into `vr_ssg_frame_on_v_shot2.mdl`
+  (the frame, its open front closed by a standing breech with two firing pins) and `vr_ssg_barrels_on_v_shot2.mdl` (the
+  barrels and fore-end, their back closed by a breech face with two chamber mouths; skins 0, 1, 2: the chambers empty,
+  one, both loaded with brass heads and primers), Quake palette, normal maps baked. Closed, the gun is drawn as itself;
+  open (and opening, closing: 450 and 900 deg/s, smooth at any frame rate) as its two parts, the barrels turned
+  `vr_reload_ssg_open_angle` (35) down about the hinge (vr_view.cpp setupSsgParts); held or holstered (lying in the
+  world it shows shut). Its two-handed grip turns down with the fore-end.
+- **Sounds**: the open and the close cut from zer0_sol's CC0 pack (`make_reload_ssg_sounds.py`; CREDITS.md), the
+  eject pop synthesised.
+- **Immersive off** (or Break Open off): the flick reloads it as before (the self-test and reload_test.sh check it).
+- Tests: the self-test 66 of 66 (its super shotgun section); reload_test.sh section 7 (46 of 46 in all).
+- Not done: a gun lying in the world is drawn shut even when open; its muzzle point (the aim line) stays where the shut
+  barrels are while open (it can't fire then).
+
+## Put-away transition (2026-10-07)
+
+The author: a transition when an item is collected into a holster or the ammo pouch: instead of vanishing, the thing
+becomes smaller and fits into the holster, then disappears (worktree `collectfx`).
+
+- **What:** a box or backpack let go of at a holster (into the pack), a key, rune, suit or the horn taken at a holster,
+  an ammo box or a round let go of at the ammo pouch, an unarmed hand grenade put back in the grenade pouch. Not a box
+  taken with the trigger away from a holster (nowhere to go), not armour (worn).
+- **Gameplay unchanged:** the server takes it at once as before (the pickup, its sounds, the ammo or key given), then QC
+  (vr_carry.qc `VR_CollectFx_Note` before the take keeps its model and pose, `VR_CollectFx_Send` once it is gone; in
+  `VR_Carry_Take`, `VR_Reload_LetGo`, `VR_HandGrenade_LetGo`) calls the `collectfx` builtin, which sends that player's
+  client QVR_SVC_COLLECT (32: hand, hotspot, entity, model index, origin, angles; reliable, to that player alone). Other
+  players see it vanish as before.
+- **The drawing** (vr_collectfx.cpp): the message comes with the update that no longer has the entity, so the client
+  still holds it as drawn last frame (in the hand, vr_held.cpp) and copies it (model, frame, skin, scale, its networked
+  scale and offset), else builds it from the server's pose. The copy's middle goes from where it was into the
+  holster's or pouch's point (body::holsterPosition, ammoPouchPosition, pouchPosition) while it shrinks to
+  `vr_collect_fx_size` of itself, both on an ease-in (t^2), over `vr_collect_fx_time` of vr_gametime (slowed in bullet
+  time; the same at any frame rate). The start is kept as an offset from the target, placed on the body every frame, so
+  it follows the body. The shrink is applied about the origin first in vr_render.cpp's applyPre (all the item's own
+  transforms inside it) and the origin set so its drawn middle is where it should be. The box copies cast shadows as the
+  boxes do (vr_lighting.cpp collectBrushes takes brush casters from cl_entities only; without it a held box's self-shadow
+  vanished at the release, a brightness pop). Cleared on a new map and a load; skipped in demos.
+- **Settings:** Carrying and Throwing > Carrying ("Put-Away Transition" `vr_collect_fx` 1, "Put-Away Time"
+  `vr_collect_fx_time` 0.25 s, "Put-Away End Size" `vr_collect_fx_size` 0.2). Debug > Logging: "Put-Away
+  Transition" (`vr_debug_collect_fx` 1 each thing, 2 each frame). Test aids: `vr_mock_hand_to <hand> holster <0..5>` and
+  `grenadepouch`; Debug > Tests > Thing: Silver Key (`vr_test_spawn 113`).
+- **Seen:** with the hand at the holster the thing's middle is only a few units off the holster's point, so it is mostly
+  the shrink, with a small drop into the point. Test: Misc/quakevr/collectfx_test.sh.
+## The marksman ogre outside Honey (2026-10-07)
+
+"I can't spawn the marksman ogre in the firing range. The console says I need the Honey model."
+- `monster_ogre_marksman` is Honey's marksman (its model `progs/mogre.mdl`, its crown, far sight, lobbed grenades, its
+  chainsaw's extra damage to ogres: `VR_IsHoneyMarksman`, by its `.wad`) only in a Honey map (`vr_honey_context`, or
+  one of `VR_GameUtil_InHoneyMap`'s) with Honey's data there. Anywhere else (the firing range, id's maps, a third-party
+  map such as Down the Gutter, Dimension of the Machine) it is Dimension of the Machine's marksman, as id's ogre.qc has
+  it: id's ogre model and behaviour under the marksman's classname. Before, outside Dimension of the Machine every
+  Honey branch took any marksman, and without Honey's model a map's marksman became a `monster_ogre`.
+- The Debug spawner's Marksman Ogre (Thing 20) and the dispensers no longer ask for Honey's model.
+- Test aid (Debug > Tests): `vr_marksman_test` 1 the nearest ogre (model, Honey's or not, health, enemy, grenades), 2
+  killed, 3 its body. e1m1: it spawns with id's model, hunts and chainsaws the player (100 to -3), dies, ragdolls;
+  vrfiringrange: spawns, dies, ragdolls (the range's spawned ogres, plain ones too, don't notice the player); MG1 hub
+  (`vr_mg_hub_test 38`): unchanged, 20/0 on `vr_mg_hub_test 1`.
+- Not tested: Honey's own marksman (no Honey data in the test base); the logic there is unchanged.
+
+## A cap on dropped enemy weapons (2026-10-07)
+
+"A global limit of maybe 32 or 64 on the ground; when we reach the limit, we start deleting them in a circular fashion.
+Only the one-use-only weapons."
+- The grunts' burst rifles, the enforcers' laser rifles and the ogres' chainsaws that monsters dropped (their weapon
+  record's `.vr_enemy_drop`, set as a monster drops one: it stays with the gun through hands, holsters and drops) lying
+  about: at most `vr_enemy_weapon_drop_max` (48; 0: no limit; Combat > Enemy Weapons > Most Lying About). Past it, as
+  one more is made (`CreateThrownWeapon` -> `VR_EnemyWeapons_MakeRoom`, vr_enemyguns.qc), the oldest (`.vr_drop_born`,
+  saved: the order survives a load) fades away in 0.4 s (nothing can take it meanwhile). Spared, the next oldest going
+  instead: one carried, pulled by a force grab, or moving faster than 40 u/s (in flight). One in a hand or a holster is
+  no prop: never counted. A map's or a dispenser's weapons (the firing range's chainsaw), every other drop and prop stay.
+- Not kept: the mark across a level change (a carried enemy gun's record is remade there: it is no longer capped).
+- Test (Debug > Tests > Enemy Weapon Drop Cap): `vr_dropcap_test 1` (60 grunts spawned ahead and killed one by one,
+  the first rifle taken into the gripped main hand, a chainsaw thrown up as the oldest, three other weapons dropped):
+  vrfiringrange, the most lying at any tick 48 of 48, the others 3 of 3, the held one held, the flying chainsaw kept
+  until it landed, then the first to go; saved and loaded, 10 more: the oldest (4.20 .. 5.30) went in order, 48 of 48.
+
+## Melee phasing (2026-10-07)
+
+The author: melee attacks sometimes don't seem to register because of the collision with the enemy's model; while a
+swing is fast enough, the enemy's collision with the hand and what it holds should be disabled for a split second, as
+an option to try (worktree `meleephase`).
+
+- **What stops the hand at a monster:** only vr_model_collide (vr_modelcollide.cpp, "Hands Stop at Models", "Held
+  Things Stop at Monsters"): the hand, its weapon and a prop held alone are *drawn* held out of the monsters' drawn
+  triangles (up to `vr_model_collide_max` 20 cm; deeper, less; none at twice that). It is drawn only: endView takes the
+  push back out of what the game reads, so the server's melee (QC vr_melee.qc VR_Melee_Sweep: the tracked hand's
+  points swept against the model as drawn, grown by the melee tolerance; a sweep starting inside counts, t 0) tests
+  the tracked hand whatever is drawn. The server's own hand placement (vr_handpose.cpp stopAtWall) already lets monsters
+  through (ROUND15's fix for swords jerked back at monsters' boxes); Box3D's hand and weapon bodies meet props only;
+  the carried props' QC traces are walls only. So no blow is lost to the stop itself: the headless punches below hit
+  once with it on or off. What it does is show the swing stopped at the surface (the push eases in within ~12 ms)
+  while the blow is tested further in, and a blow that misses or lands on another point than it looks.
+- **The option** (Combat > Melee > Swing Through Enemies; vr_modelcollide.cpp updatePhase): `vr_melee_phase` 1 (0 by
+  default: as before, for A/B): while the hand's grip goes at least `vr_melee_phase_speed` (2.25 m/s: a stab's least
+  speed, 0.75 x Swing Speed 3; the controller's velocity, the player's own movement left out) and for
+  `vr_melee_phase_time` (0.15 s) after it slowed, the monsters (Kind::Monster: FL_MONSTER or FL_CLIENT, corpses with
+  them) are left out of that hand's test: its push let go at once. Walls (vr_handpose.cpp) and things lying about
+  (vr_model_collide 2) still stop it. Fists and the melee weapons (the axe, Mjolnir and the Super Axe, the swords, the
+  crowbar, the chainsaw: by model) always; a gun or a prop held alone with `vr_melee_phase_hold` 1 (default). After
+  the phase a hand left inside a monster is eased back out (time constant 0.06 s instead of 0.012 s) until it reaches
+  where the push puts it (at most 0.5 s), not snapped out in a frame. Hits are untouched: once per swing as before (the
+  rearm rules, VR_Melee_Rearm). Debug > Views > Show Model Collisions (`vr_debug_model_collide` 1) also prints
+  "melee phase main: on/off at t, m/s" and marks the lines "phasing" or "released".
+- **Test:** Misc/quakevr/melee_phase_test.sh (7 of 7; fixed 90 Hz frames, mock punches with a closed fist,
+  vr_melee_push 0): a 5.3 m/s punch through the training dummy, off: 1 hit, drawn held out up to 5.7 units; on: 1 hit,
+  0.00 units drawn while phasing, then eased out over 22 frames (each closing at most 18% of the gap), out 0.23 s
+  after; a 0.5 m/s push into it, on: 0 hits, held out up to 6.0 units, no phasing; a punch ending inside a grunt, off
+  and on: 1 hit each, on eased out (at most 17% a frame); the shotgun swung into it with `vr_melee_phase_hold` 0: not
+  phased (held out 5.3 units), 1: phased.
+- **In the headset:** Combat > Melee > Swing Through Enemies on: punch and swing at grunts and the dummy, with the
+  follow-through you'd use. Does the fist or the blade going through feel better or worse than stopping at the body,
+  and do blows feel more reliable? Try Swing Through Speed lower (pushes pass through too) or higher (hard blows only),
+  and Follow-Through longer if the hand is seen stopping inside at the end of a swing.
+## Held props jittered over props on the floor
+
+Your note: a prop in the hand (an ammo box, a torch) walked over boxes lying on the floor went up and down, as if it met
+them; your theory: the bigger prop's original hitbox kept after the prop is made smaller. Branch `agent/heldjit`.
+
+- **The cause** (your theory, on the client): `held::wallFrame` (a prop held in one hand drawn out of the walls) traces
+  `worldtrace::world` with `ownFiles` (for the prop table, a func_wall of its own file), and so met every brush model of
+  its own file lying round: the health, ammo and explosive boxes. Their hull is the model's own, at the origin, unscaled
+  and unturned: a box of shells lying on the floor is drawn 4.8 units across about its origin (`model_scale` -0.8,
+  `model_offset` -12) while its hull is a 24-unit cube from its origin up and aside, up to the height of a hand held
+  low. The held prop (and the hand with it) was drawn pushed up onto that ghost box and let back down as the walk went
+  on. Not the server: the floor boxes' `mins/maxs` (-2.4..2.4) match what is drawn, the held prop's physical place
+  stayed 0.00 cm off its hand's place (`VR_Carry_Follow` traces nomonsters, which these are not), the player never
+  stepped up on them (his z flat, but the step off the range's ledge), and the hand pushes were none but the walls'.
+- **The fix** (`vr_trace.cpp`): `worldtrace::world` skips rigid bodies (`U_QVR_NOROTATE`: the things lying round,
+  pushed in Box3D, as the held-props notes always meant) and any brush model drawn scaled or offset (VR or Ironwail
+  scale): the hull isn't what is drawn. The prop table, doors and lifts are unchanged (a gib lowered onto the table:
+  still held out of it, 50 wall lines naming `maps/vr_proptable.bsp`). Explosion debris (`vr_explosiondebris.cpp`, the
+  other `ownFiles` caller) no longer bounces off the boxes' ghost hulls either.
+- **Debug**: `vr_debug_carry 1`'s wall line now names the wall's entity, its model's box and its drawn box
+  (`worldtrace::world` takes `hitEntity`); `vr_carry_check` prints the player's and the hand's z.
+- **Numbers** (`Misc/quakevr/held_over_props_test.sh`, hand at 0.75 m on the right, 150 frames walking at 186 u/s):
+  the held prop's drawn place in the hand, peak to peak, before -> after: shells box over 1 box 0 -> 0 (it missed the
+  one box), 3 boxes 12.0 cm (16 pushes) -> 0, 5 boxes 15.4 cm (26) -> 0; torch over 3 boxes 46.2 cm (43) -> 0, over 5
+  42.3 cm (93) -> 0. Floor boxes still taken by the fist ("carry: taken") and stacked three high asleep
+  (`vr_physics_stack`, 4.7-4.8 units apart); twohand_regrip_test.sh 7 of 7; e1m1 smoke clean.
+- In the headset: walk over the firing range's ammo boxes holding a box or a torch low: steady in the hand.
+
+## Versions and the menus' version label (2026-10-07)
+
+Asked: a versioning scheme, and "Quake VR: Unleashed - vX.X" over "by Vittorio Romeo" in the menus' bottom right corner.
+
+- **One source of truth:** `VERSION` at the repository's root (`0.9.0`; semver, prereleases `-beta.N`). The engine
+  (quakevr.props writes `QVR_VERSION`, `QVR_VERSION_DEV` and `QVR_BUILD_VERSION` into `qvr_buildver.h`; vr.cmake and
+  vr.mk pass `QVR_VERSION`), the installer (Directory.Build.props: was 0.1.0, now VERSION's), a hand-made package's
+  manifest and the release script read it. Builds are dev builds (`0.9.0-dev (2026-10-07 afd53921)`) except the release
+  script's (`/p:QvrReleaseVersion`, refused unless it is VERSION's). `VR_Version`/`VR_VersionIsDev` (vr_crash.cpp).
+- **Release script:** `-Version` optional (default VERSION's); another one stops it unless `-BumpVersion`, which commits
+  VERSION alone ("Version x.y.z"; refused on a dirty tree or an older version; with `-DryRun` only said). The safer
+  flow: nothing is changed or committed without the explicit switch. RELEASING.md, "Versions" (when to bump what).
+- **Starting version 0.9.0:** the old Quake VR's tags reached v0.8.2; 1.0.0 is left for the release called finished.
+- **The label** (vr_menubrand.cpp, VR_MenuDrawVersion; `vr_menu_version` 1, HUD and Menus > Menu: "Version Label"):
+  two right-aligned lines at the status box's size (7 in the headset, 5 flat), the canvas's corner 4 in, in the menus'
+  tan (turned red), the title at 85%, the author at 60%, a dev build's "-dev" at 45%. "vX.X": `vMAJOR.MINOR` while
+  PATCH is 0, the whole version otherwise (v0.9.1, v1.0.0-beta.1). Drawn before the page (a drop-down over it hides
+  it). Never over the menu: `qvr::menu::contentRightBelow` (VR pages: the rows to their scrollbar's box, the help at its
+  widest; Search, Map Library, console keyboards; Quake/Ironwail menus via menu.c's `M_ContentExtent`: 320 x 200,
+  Options' and the bindings' list to their last row, Ironwail's lists the menu's bounds) and the status box; where they
+  reach under it, it is left out. A VR page whose rows or help reach under it (on a flat screen: 50-column help on a
+  420-wide canvas) ends above it (`layout`, `versionLabelClearance`): VR unchanged (24/25 rows on VR Settings and Debug -
+  Tools, label on or off); flat 20/20 rows (22/23 with it off). Left out on flat Key Bindings and Levels (their lists
+  reach the corner). `menu_vr pos` prints it.
+## A frame seen through after a slipgate (2026-10-07)
+
+Walking through a slipgate, one frame round the crossing showed the room beyond wrong: brush entities missing (start's
+pentagram floor, a func_bossgate, gone over the pit), or at 90-120 Hz a frame drawn from inside the gate's wall, and
+then the view held still for one or two frames. Three causes, found with a frame strip (`vr_screenshot_frames`, below)
+and per-frame prints of the client's lerp:
+
+- **The server carried the player a tick late.** `VR_PortalClientCross` ran only before the move (VR_ClientSpecialMove),
+  so the tick whose move took the torso past the gate's plane sent him there, not yet carried. The server's PVS for
+  that message (`SV_WriteEntitiesToClient`, origin + view_ofs) was then behind the gate, so `VR_PortalAddPVS` skipped
+  it and the destination's entities were not sent, while the client's eye was already through (`eyeThrough`, drawn from
+  the destination): the room seen without its doors, lifts and floors for a frame. At a higher frame rate the client's
+  lerped body could itself reach past the plane uncarried: its eye, not through, drawn from inside the gate's wall.
+  Now the crossing is also tried after the move (`VR_ClientRoomscaleMove` with no room-scale move; with one it already
+  was), so a message never has him past the plane uncarried. Same crossings (slipgate_cross_test.sh, slipgates_test.sh
+  walk: every case's side and end place as before), one tick earlier.
+- **`VR_PortalAddPVS` sends both rooms while he straddles a gate** (within `kStraddle` = 32 units of its plane, over
+  its opening, either way through): a body a sill or a frame keeps half through, an eye still behind the exit's face
+  just after the crossing (drawn from the source).
+- **The client snapped to the newer place.** The client draws a tick behind (lerping from the older message's place to
+  the newer); a jump of over 100 units was Quake's teleport, no lerp: the view leapt a tick ahead and held for a frame.
+  `VR_PortalLerpFrom` (CL_RelinkEntities): when the older place carried through a gate lands within 64 units of the
+  newer, the lerp goes on from it carried (and the yaw turned by the gate's). The hands also took the gate's turn
+  through `addTurn`, which made them again in the middle of the frame from the carried body (a frame early, then the
+  same frame twice): the turn is now kept for the next frame's hands (`setServerYaw`).
+
+Frame strips (`Misc/quakevr/slipgates/teleport_frames_test.sh <agent> <rate> <fade> [start e1m1 flush]`: every frame
+drawn round the crossing, the share of pixels changed frame to frame and a transient score, 4 frames written out):
+start at 72 Hz, the hole frame's transient 2.2% before, 0.4% after; vrslipgates' flush gate at 120 Hz, a 59% frame
+(the gate's wall) and two still frames before, an even 11-16% a frame after; e1m1's gate and the comfort fade at 0.6:
+no transient (0.04%). What is left at a crossing is one step of
+lighting: the room through the gate is a little darker (17.5 against 18.9 mean luminance at start): the shimmer
+(vr_slipgate_surface_opacity, half of it) and the torches' lights in the view through (r_dynamic 0: no step), not
+looked into. `vr_screenshot_frames <n>` (Debug > Slipgates > Frame Strip Through A Gate): a screenshot of each of the
+next n frames drawn (a `wait` waits for a server tick and skips frames over 72 Hz), each with the time and the
+player's place printed.
+## Knockdowns: the get-up's jitter (2026-10-07)
+
+Report: a knocked-down monster getting up jittered, as if replaying keyframes. Measured with a new debug aid,
+`vr_knockdown_debug 2` (Combat > Knockdowns, Print Rolls: "And Get-Ups' Motion"; 3: each frame's): from the moment it
+starts getting up, the client's drawn vertices frame by frame (ragdoll.cpp `watchGetup`/`recordGetup`): their mean
+speed, the fastest frame, the frames that went back on the one before, and the switch from the ragdoll to the animated
+model. Debug > Tests > Enemy Shoves: Knock Down the Nearest, Get Them Up Now (`vr_knockdown_test 0`/`1`).
+
+Not the 72 Hz tick: `host_fixedtick 0` measured the same. Three causes, all on the client, all fixed:
+
+- **The move replayed at every frame (the jitter).** Getting up moves a monster's origin to where it stands (up to
+  88-98 units here, under the 100-unit teleport cut, so the client lerps it). A stepping entity's move lerp
+  (R_SetupEntityTransform) ran from the move to the *latest* message's lerpfinish, which is its next frame's: the get-up's
+  frames (0.125 s at Get-Up Speed 0.8, so they carry a lerpfinish) each pushed the end of the finished move later, and the
+  body was drawn back along it and slid forward again, at every frame (the ogre: 16-27 units back, then forward, at each
+  of its frames). Now the end is the one the moving message sent (`movelerpfinish`; `R_MoveLerpBlend`, also used by
+  vr_ao and vr_modelcollide's copies).
+- **The switch from the ragdoll to the animation flashed the old frame.** While the skinned ragdoll model is drawn,
+  R_SetupAliasFrame doesn't run for the monster's own model, so its lerp stayed at the frame it was knocked down in (a
+  standing one); drawn again it lerped from that frame to the get-up's (the grunt: a 21-unit jump and back). Now
+  swapModels keeps its lerp up with its frames (`trackPose`).
+- **Frame lerps wandered by the lerpfinish's rounding** (1/255 s, sent again in each message): the pose went back and
+  forth a little at every message, several frames' worth in bullet time (the ogre: 35 frames back). The frame lerp's end
+  is now the one the message that changed its pose sent (`animlerpfinish`, `R_FrameLerpFinish`).
+
+Also the blend from the ragdoll (vr_box3d.cpp `updateRecoveries`) lerps the frames by the server's think times (from the
+think that set the frame to the next, at the message's time) instead of from the step's time over the get-up interval:
+it lagged a step (each frame's end skipped) and, in bullet time, held still.
+
+Numbers (e1m1, grunt / ogre / knight / fiend; the fastest frame against the mean speed; frames back; the switch frame's
+speed against the frames' before): before 84x / 78x / 54x / 84x, 2 / 2 / 0 / 2 back, switch 60x / 83x / 16x / 44x; after
+8x / 12x / 11x / 7x (the ragdoll's blend itself), 0 / 1 / 0 / 0 back, switch 2.1x / 2.7x / 1.3x / 1.5x. Bullet time
+(vr_timescale 0.25): back frames 3 / 35 / 0 / 18 before the frame-lerp fix, 0 / 1 / 0 / 0 after; the switch there is
+still 9-22x a frame's (tiny) motion: the skinned rig's fit against the .mdl's vertex animation (about a unit), as when a
+ragdoll is made.
+## Immersive reloading: magazines, both grips, the pull (2026-10-07)
+
+The author's notes from VR on the magazine guns (worktree `magfix`).
+
+- **Both two-handed grips.** The magazine had replaced the gun's own two-handed hotspot (its grip moved to the magazine's
+  middle): the front grip was gone. Now the magazine is a second grip beside the gun's own (a free hotspot index,
+  vr_view.cpp `magSpot`): the other hand takes whichever it is nearer (the magazine by its box, below). Held on the
+  front grip, the magazine is left alone; on the magazine, it is held (and pulled out from there).
+- **The magazine's shape.** The client works out a box round the attached magazine's model (`vr_mag_on_<gun>.mdl`'s
+  vertices along its length, `magazineShape`), places it with the gun as drawn (held or carried; taken back to the
+  tracked hands as the muzzles are) and sends it with each move (`VrMove::magBox` -> `.magbox*`, `.offmagbox*`). An
+  empty hand within **Pull Reach** of that box (now leniency on top of it, down to 0), nearer it than the gun's own grip
+  (or a carried gun's handle), is on it: hotspot **HS_MAGAZINE** (13). Gripping there holds it (QC latch), and the
+  two-handed grip takes it there. **Hits** anywhere on the box knock it out (the fist, a held prop, the other gun's line
+  sampled along it): `knocked out by a hit at N m/s, D units from it, T from its top`.
+- **However the gun is held.** The magazine works the same for a gun held by its handle in either hand and for one
+  carried anywhere on it (the hand-off; QVR_WPNFLAG_FOREGRIP_CARRIED): the pouch gives its magazine (or shells), its
+  well takes one, the other hand pulls it out, a hit knocks it out, B/Y drops it.
+- **The pull (what was wrong).** "Out at once, or never, whatever I set":
+  1. The wrist snap read `.handavel`, which is the *throw's* spin estimate: while the grip is held, "as if let go now"
+     (the spin at the last speed peak of the window); for a hand not gripping, the spin of its last release, kept until
+     the next grip. The difference of two such numbers is noise: after a quick reach for the magazine (or a gun hand
+     whose last release spun), over any threshold at once; otherwise never.
+  2. The hold latched only within Pull Reach of the well's top (a point), while the two-handed grip took the magazine
+     5.5 units round its middle. Measured on the magazine's surface: 1.2-1.3 units off the top at its feed end, 2.0-2.3 at
+     its middle, 2.6-4.7 at its far end. At his Pull Reach 2, holding it at its middle or below never latched: the
+     two-handed grip held a magazine that could then never come out.
+  3. The hand reaching to hold it at Knock Out Speed knocked it out before the grip latched (he had raised Knock Out
+     Speed to 6.5).
+  4. The pull's speed was taken along the line between the hands (from the handle), not the magazine's way out: the
+     thunderbolt's cell (ahead, below) pulled straight down counted a fraction.
+  Now the snap is the hand's turn against the gun hand's (their poses, over 40 ms windows: `VR_Reload_SnapRate`, the
+  same at any frame rate), the pull the hands' relative speed (m/s, the controllers') along the magazine's length out of
+  its well, the latch the hotspot, and a hand gripping onto the magazine is a hold, not a hit. Apart is still the
+  hands' distance (the controllers') against what it was as the grip took hold. Units: speeds m/s, distances world
+  units, snap degrees/s.
+- **The hand on it.** Holding the attached magazine, the hand is turned the least from the tracked hand so that its
+  grip channel lies along the magazine where it holds it (`alignChannel`, kept 1.5 units in from its ends), and the
+  fingers close round the magazine's model (not the gun's). Per magazine, in its gun's page: Hand X/Y/Z, Pitch/Yaw/Roll
+  (`vr_reload_hold_<nail|snail|light>_*`, looks only) and Fingers Set by Hand with five curls.
+- **The ammo button.** "About once in a hundred": it was checked every 0.2 s, so a fingertip coming at it was first
+  seen well inside its reach, often past its face, and refused as from behind. Now every frame (it leaves again 0.5
+  units further out; 0.2 s between presses), Ammo Button Cone 80 (was 50) and a new **Ammo Button Depth** 0.5 (the
+  cone's tip that far behind the button's middle). Mock approaches, a straight line in at a quarter unit a frame, four
+  ways round: 0-60 degrees off its face 20 of 20 (before: 0 of 20), 75-90 degrees 8 of 8, 120-180 0 of 20.
+- **Menus.** Weapons > Reloading is General (the mode, Show Load Points, Collision Leniency, Eject Button, the pouch,
+  feedback, dropped rounds) and a page per gun: Shotgun, Super Shotgun (phase 2b's rows), Nailgun, Super Nailgun,
+  Thunderbolt (each its well, its magazine's top, its pose in the hand, its receiver, the hand holding it, and the pull
+  and knock settings, shared by the three). Ranges wider (Pull Reach and Knock Out Reach from 0). Debug > Tests >
+  Reloading: Reload Prints 0-3 (3: each empty hand's distance off the other gun's magazine box), Show Load Points (the
+  magazine's box in blue).
+- **The author's values** (his ironwail.cfg) as defaults, `vr_cfg_version` 98: pouch counter X 2.25, Z 2, Size 0.6,
+  Follow Legs 0.5; port and well radii 1.5; Collision Leniency 4; Knock Out Reach 2; Pull Reach 2; Pull Speed 2; Pull
+  Wrist Snap 300 (his 225 was set against the broken reading); Knock Out Speed 3 (his 6.5 was set against the reach that
+  knocked it out; 6.5 migrates to 3); the live shell's grip Y 0, Z -1 (`vr_props_version` 64).
+- Tests: reload_test.sh sections 8 and 9 (TESTING.md). Mock: `vr_mock_hand_to <hand> mag <along> [<out>]`,
+  `vr_mock_hand_to <hand> wbutton <degrees> [units] [azimuth]`.
+
+In VR:
+- [ ] Nailgun, super nailgun, thunderbolt: take the front grip, then the magazine: both aim two-handed.
+- [ ] Hold the magazine and move gently: it stays. Yank it out along its length, snap the wrist, or move the hands
+  apart: out into the hand. Tune Pull Speed / Wrist Snap / Apart / Reach in the gun's page.
+- [ ] Hand-off the gun to the off hand (let go of the handle while the other holds the front grip): pull its magazine
+  with the free hand, load one from the pouch.
+- [ ] Punch the magazine's far end: it pops out.
+- [ ] The hand on the magazine: does it look right? Tune Hand X/Y/Z and the turn per gun.
+- [ ] The ammo button from the front, as you press it: does it press every time? From behind: never.

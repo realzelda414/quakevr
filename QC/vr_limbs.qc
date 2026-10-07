@@ -274,7 +274,7 @@ void(entity e, float xBone, vector xVel, float xPop) VR_Limb_Stump =
     woundevent(e, at - side2 * 3, side2, QVR_WOUND_MELEE, 40, 0);
     if(!xPop)
     {
-        sound(e, CHAN_AUTO, VR_Gib_SquishSound(FALSE), 1, ATTN_NORM);
+        VR_SoundVaried(e, CHAN_AUTO, VR_Gib_SquishSound(FALSE), 1, ATTN_NORM);
         VR_BloodMist(at, xVel, 0.5);
         VR_Gore_Burst(at, out, 0.4);
         if(cvar_hget(cvarh_vr_smallgibs))
@@ -308,7 +308,7 @@ void(entity e, vector xAt, vector xVel) VR_Limb_PopEffects =
     VR_BloodMist(xAt, xVel, VR_LIMB_POP_SIZE);
     VR_Gore_Burst(xAt, xVel, VR_LIMB_POP_SIZE);
     VR_SmallGib_Burst(xAt, xVel, VR_LIMB_POP_SIZE, e);
-    sound(e, CHAN_AUTO, VR_Gib_SquishSound(FALSE), 1, ATTN_NORM);
+    VR_SoundVaried(e, CHAN_AUTO, VR_Gib_SquishSound(FALSE), 1, ATTN_NORM);
     vr_limb_pops++;
 };
 
@@ -633,7 +633,7 @@ float(entity targ, entity xThing, entity by, float xDamage) VR_Limb_ThrownArm =
     }
     float quad = VR_Decap_QuadPops(by);
     if(xThing.classname == "thrown_weapon" && !quad &&
-       (xThing.weapon == WID_SWORD || xThing.weapon == WID_AXE || xThing.weapon == WID_CHAINSAW))
+       (xThing.weapon == WID_SWORD || xThing.weapon == WID_AXE || xThing.weapon == WID_CHAINSAW || xThing.weapon == WID_SUPERAXE))
     {
         return FALSE;
     }

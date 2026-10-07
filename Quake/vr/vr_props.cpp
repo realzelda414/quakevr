@@ -53,8 +53,10 @@ constexpr const char* keyDefaults[numKeys] = {
 // the rocks and bricks at Size 1.25; 51: the crates' small pieces in the palm; 53: the multi-grenade's as the grenade's;
 // 54: the author's grenade and multi-grenade fits; 55: the author's weights and sizes (slots 6-16 his items); 56: every
 // prop in both hands; 57: the gibs' and heads' sizes; 58: the author's lighter gibs and heads (and the gremlin's head);
-// 59: the monsters' heads weigh what a head cut off their ragdoll does (Mass -1).
-constexpr int settingsVersion = 59;
+// 59: the monsters' heads weigh what a head cut off their ragdoll does (Mass -1); 60: immersive reloading's shells
+// (slots 49-50); 61: reloading's magazines; 62: vrstart2's barrel (slot 61); 63: the magazines' sizes; 64: the live
+// shell's grip.
+constexpr int settingsVersion = 64;
 
 za::Array<za::String, numSlots * numKeys> names;
 za::Array<cvar_t, numSlots * numKeys> cvars{};
@@ -505,6 +507,40 @@ void migrate()
                     static_cast<double>(c.before));
             }
         }
+    }
+    // 60: immersive reloading's rounds (slots 49 and 50: the shell from the ammo pouch and the taped pair; vr_reload.qc)
+    // take their shipped settings, a model the menu had put there moving to a free slot.
+    if(from < 60)
+    {
+        takeShippedSlot(48);
+        takeShippedSlot(49);
+    }
+    // 61: the magazines (phase 2: slots 51-53, the nailgun's, the super nailgun's, the thunderbolt's cell).
+    if(from < 61)
+    {
+        for(const int slot : {50, 51, 52})
+        {
+            takeShippedSlot(slot);
+        }
+    }
+    // 62: vrstart2's barrel (vr_barrel; make_crates.py) has slot 60 (vr_prop_*_61): it takes its shipped settings, a
+    // model the menu had put there moving to a free slot.
+    if(from < 62)
+    {
+        takeShippedSlot(60);
+    }
+    // 63: the magazines' sizes (the author's) and their grip (top up, as for loading) in slots 51-53.
+    if(from < 63)
+    {
+        for(const int slot : {50, 51, 52})
+        {
+            takeShippedSlot(slot);
+        }
+    }
+    // 64: the live shell's grip (slot 49) the author's: up 0.5 units, centred.
+    if(from < 64)
+    {
+        takeShippedSlot(48);
     }
     Cvar_SetValueQuick(&vr_props_version, settingsVersion);
 }

@@ -226,6 +226,10 @@ void() PlaceItem =
             remove(self);
             return;
         }
+        if(MG3_Campaign() && (self.spawnflags & 65536))
+        {
+            self.movetype = MOVETYPE_NONE; // Dawn of the Machine's DROPTOFLOOR_DISABLE: placed, then it stays put
+        }
     }
 
     // HONEY
@@ -253,6 +257,11 @@ void() PlaceItem =
     if(!MG_WorldCampaign() && (self.spawnflags & SPAWNFLAG_TRIGGER_SPAWN))
     {
         item_unspawn();
+    }
+    else if(MG3_Campaign() && ((self.classname != "item_sigil" && (self.spawnflags & MG3_ITEM_SPAWNED))
+        || (self.classname == "item_sigil" && (self.spawnflags & 128))))
+    {
+        MG3_ItemUnspawn(); // Dawn of the Machine: one a trigger brings (upstream SPAWNED; vr_mg3_items.qc)
     }
 
     SpawnAmmoBoxWeapons(self);
@@ -1065,7 +1074,7 @@ void() weapon_touch =
     sprint(other, "\n");
 
     // weapon touch sound
-    sound(other, CHAN_ITEM, "weapons/pkup.wav", 1, ATTN_NORM);
+    VR_SoundVaried(other, CHAN_ITEM, "weapons/pkup.wav", 1, ATTN_NORM);
     stuffcmd(other, "bf\n");
 
     bound_other_ammo();
@@ -1784,6 +1793,7 @@ End of level sigil, pick up to end episode and return to jrstart.
 void() item_sigil =
 {
     if(cvar("vr_campaign") == 4) { MG1_item_sigil(); return; }
+    if(cvar("vr_campaign") == 5) { MG3_item_sigil(); return; } // vr_mg3_items.qc
     if(!self.spawnflags)
         objerror ("no spawnflags");
 
@@ -1870,6 +1880,12 @@ void() powerup_touch =
     {
         other.rad_time = 1;
         other.radsuit_finished = time + 30;
+    }
+
+    if(self.classname == "item_artifact_lavasuit") // Dawn of the Machine (vr_mg3_items.qc)
+    {
+        other.lavasuit_time = 1;
+        other.lavasuit_finished = time + 30;
     }
 
     if(self.classname == "item_artifact_invulnerability")
@@ -2129,6 +2145,8 @@ DropBackpack
 */
 void() DropBackpack =
 {
+    if(MG3_NoBackpack(self))
+        return; // QVR: Dawn of the Machine's monsters drop none (vr_mg3_bn.qc)
     if(self.vr_dummy_dead)
     {
         return; // VR: the firing range's training dummy killed as its enemy (vr_dummy.qc): no loot

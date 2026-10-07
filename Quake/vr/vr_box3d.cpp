@@ -340,6 +340,14 @@ constexpr float grenadeRestitution = 0.45f; // (Quake's bounce: 0.5; a steel bal
     {
         return 2000.f; // an iron shell full of explosive
     }
+    if(modelmeta::has(model, modelmeta::Trait::LiveShell))
+    {
+        return 1300.f; // a shotgun shell: plastic, lead shot, a brass head (its slot's Mass sets it: 40 g)
+    }
+    if(modelmeta::has(model, modelmeta::Trait::Magazine))
+    {
+        return 1500.f; // a magazine: a steel box of nails, a cell (its slot's Mass sets it)
+    }
     if(const float stone = props::stoneDensity(model); stone > 0.f)
     {
         return stone; // the rocks and bricks lying about (vr_debris.cpp)
@@ -385,7 +393,8 @@ constexpr float grenadeRestitution = 0.45f; // (Quake's bounce: 0.5; a steel bal
 [[nodiscard]] bool isSoft(edict_t* ent, const qmodel_t* model)
 {
     return model->type == mod_alias && !isWeaponLike(ent) && !modelmeta::has(model, modelmeta::Trait::ContainsArmor) && !isGrenade(model) &&
-        props::stoneDensity(model) <= 0.f; // (rocks and bricks are hard)
+        !modelmeta::has(model, modelmeta::Trait::LiveShell) && !modelmeta::has(model, modelmeta::Trait::Magazine) &&
+        props::stoneDensity(model) <= 0.f; // (rocks and bricks are hard; a shell bounces and rolls)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -487,7 +496,8 @@ struct Recovery
     double start{0.0};
     float duration{0.35f};
     int frame{-1}, prevFrame{-1};
-    double changed{0.0};
+    double changed{0.0}; // the server time its frame changed (the think that changed it: due then)
+    double due{0.0};     // its next think, as of the last step
 };
 
 // Whether part `b` of `r` was cut off (its body is the part it was cut from's).
@@ -943,6 +953,8 @@ struct MeshStats
     double ms{0.0};
 };
 
+jobs::Site meshSite{"box3d world mesh"}; // (its parallelFor: vr_jobs_sites)
+
 // (Only reads the map: made on the game's thread pool while the map spawns, see beforeLoad.)
 [[nodiscard]] b3MeshData* worldMesh(const qmodel_t* map, float m2u, bool junctions, MeshStats& stats)
 {
@@ -995,6 +1007,20 @@ struct MeshStats
         }
     }
     za::quickSort(grid.begin(), grid.end());
+    // Each cell's run in the grid (looked up by key: a binary search of the grid for each of 27 cells round each step
+    // along each edge was most of vrstart2's 570 ms mesh, 90k faces).
+    ankerl::unordered_dense::map<uint64_t, za::Pair<int, int>> cellRuns;
+    cellRuns.reserve(grid.size());
+    for(za::SizeT i = 0; i < grid.size();)
+    {
+        za::SizeT j = i + 1;
+        while(j < grid.size() && grid[j].first == grid[i].first)
+        {
+            ++j;
+        }
+        cellRuns.emplace(grid[i].first, za::makePair(static_cast<int>(i), static_cast<int>(j)));
+        i = j;
+    }
 
     za::Vector<int32_t> remap(static_cast<size_t>(map->numvertexes), -1);
     za::Vector<b3Vec3> vertices;
@@ -1025,13 +1051,21 @@ struct MeshStats
         indices.pushBack(c);
     };
 
-    za::Vector<int> outline;
-    za::Vector<uint8_t> corner; // per outline entry: one of the face's own corners (else a T-junction put in)
-    za::Vector<za::Pair<float, int>> between;
-    for(const Face& f : faces)
+    // A face's outline: its corners, and the T-junctions put into its edges. Found for runs of faces at once on the pool
+    // (each run's outlines one after the other; read only: the map, the grid), then made into triangles in the faces'
+    // order, as on one thread (the same mesh; vrstart2's 90k faces: 430 ms of searching on one thread).
+    struct Outlines
     {
-        outline.clear();
-        corner.clear();
+        za::Vector<int> outline;
+        za::Vector<uint8_t> corner; // per outline entry: one of the face's own corners (else a T-junction put in)
+        za::Vector<int> start;      // [face of the run]: its outline's first entry (and one past the last's end)
+        za::Vector<uint8_t> split;  // [face of the run]: it got a T-junction
+        int junctions{0};
+    };
+    const auto findOutline = [&](const Face& f, Outlines& o, za::Vector<za::Pair<float, int>>& between,
+                                 za::Vector<uint64_t>& nearCells) {
+        za::Vector<int>& outline = o.outline;
+        za::Vector<uint8_t>& corner = o.corner;
         bool split = false;
         for(int k = 0; k < f.count; k++)
         {
@@ -1050,8 +1084,10 @@ struct MeshStats
                 continue;
             }
             const glm::vec3 dir = d / length;
-            // The cells along the edge (and those round them), in steps of half a cell.
+            // The cells along the edge (and those round them), in steps of half a cell; each looked in once (a corner
+            // found twice was found at the same t, and dropped as one below either way).
             between.clear();
+            nearCells.clear();
             const int steps = za::max(1, static_cast<int>(za::ceil(length / (cell * 0.5f))));
             glm::ivec3 last{INT32_MIN};
             for(int step = 0; step <= steps; step++)
@@ -1068,23 +1104,35 @@ struct MeshStats
                     {
                         for(int dx = -1; dx <= 1; dx++)
                         {
-                            const uint64_t key = keyOf(c + glm::ivec3{dx, dy, dz});
-                            for(auto it = za::lowerBound(grid.begin(), grid.end(), za::makePair(key, INT32_MIN));
-                                it != grid.end() && it->first == key; ++it)
-                            {
-                                const int v = it->second;
-                                if(v == a || v == b)
-                                {
-                                    continue;
-                                }
-                                const glm::vec3 p = position(v);
-                                const float t = glm::dot(p - pa, dir);
-                                if(t > 2.f * onEdge && t < length - 2.f * onEdge && glm::length(p - (pa + dir * t)) <= onEdge)
-                                {
-                                    between.emplaceBack(t, v);
-                                }
-                            }
+                            nearCells.pushBack(keyOf(c + glm::ivec3{dx, dy, dz}));
                         }
+                    }
+                }
+            }
+            za::quickSort(nearCells.begin(), nearCells.end());
+            for(za::SizeT i = 0; i < nearCells.size(); ++i)
+            {
+                if(i > 0 && nearCells[i] == nearCells[i - 1])
+                {
+                    continue;
+                }
+                const auto run = cellRuns.find(nearCells[i]);
+                if(run == cellRuns.end())
+                {
+                    continue;
+                }
+                for(int g = run->second.first; g < run->second.second; ++g)
+                {
+                    const int v = grid[static_cast<za::SizeT>(g)].second;
+                    if(v == a || v == b)
+                    {
+                        continue;
+                    }
+                    const glm::vec3 p = position(v);
+                    const float t = glm::dot(p - pa, dir);
+                    if(t > 2.f * onEdge && t < length - 2.f * onEdge && glm::length(p - (pa + dir * t)) <= onEdge)
+                    {
+                        between.emplaceBack(t, v);
                     }
                 }
             }
@@ -1103,10 +1151,44 @@ struct MeshStats
                 lastT = t;
                 outline.pushBack(v);
                 corner.pushBack(0);
-                stats.junctions++;
+                o.junctions++;
                 split = true;
             }
         }
+        return split;
+    };
+    constexpr za::SizeT runFaces = 1024;
+    za::Vector<Outlines> runs((faces.size() + runFaces - 1) / runFaces);
+    jobs::parallelFor(meshSite, runs.size(), 1,
+        [&](za::SizeT begin, za::SizeT end)
+        {
+            za::Vector<za::Pair<float, int>> between;
+            za::Vector<uint64_t> nearCells;
+            for(za::SizeT r = begin; r < end; ++r)
+            {
+                Outlines& o = runs[r];
+                const za::SizeT last = za::min(faces.size(), (r + 1) * runFaces);
+                for(za::SizeT i = r * runFaces; i < last; ++i)
+                {
+                    o.start.pushBack(static_cast<int>(o.outline.size()));
+                    o.split.pushBack(findOutline(faces[i], o, between, nearCells) ? 1 : 0);
+                }
+                o.start.pushBack(static_cast<int>(o.outline.size()));
+            }
+        });
+    za::Vector<int> outline;
+    za::Vector<uint8_t> corner;
+    for(za::SizeT i = 0; i < faces.size(); ++i)
+    {
+        const Face& f = faces[i];
+        const Outlines& o = runs[i / runFaces];
+        const za::SizeT j = i % runFaces;
+        const auto first = static_cast<za::SizeT>(o.start[j]), past = static_cast<za::SizeT>(o.start[j + 1]);
+        outline.clear();
+        corner.clear();
+        outline.emplaceBackRange(o.outline.data() + first, past - first);
+        corner.emplaceBackRange(o.corner.data() + first, past - first);
+        const bool split = o.split[j] != 0;
         stats.faces++;
         if(!split)
         {
@@ -1154,6 +1236,10 @@ struct MeshStats
             const int a = outline[k], b = outline[(k + 1) % outline.size()];
             triangle(m, index(a), index(b), middle, position(a), position(b), f.normal);
         }
+    }
+    for(const Outlines& o : runs)
+    {
+        stats.junctions += o.junctions;
     }
     stats.triangles = static_cast<int>(indices.size() / 3);
     b3MeshData* mesh = nullptr;
@@ -2020,6 +2106,7 @@ void addCorpseShapes(edict_t* ent, int num, qmodel_t* model, Slot& s)
     s.maxs = hi;
     b3ShapeDef def = shapeDef(num, catCorpse, s.corpseMask);
     def.enableCustomFiltering = true; // (shouldCollide: thrown things, vr_corpse_collide_thrown; what it is made in)
+    def.enableHitEvents = s.corpseDynamic; // (a pushable one's knocks: vr_physsound.cpp, soundHits)
     def.baseMaterial.friction = za::max(s.corpseFriction, 0.f);
     const za::Vector<b3HullData*>* hulls = s.corpseFitted ? &corpseHulls(ent, model) : nullptr;
     const glm::vec3 boxLo{lo.x, lo.y, lo.z + 0.25f}; // (a hair off the floor it lies on, as the fitted hulls)
@@ -2143,6 +2230,11 @@ const RagdollClass ragdollClasses[] = {
         {&vr_ragdoll_gremlin_start, &vr_ragdoll_gremlin_mass, &vr_ragdoll_gremlin_friction,
             &vr_ragdoll_gremlin_joint_friction, &vr_ragdoll_gremlin_joint_stiffness, &vr_ragdoll_gremlin_limits,
             &vr_ragdoll_gremlin_damping, &vr_ragdoll_gremlin_blast, &vr_ragdoll_gremlin_inherit}},
+    // Dawn of the Machine's ranged knight (QC vr_mg3_rknight.qc): a death knight's build, the death knight's settings.
+    {"monster_ranged_knight", "progs/h_hellkn.mdl",
+        {&vr_ragdoll_hknight_start, &vr_ragdoll_hknight_mass, &vr_ragdoll_hknight_friction,
+            &vr_ragdoll_hknight_joint_friction, &vr_ragdoll_hknight_joint_stiffness, &vr_ragdoll_hknight_limits,
+            &vr_ragdoll_hknight_damping, &vr_ragdoll_hknight_blast, &vr_ragdoll_hknight_inherit}},
     {"monster_mummy", nullptr,
         {&vr_ragdoll_mummy_start, &vr_ragdoll_mummy_mass, &vr_ragdoll_mummy_friction, &vr_ragdoll_mummy_joint_friction,
             &vr_ragdoll_mummy_joint_stiffness, &vr_ragdoll_mummy_limits, &vr_ragdoll_mummy_damping,
@@ -2151,6 +2243,11 @@ const RagdollClass ragdollClasses[] = {
         {&vr_ragdoll_vore_start, &vr_ragdoll_vore_mass, &vr_ragdoll_vore_friction, &vr_ragdoll_vore_joint_friction,
             &vr_ragdoll_vore_joint_stiffness, &vr_ragdoll_vore_limits, &vr_ragdoll_vore_damping, &vr_ragdoll_vore_blast,
             &vr_ragdoll_vore_inherit}},
+    // Dawn of the Machine's super shambler: the shambler's settings (Ragdoll Settings > Shambler) and head gib.
+    {"monster_super_shambler", "progs/h_shams.mdl",
+        {&vr_ragdoll_shambler_start, &vr_ragdoll_shambler_mass, &vr_ragdoll_shambler_friction,
+            &vr_ragdoll_shambler_joint_friction, &vr_ragdoll_shambler_joint_stiffness, &vr_ragdoll_shambler_limits,
+            &vr_ragdoll_shambler_damping, &vr_ragdoll_shambler_blast, &vr_ragdoll_shambler_inherit}},
     {"monster_scourge", "progs/h_scourg.mdl",
         {&vr_ragdoll_centroid_start, &vr_ragdoll_centroid_mass, &vr_ragdoll_centroid_friction,
             &vr_ragdoll_centroid_joint_friction, &vr_ragdoll_centroid_joint_stiffness, &vr_ragdoll_centroid_limits,
@@ -3207,15 +3304,22 @@ void updateRecoveries()
             world->recoveries.eraseAt(i);
             continue;
         }
+        // Its frames lerped as the client lerps them once it is drawn animated again, by the server's times: from the
+        // think that set the frame (due at the last step: the step's thinks run between its time and the next step's) to
+        // the next, and to the time of the message it is drawn at. (The lerp from this step's time over the get-up's
+        // interval lagged by a step: each frame's end was skipped, and in bullet time, the thinks slowed, it held still.)
         const int frame = static_cast<int>(ent->v.frame);
+        const double now = qcvm->time + host_frametime;
         if(frame != rec.frame)
         {
             rec.prevFrame = rec.frame < 0 ? frame : rec.frame;
             rec.frame = frame;
-            rec.changed = qcvm->time;
+            rec.changed = rec.due > qcvm->time && rec.due <= now ? rec.due : qcvm->time;
         }
-        const float interval = 0.1f / za::clamp(vr_knockdown_getup_speed.value, 0.1f, 10.f);
-        const float lerp = za::clamp(static_cast<float>((qcvm->time - rec.changed) / interval), 0.f, 1.f);
+        rec.due = ent->v.nextthink;
+        const double interval = rec.due > rec.changed ? rec.due - rec.changed
+                                                      : 0.1 / za::clamp(static_cast<double>(vr_knockdown_getup_speed.value), 0.1, 10.0);
+        const float lerp = za::clamp(static_cast<float>((now - rec.changed) / interval), 0.f, 1.f);
         const int pose1 = ragdoll::poseOfFrame(rec.rig->model, rec.prevFrame), pose2 = ragdoll::poseOfFrame(rec.rig->model, rec.frame);
         const glm::quat turn = glm::angleAxis(glm::radians(ent->v.angles[1]), glm::vec3{0.f, 0.f, 1.f});
         const glm::vec3 origin = vec(ent->v.origin);
@@ -6280,24 +6384,25 @@ void liftAgain()
 // speed along the contact relative to the other body (rolling gives none: each point's own velocity, spin and all), and
 // how hard it is pressed there (the step's normal impulse over its weight's: 1 lying on it, less grazing a wall).
 // `dt`: the step's (the frame's last piece).
-void noteSlide(int num, const Slot& s, float dt)
+// `ignore`: the categories not slid on as well (a body's: other bodies and its own parts). False: no slide.
+[[nodiscard]] bool bodySlide(b3BodyId body, float dt, uint64_t ignore, float& bestSlip, float& bestPress)
 {
     za::Array<b3ContactData, 16> contacts;
-    const int count = b3Body_GetContactData(s.body, contacts.data(), static_cast<int>(contacts.size()));
+    const int count = b3Body_GetContactData(body, contacts.data(), static_cast<int>(contacts.size()));
     if(count <= 0)
     {
-        return;
+        return false;
     }
-    const glm::vec3 v = glmv(b3Body_GetLinearVelocity(s.body)), w = glmv(b3Body_GetAngularVelocity(s.body));
-    const float mass = b3Body_GetMass(s.body);
+    const glm::vec3 v = glmv(b3Body_GetLinearVelocity(body)), w = glmv(b3Body_GetAngularVelocity(body));
+    const float mass = b3Body_GetMass(body);
     const float weightImpulse = mass * (world->gravity / world->m2u) * dt;
-    float bestSlip = 0.f, bestPress = 0.f;
+    bestSlip = bestPress = 0.f;
     for(int i = 0; i < count; i++)
     {
         const b3ContactData& c = contacts[i];
-        const bool isA = B3_ID_EQUALS(b3Shape_GetBody(c.shapeIdA), s.body);
+        const bool isA = B3_ID_EQUALS(b3Shape_GetBody(c.shapeIdA), body);
         const b3ShapeId other = isA ? c.shapeIdB : c.shapeIdA;
-        if(b3Shape_GetFilter(other).categoryBits & (catPlayer | catActor | catHand | catReach))
+        if(b3Shape_GetFilter(other).categoryBits & (catPlayer | catActor | catHand | catReach | ignore))
         {
             continue;
         }
@@ -6337,9 +6442,70 @@ void noteSlide(int num, const Slot& s, float dt)
             }
         }
     }
-    if(bestSlip > 0.f)
+    return bestSlip > 0.f;
+}
+
+void noteSlide(int num, const Slot& s, float dt)
+{
+    float slip = 0.f, press = 0.f;
+    if(bodySlide(s.body, dt, 0, slip, press))
     {
-        physsound::slide(num, s.sound, mass, bestSlip, bestPress, s.origin);
+        physsound::slide(num, s.sound, b3Body_GetMass(s.body), slip, press, s.origin);
+    }
+}
+
+// A body's slide (AUDIO_REVIEW.md row 2, the drag): the ragdoll's part sliding hardest on the level, a door, a fixture
+// or a prop (not on another body nor its own parts, a hand or a player), or a pushable corpse's, as flesh
+// (physsound::slide's `body`: Flesh's soft scrapes, vr_physsound_bodies loud; its weight the sliding part's), so a body
+// dragged by a limb, shoved along or sliding down a slope shuffles. Only its awake parts, and only while the body as a
+// whole goes along the floor (its parts' mass-weighted level speed at least bodyDragSpeed): a ragdoll crumpling as it
+// dies or settling, its limbs flopping, is silent (its knocks are heard: soundHits).
+constexpr float bodyDragSpeed = 0.4f; // m/s
+
+void noteBodySlide(int num, const Slot& s, float dt)
+{
+    float bestSlip = 0.f, bestPress = 0.f, bestMass = 0.f, massSum = 0.f;
+    glm::vec3 at = s.origin, momentum{0.f};
+    const auto consider = [&](b3BodyId body) {
+        float slip = 0.f, press = 0.f;
+        if(B3_IS_NULL(body) || !b3Body_IsValid(body) || !b3Body_IsAwake(body))
+        {
+            return;
+        }
+        const float m = b3Body_GetMass(body);
+        const glm::vec3 v = glmv(b3Body_GetLinearVelocity(body));
+        momentum += glm::vec3{v.x, v.y, 0.f} * m;
+        massSum += m;
+        if(!bodySlide(body, dt, catCorpse, slip, press))
+        {
+            return;
+        }
+        if(slip * za::min(press, 1.f) > bestSlip * za::min(bestPress, 1.f))
+        {
+            bestSlip = slip;
+            bestPress = press;
+            bestMass = b3Body_GetMass(body);
+            at = world->toU(b3Body_GetPosition(body));
+        }
+    };
+    if(s.ragdoll >= 0)
+    {
+        const RagdollBodies& r = world->ragdolls[static_cast<za::SizeT>(s.ragdoll)];
+        for(int b = 0; b < r.count; b++)
+        {
+            if(!partCut(r, b))
+            {
+                consider(r.body[static_cast<za::SizeT>(b)]);
+            }
+        }
+    }
+    else
+    {
+        consider(s.body);
+    }
+    if(bestSlip > 0.f && massSum > 0.f && glm::length(momentum) >= bodyDragSpeed * massSum)
+    {
+        physsound::slide(num, physsound::Material::Flesh, bestMass, bestSlip, bestPress, at, true);
     }
 }
 
@@ -6427,7 +6593,8 @@ void writeProp(edict_t* ent, Slot& s)
 }
 
 // The step's hits for the physics sounds (vr_physsound.cpp): a prop's against the level, a door, a fixture, another prop,
-// a hand's or a held weapon's body (each prop of a pair its own); not a monster's or a player's body (their touches have
+// a hand's or a held weapon's body (each prop of a pair its own); a ragdoll's parts' and a pushable corpse's, as flesh
+// (each body one knock at a time: physsound::hit's `body`); not a monster's or a player's body (their touches have
 // QC's sounds). Cheap: Box3D reports only the contacts that met faster than its hit threshold (1 m/s).
 void soundHits(const b3ContactEvents& events)
 {
@@ -6443,7 +6610,14 @@ void soundHits(const b3ContactEvents& events)
         {
             const b3ShapeId self = side ? e.shapeIdB : e.shapeIdA, other = side ? e.shapeIdA : e.shapeIdB;
             const int a = numOf(self), b = numOf(other);
-            if(a <= 0 || a >= static_cast<int>(world->slots.size()) || world->slots[a].kind != Kind::Prop)
+            if(a <= 0 || a >= static_cast<int>(world->slots.size()) || a == b)
+            {
+                continue;
+            }
+            const Slot& s = world->slots[a];
+            // A body: a ragdoll's part (its own mass: a torso's thud, a hand's squish) or a pushable corpse, as flesh.
+            const bool body = s.kind == Kind::Corpse && (s.ragdoll >= 0 || s.corpseDynamic);
+            if(s.kind != Kind::Prop && !body)
             {
                 continue;
             }
@@ -6452,9 +6626,17 @@ void soundHits(const b3ContactEvents& events)
             {
                 continue;
             }
-            const Slot& s = world->slots[a];
+            if(body && ok == Kind::Corpse && b < a && (world->slots[b].ragdoll >= 0 || world->slots[b].corpseDynamic))
+            {
+                continue; // (two bodies meeting: one knock, the lower-numbered one's, not one each)
+            }
             const glm::vec3 at{static_cast<float>(e.point.x) * world->m2u, static_cast<float>(e.point.y) * world->m2u,
                 static_cast<float>(e.point.z) * world->m2u};
+            if(body)
+            {
+                physsound::hit(a, physsound::Material::Flesh, b3Body_GetMass(b3Shape_GetBody(self)), e.approachSpeed, at, true);
+                continue;
+            }
             physsound::hit(a, s.sound, b3Body_GetMass(s.body), e.approachSpeed, at);
         }
     }
@@ -11255,17 +11437,26 @@ extern "C" void VR_PhysicsFrameEnd(void)
     const double tWrite = Sys_DoubleTime();
     updateRecoveries(); // (knocked-down monsters getting up: Knockdowns)
     const bool scrapes = physsound::scrapesWanted();
+    const bool bodyScrapes = scrapes && vr_physsound_bodies.value > 0.f;
     for(int num = 1; num < static_cast<int>(world->slots.size()) && num < qcvm->num_edicts; num++)
     {
         Slot& s = world->slots[num];
         if(s.ragdoll >= 0)
         {
             writeRagdoll(EDICT_NUM(num), s); // (every frame: a part may be awake in an island of its own, his shotgun)
+            if(bodyScrapes && s.ragdoll >= 0 && !EDICT_NUM(num)->free)
+            {
+                noteBodySlide(num, s, dt / static_cast<float>(pieces));
+            }
             continue;
         }
         if(s.kind == Kind::Corpse && s.corpseDynamic && (!s.asleep || b3Body_IsAwake(s.body)))
         {
             writeCorpse(EDICT_NUM(num), s);
+            if(bodyScrapes && !s.asleep && !EDICT_NUM(num)->free)
+            {
+                noteBodySlide(num, s, dt / static_cast<float>(pieces));
+            }
             continue;
         }
         if(s.kind == Kind::Prop && (!s.asleep || b3Body_IsAwake(s.body)))
@@ -11514,6 +11705,10 @@ int ragdollGetUp(edict_t* ent, int frameA, int frameB, const glm::vec3& mins, co
         rec.pos[static_cast<za::SizeT>(b)] = world->toU(xf.p);
     }
     rec.start = qcvm->time;
+    if(vr_knockdown_debug.value >= 2.f)
+    {
+        ragdoll::watchGetup(num, qcvm->time, qcvm->time + 2.5);
+    }
     rec.duration = za::max(vr_knockdown_blend.value, 0.f);
     destroyBody(slotOf(num));
     world->recoveries.pushBack(rec);

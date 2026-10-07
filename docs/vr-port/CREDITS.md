@@ -161,6 +161,43 @@ off under -1 dBFS.
 | `burst2.wav` | the same take's second shot | 4.398-4.898 |
 | `burst3.wav` | the second shot, 5% slower | 4.398-4.923 |
 
+### Shotgun shell insert sounds (`quakevr/sound/vr/reload_shell_in*.wav`)
+
+Immersive reloading's shell pushed into the shotgun's port (QC `vr_reload.qc`), from **Shotgun Reload Sound effects** by
+**zer0_sol** ([OpenGameArt](https://opengameart.org/content/shotgun-reload-sound-effects)), released under
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain: no attribution needed, credited here
+anyway). They replace the synthesised insert (2026-10-07). `Misc/quakevr/make_reload_shell_sounds.py` cuts them from the
+downloaded MP3s (not in the repository; the script's header has the link): each shell's push into the tube (the scrape
+and the shell latch's click), high-passed at 30 Hz, kept at 44100 Hz 16-bit, faded, brought to the A-weighted loudness
+of the synthesised insert, peaks rounded off under -1 dBFS. One of the three is picked at random per insert.
+
+| Files | Source | Cut (s) |
+|---|---|---|
+| `reload_shell_in.wav` | `First Shell.mp3` | 0.720-0.900 |
+| `reload_shell_in_2.wav` | `Subsequent Shells.mp3` | 1.069-1.299 |
+| `reload_shell_in_3.wav` | `5 Shell Reload.mp3`: the fourth shell | 4.515-4.745 |
+### Shotgun auto pump sounds (`quakevr/sound/vr/autopump_back.wav`, `autopump_home.wav`)
+
+The shotgun's auto pump's two clacks (ROUND21.md, "Shotgun auto pump"), from **zer0_sol**'s *Shotgun Reload Sound
+effects* ([OpenGameArt](https://opengameart.org/content/shotgun-reload-sound-effects)), released under
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain: no attribution needed, credited here
+anyway). `Misc/quakevr/make_autopump_sounds.py` cuts them from the downloaded `ShotgunSounds/Rack.mp3` (not in the
+repository): high-passed at 30 Hz, kept at 44100 Hz 16-bit, faded, peaks rounded off and brought to 0.7.
+
+| File | What | Cut (s) |
+|---|---|---|
+| `autopump_back.wav` | the action unlocking, the slide starting back | 0.628-0.733 |
+| `autopump_home.wav` | the slide slammed home (its loudest moment 0.053 s in) | 0.864-1.004 |
+
+The super shotgun broken open (phase 2b) uses two more cuts of the same pack, by `Misc/quakevr/make_reload_ssg_sounds.py`
+(same treatment, a little louder: the action is heavier); the shells' pop as they are thrown out (`reload_ssg_eject.wav`)
+is synthesised (`make_sounds.py`).
+
+| Files | Source | Cut (s) |
+|---|---|---|
+| `reload_ssg_open.wav` | `Rack.mp3`: the action pulled back and run forward | 0.60-1.02 |
+| `reload_ssg_close.wav` | `Shell in Chamber.mp3`: its last slam | 1.06-1.34 |
+
 ### Physics sounds (`quakevr/sound/vr/phys/`)
 
 The props' knocks, scrapes and the climbing grab (`vr_physsound.cpp`; ROUND21.md, "Physics sounds"), all from sources

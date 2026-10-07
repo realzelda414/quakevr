@@ -486,6 +486,7 @@ float HIP_IT_CHAINSAW          = VRUTIL_POWER_OF_TWO(6); // VR: an ogre's chains
 float HIP_IT_GRUNTGUN          = VRUTIL_POWER_OF_TWO(7); // VR: a grunt's shotgun.
 float HIP_IT_ENFRIFLE          = VRUTIL_POWER_OF_TWO(8); // VR: an enforcer's laser rifle.
 float HIP_IT_CROWBAR           = VRUTIL_POWER_OF_TWO(9); // VR: the crowbar.
+float HIP_IT_SUPERAXE          = VRUTIL_POWER_OF_TWO(10); // MG3: Dawn of the Machine's Super Axe.
 
 //
 //
@@ -600,6 +601,15 @@ float CHAN_ITEM    = 3;
 float CHAN_BODY    = 4;
 float CHAN_WEAPON2 = 5;
 float CHAN_OTHER   = 6;
+// Quake VR: the hands' own channels (any free one, as CHAN_AUTO, never cutting a sound off), played from the main
+// and the off hand (the engine's protocol.h SND_CHAN_HAND; vr_audio.cpp handOf): a parry, a reload, a holster. Through
+// VRGetHandChannel(xHand). Only the player's sounds are moved to a hand; on another entity they are CHAN_AUTO's.
+float CHAN_HAND    = 8;
+float CHAN_HAND2   = 9;
+// Quake VR: a burning body's crackle (vr_burning.qc VR_Burn_Crackle: a loop, replaced by misc/null.wav as it goes out).
+// Channel 6: no monster's sound uses it (only Armagon, a boss: fireproof); 5 and 7 are a body's drag (the engine's
+// physics sounds' scrapes, vr_physsound.cpp scrapeChannels).
+float CHAN_BURN    = 6;
 
 float ATTN_NONE   = 0;
 float ATTN_NORM   = 1;
@@ -875,3 +885,30 @@ float AS_MISSILE  = 4;
 // ----------------------------------------------------------------------------
 
 #include "builtins.qc"
+
+// Dawn of the Machine's monster keys (vr_mg3_triggers.qc), read by ai.qc's FoundTarget and combat.qc's T_Damage.
+.string aggro_target; // what it uses as it wakes (its group: vr_mg3_aggro_groups)
+.string health_target; // the trigger_health_relays it fires below their health fractions
+void() MG3_AggroWake;
+void(entity targ, entity attacker) MG3_HealthTarget;
+void() MG3_LorePostThink;
+float() MG3_Campaign;
+void() MG3_ItemUnspawn;
+float() MG3_RuneRemoved;
+void() MG3_item_sigil;
+void() MG3_BloodyNightmareStrip;
+void() MG3_BloodyNightmareLevel;
+float(entity targ, entity attacker, float damage) MG3_BloodyNightmareDamage;
+void() MG3_Frame;
+float MG3_ITEM_SPAWNED = 4; // an item a trigger brings (upstream SPAWNED, campaign 5)
+.float lavasuit_finished, lavasuit_time; // the lava suit (vr_mg3_items.qc): its end, its warning's next flash
+// Dawn of the Machine's monsters (M3-20/21): a slime's generations to come and its kin (vr_mg3_slime.qc), a lava man of
+// MG3's (rogue_lavaman.qc branches, vr_mg3_lavaman.qc), read by combat.qc and client.qc.
+.float mg3_slime, mg3_slimekin;
+.float mg3_lavaman;
+.float mg3_altside, mg3_burst, mg3_bursting; // Bloody Nightmare: an enforcer's second laser's side, an ogre's burst (vr_mg3_bn.qc)
+float(entity targ, entity inflictor, entity attacker, float damage) MG3_LavaManDamage;
+// Dawn of the Machine's Chthon (monster_boss_final, M3-24/25: vr_mg3_chthon.qc): 1 the map's, 2 the Debug spawner's (no
+// ending); immune during his fits (upstream boss_immune); his damage rules, read by combat.qc.
+.float mg3_chthon, mg3_chthon_immune;
+float(entity targ, entity inflictor, entity attacker, float damage) MG3_ChthonDamage;

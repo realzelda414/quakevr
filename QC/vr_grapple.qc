@@ -230,6 +230,7 @@ float(entity m) VR_Grapple_MonsterMass =
     if(c == "monster_dog")           { return 35; }
     if(c == "monster_eel")           { return 40; }
     if(c == "monster_wizard")        { return 50; }
+    if(c == "monster_orb")           { return 120; } // (Dawn of the Machine's flying eye: as big as a shambler, hollow)
     if(c == "monster_zombie")        { return 70; }
     if(c == "monster_army")          { return 80; }
     if(c == "monster_knight")        { return 90; }
@@ -237,6 +238,7 @@ float(entity m) VR_Grapple_MonsterMass =
     if(c == "monster_enforcer")      { return 100; }
     if(c == "monster_mummy")         { return 140; }
     if(c == "monster_hell_knight")   { return 150; }
+    if(c == "monster_ranged_knight") { return 150; } // (Dawn of the Machine's: a death knight's build)
     if(c == "monster_sknight")       { return 150; }
     if(c == "monster_sword")         { return 150; }
     if(c == "monster_ogre")          { return 250; }
@@ -247,11 +249,13 @@ float(entity m) VR_Grapple_MonsterMass =
     if(c == "monster_scourge")       { return 300; }
     if(c == "monster_super_wrath")   { return 450; }
     if(c == "monster_shambler")      { return 600; }
+    if(c == "monster_super_shambler") { return 800; } // (Dawn of the Machine's: bigger)
     if(c == "monster_lava_man")      { return 3000; }
     if(c == "monster_dragon")        { return 3000; }
     if(c == "monster_armagon")       { return 3000; }
     if(c == "monster_boss")          { return 5000; }
     if(c == "monster_oldone")        { return 10000; }
+    if(c == "monster_oldone_new")    { return 10000; } // (Dawn of the Machine's)
     // A grunt's box (24 x 24 x 51 units) is 80 kg.
     return max(10, m.size_x * m.size_y * m.size_z * (80 / (24 * 24 * 51)));
 };
@@ -896,7 +900,7 @@ void(entity h, string xWhy) VR_Grapple_Home =
                 if(gg_hand == cVR_OffHand) self.gh_rearm2 = TRUE;
                 else                       self.gh_rearm = TRUE;
             }
-            sound(self, CHAN_AUTO, "weapons/tink1.wav", 0.6, ATTN_NORM);
+            VR_SoundVaried(self, VRGetHandChannel(gg_hand), "weapons/tink1.wav", 0.6, ATTN_NORM);
             VR_Grapple_Haptic(gg_hand, 0.08, 120, 0.6);
             self = oldSelf;
         }
@@ -908,7 +912,7 @@ void(entity h, string xWhy) VR_Grapple_Home =
         {
             gg_ent.weaponflags = VR_Grapple_StripTag(gg_ent.weaponflags);
             gg_ent.frame = 0;
-            sound(gg_ent, CHAN_AUTO, "weapons/tink1.wav", 0.6, ATTN_NORM);
+            VR_SoundVaried(gg_ent, CHAN_AUTO, "weapons/tink1.wav", 0.6, ATTN_NORM);
         }
     }
     VR_Carry_Forget(h);
@@ -1027,7 +1031,7 @@ void(float xHand) VR_Grapple_QuickRelease =
     VR_Grapple_Haptic(xHand, 0.05, 160, 0.5);
     if(h == world)
     {
-        sound(self, CHAN_AUTO, "weapons/tink1.wav", 0.3, ATTN_NORM); // (nothing out: a click)
+        VR_SoundVaried(self, VRGetHandChannel(xHand), "weapons/tink1.wav", 0.3, ATTN_NORM); // (nothing out: a click)
         if(VR_Grapple_Debug())
         {
             dprint(sprintf("grapple: hand %g reel-in button: no hook out\n", xHand));
@@ -1045,7 +1049,7 @@ void(float xHand) VR_Grapple_Detach =
     VR_Grapple_Haptic(xHand, 0.05, 160, 0.5);
     if(h == world || (h.gh_state != GS_BITTEN && h.gh_state != GS_FLYING))
     {
-        sound(self, CHAN_AUTO, "weapons/tink1.wav", 0.3, ATTN_NORM); // (nothing in: a click)
+        VR_SoundVaried(self, VRGetHandChannel(xHand), "weapons/tink1.wav", 0.3, ATTN_NORM); // (nothing in: a click)
         if(VR_Grapple_Debug())
         {
             dprint(sprintf("grapple: hand %g detach button: %s\n", xHand, h == world ? "no hook out" :
@@ -1061,7 +1065,7 @@ void(entity xAttacker, float xDamage) VR_Grapple_Shot =
 {
     if(self.gh_state == GS_BITTEN)
     {
-        sound(self, CHAN_AUTO, "weapons/tink1.wav", 0.8, ATTN_NORM);
+        VR_SoundVaried(self, CHAN_AUTO, "weapons/tink1.wav", 0.8, ATTN_NORM);
         VR_Grapple_Loosen(self, sprintf("shot off by %s", xAttacker.classname));
     }
 };
@@ -1270,13 +1274,13 @@ void() GrappleAnchor =
             return;
         }
 
-        sound(self, CHAN_WEAPON, "player/axhit1.wav", 1, ATTN_NORM);
+        VR_SoundVaried(self, CHAN_WEAPON, "player/axhit1.wav", 1, ATTN_NORM);
         if(T_Damage(other, self, self.owner, 10))
         {
             VR_QuadSound(self.owner, "the hook bit");
         }
     } else {
-        sound(self, CHAN_WEAPON, "player/axhit2.wav", 1, ATTN_NORM);
+        VR_SoundVaried(self, CHAN_WEAPON, "player/axhit2.wav", 1, ATTN_NORM);
 
         // One point of damage inflicted upon impact. Subsequent
         // damage will only be done to PLAYERS... this way secret
@@ -1287,7 +1291,7 @@ void() GrappleAnchor =
         }
     }
 
-    sound(holder, CHAN_WEAPON, "weapons/tink1.wav", 1, ATTN_NORM);
+    VR_SoundVaried(holder, CHAN_WEAPON, "weapons/tink1.wav", 1, ATTN_NORM);
     particle2(self.origin, '0 0 0', QVR_PARTICLE_PRESET_BULLETPUFF, 48);
 
     if(other != world && other.health <= 0 && (other.flags & FL_MONSTER))
@@ -1378,10 +1382,10 @@ float(entity h) VR_Grapple_FlightProps =
         bestT = exact;
     }
     vector at = a + (b - a) * bestT;
-    sound(h, CHAN_WEAPON, "player/axhit2.wav", 0.7, ATTN_NORM);
+    VR_SoundVaried(h, CHAN_WEAPON, "player/axhit2.wav", 0.7, ATTN_NORM);
     if(gg_player != world)
     {
-        sound(gg_player, CHAN_WEAPON, "weapons/tink1.wav", 1, ATTN_NORM);
+        VR_SoundVaried(gg_player, CHAN_WEAPON, "weapons/tink1.wav", 1, ATTN_NORM);
     }
     particle2(at, '0 0 0', QVR_PARTICLE_PRESET_BULLETPUFF, 16);
     VR_Grapple_Bite(h, best, at);
@@ -1481,7 +1485,7 @@ void(entity h, float xHand, float xSpeed) VR_Grapple_Taut =
         return;
     }
     float k = min(1, (xSpeed - 120) / 500);
-    sound(self, CHAN_AUTO, "vr/grapple_taut.wav", 0.35 + 0.65 * k, ATTN_NORM);
+    sound(self, VRGetHandChannel(xHand), "vr/grapple_taut.wav", 0.35 + 0.65 * k, ATTN_NORM);
     VR_Grapple_Haptic(xHand, 0.08, 70, 0.3 + 0.7 * k);
     if(VR_Grapple_Debug())
     {
@@ -1707,7 +1711,7 @@ void(entity h, float xHand, float xLoad, float xMoving) VR_Grapple_ReelFeel =
         // Clicks a little slower under a heavy load, none when it stalls (only the strain in the hand).
         if(xMoving)
         {
-            sound(self, CHAN_AUTO, "vr/grapple_reel.wav", 0.55, ATTN_NORM);
+            sound(self, VRGetHandChannel(xHand), "vr/grapple_reel.wav", 0.55, ATTN_NORM);
         }
         h.gh_sound_at = time + 0.25 * (1 + 0.6 * xLoad);
     }
@@ -1907,7 +1911,7 @@ void(entity h, float xHand, float xUnreeling) VR_Grapple_Unwind =
     {
         if(moving)
         {
-            sound(self, CHAN_AUTO, "vr/grapple_unreel.wav", 0.5, ATTN_NORM);
+            sound(self, VRGetHandChannel(xHand), "vr/grapple_unreel.wav", 0.5, ATTN_NORM);
         }
         h.gh_sound_at = time + 0.25;
     }

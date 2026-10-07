@@ -4,6 +4,7 @@
 #include "vr_alloccount.hpp"
 #include "vr_api.h"
 #include "vr_cvars.hpp"
+#include "vr_files.hpp"
 #include "vr_jobs.hpp"
 #include "vr_mem.hpp"
 #include "vr_progs.hpp"
@@ -32,6 +33,7 @@
 #include "Zancle/Vocabulary/UniquePtr.hpp"
 #include "vr_zancle.hpp"
 
+#include <atomic>
 #include <string.h>
 namespace qvr::hull
 {
@@ -1321,10 +1323,11 @@ struct Tree
     int redone = 0;                            // pieces of its builds on the pool done again on one thread (buildTree)
     double ms = 0.0;                           // the builds so far
     int solidLeaves = 0, emptyLeaves = 0;
+    bool fromDisk = false;                     // the world's tree read from the disk cache (vr_hull_cache)
     auto members()
     {
         return qvr::mem::list(nodes, planes, heads, index, indexed, keptNodes, keptPlanes, keptSolid, keptEmpty, keptHeads,
-            forClipnodes, ext, ms, solidLeaves, emptyLeaves, redone);
+            forClipnodes, ext, ms, solidLeaves, emptyLeaves, redone, fromDisk);
     }
 };
 mem::Cache<Tree> tree{"hull tree", mem::MapChange};
@@ -1631,6 +1634,26 @@ public:
         return id;
     }
 
+    // (A builder on the pool) the asked plane answered as `as` (the table's plane of those very values, added if none):
+    // logged as asked.
+    int planeAs(const glm::dvec3& n, double d, const mplane_t& as)
+    {
+        const long long k = key(as.dist);
+        int id = -1;
+        for(long long kk = k - 1; kk <= k + 1 && id < 0; ++kk)
+        {
+            id = findSame(kk, as);
+        }
+        if(id < 0)
+        {
+            planes_->pushBack(as);
+            id = static_cast<int>(count()) - 1;
+            (*index_)[k].pushBack(id);
+        }
+        log_->pushBack(PlaneAsk{n, d, id});
+        return id;
+    }
+
     // The planes added since the table had `to` let go (the last first; the tree's builder only).
     void rollback(za::SizeT to)
     {
@@ -1646,7 +1669,9 @@ public:
     }
 
     // A brush grown by the box as a piece (false: nothing left of it).
-    bool grow(const Brushes& b, const Brush& br, const glm::dvec3& ext, Frag& out)
+    // given (growAllOnPool): the planes the table will answer for its brush's planes, found beforehand (a builder on
+    // the pool takes those for its cuts, so they are the build on one thread's).
+    bool grow(const Brushes& b, const Brush& br, const glm::dvec3& ext, Frag& out, const mplane_t* given = nullptr)
     {
         const glm::dvec3 pad = br.clip ? glm::dvec3{2.0} : ext + 2.0;
         Poly p = boxPoly(glm::dvec3{br.mins} - pad, glm::dvec3{br.maxs} + pad), front, back;
@@ -1654,7 +1679,7 @@ public:
         {
             const Plane& q = b.planes[br.first + i];
             const glm::dvec3 n0{q.normal};
-            const int tag = plane(n0, q.dist + support(q, ext));
+            const int tag = given ? planeAs(n0, q.dist + support(q, ext), given[i]) : plane(n0, q.dist + support(q, ext));
             glm::dvec3 n;
             double d;
             oriented(tag, n0, n, d);
@@ -1824,6 +1849,33 @@ private:
         return -1;
     }
 
+    // The first plane of the key's with these values (base's first), else -1.
+    int findSame(long long kk, const mplane_t& as) const
+    {
+        if(base_)
+        {
+            if(const int id = base_->findSame(kk, as); id >= 0)
+            {
+                return id;
+            }
+        }
+        const auto found = index_->find(kk);
+        if(found == index_->end())
+        {
+            return -1;
+        }
+        for(const int id : found->second)
+        {
+            const mplane_t& p = planeAt(id);
+            if(p.normal[0] == as.normal[0] && p.normal[1] == as.normal[1] && p.normal[2] == as.normal[2] &&
+                p.dist == as.dist && p.type == as.type && p.signbits == as.signbits)
+            {
+                return id;
+            }
+        }
+        return -1;
+    }
+
     // vr_hull_leafdebug: the solid piece making the watched point's leaf.
     void describe(const Frag& f, const Poly& region) const
     {
@@ -1947,9 +1999,22 @@ private:
     // the fewest, balanced, axial first. Many pieces: a sample of the planes (the build's time).
     int choose(const Frags& frags)
     {
-        seen_.resize(count(), 0);
-        facing_.resize(count(), 0);
-        ++stamp_;
+        // The pieces' live faces' planes (in the order first met) and how many faces lie on each: counted in a table
+        // the size of the faces (open addressed), not of the tree's planes (an array of all the planes a builder was
+        // 5 MB on vrstart2, made and zeroed by each of the pool's 2000 builders a tree: a third of its build).
+        za::SizeT faces = 0;
+        for(const Frag& f : frags)
+        {
+            faces += f.poly.size();
+        }
+        za::SizeT size = 16;
+        while(size < faces * 2)
+        {
+            size *= 2;
+        }
+        const za::SizeT mask = size - 1;
+        slots_.clear();
+        slots_.resize(size, -1);
         cands_.clear();
         for(const Frag& f : frags)
         {
@@ -1959,57 +2024,74 @@ private:
                 {
                     continue;
                 }
-                const auto t = static_cast<za::SizeT>(face.tag);
-                if(seen_[t] != stamp_)
+                za::SizeT i = (static_cast<za::SizeT>(static_cast<za::U32>(face.tag)) * 0x9E3779B97F4A7C15ull >> 20) & mask;
+                while(slots_[i] >= 0 && cands_[static_cast<za::SizeT>(slots_[i])].tag != face.tag)
                 {
-                    seen_[t] = stamp_;
-                    facing_[t] = 0;
-                    cands_.pushBack(face.tag);
+                    i = (i + 1) & mask;
                 }
-                ++facing_[t];
+                if(slots_[i] < 0)
+                {
+                    slots_[i] = static_cast<int>(cands_.size());
+                    cands_.pushBack(Cand{face.tag, 0});
+                }
+                ++cands_[static_cast<za::SizeT>(slots_[i])].facing;
             }
         }
         za::stablePartition(cands_.begin(), cands_.end(),
-            [this](int c) { return planeAt(c).type < 3; });
+            [this](const Cand& c) { return planeAt(c.tag).type < 3; });
         const za::SizeT step = za::max<za::SizeT>(1, cands_.size() * frags.size() / chooseBudget);
-        int best = cands_.front();
+        // The pieces' bounds, their centres and half sizes, an array per axis (the planes are weighed against them in
+        // turn: read in a row, not out of the pieces themselves; the same numbers as from the pieces).
+        const za::SizeT nf = frags.size();
+        bounds_.resize(nf * 12);
+        double* const box = bounds_.data();
+        for(za::SizeT i = 0; i < nf; ++i)
+        {
+            const Frag& f = frags[i];
+            for(int a = 0; a < 3; ++a)
+            {
+                box[(0 + a) * nf + i] = f.lo[a];
+                box[(3 + a) * nf + i] = f.hi[a];
+                box[(6 + a) * nf + i] = (f.lo[a] + f.hi[a]) * 0.5;
+                box[(9 + a) * nf + i] = (f.hi[a] - f.lo[a]) * 0.5;
+            }
+        }
+        int best = cands_.front().tag;
         long long bestValue = LLONG_MIN;
         for(za::SizeT ci = 0; ci < cands_.size(); ci += step)
         {
-            const int c = cands_[ci];
+            const int c = cands_[ci].tag;
             const mplane_t& p = planeAt(c);
             const glm::dvec3 n{p.normal[0], p.normal[1], p.normal[2]};
-            int front = 0, back = 0, splits = 0;
-            for(const Frag& f : frags)
+            const double dist = p.dist;
+            int front = 0, back = 0;
+            if(p.type < 3)
             {
-                double lo, hi;
-                if(p.type < 3)
+                const double* const lo = box + (0 + p.type) * nf;
+                const double* const hi = box + (3 + p.type) * nf;
+                for(za::SizeT i = 0; i < nf; ++i)
                 {
-                    lo = f.lo[p.type] - p.dist;
-                    hi = f.hi[p.type] - p.dist;
-                }
-                else
-                {
-                    const glm::dvec3 centre = (f.lo + f.hi) * 0.5, half = (f.hi - f.lo) * 0.5;
-                    const double s = glm::dot(n, centre) - p.dist;
-                    const double r = za::abs(n.x) * half.x + za::abs(n.y) * half.y + za::abs(n.z) * half.z;
-                    lo = s - r;
-                    hi = s + r;
-                }
-                if(hi <= onEpsilon)
-                {
-                    ++back;
-                }
-                else if(lo >= -onEpsilon)
-                {
-                    ++front;
-                }
-                else
-                {
-                    ++splits;
+                    const bool isBack = hi[i] - dist <= onEpsilon;
+                    back += isBack;
+                    front += !isBack && lo[i] - dist >= -onEpsilon;
                 }
             }
-            const long long value = 5ll * facing_[static_cast<za::SizeT>(c)] - 5ll * splits - za::abs(front - back) +
+            else
+            {
+                const double ax = za::abs(n.x), ay = za::abs(n.y), az = za::abs(n.z);
+                const double *const cx = box + 6 * nf, *const cy = box + 7 * nf, *const cz = box + 8 * nf;
+                const double *const hx = box + 9 * nf, *const hy = box + 10 * nf, *const hz = box + 11 * nf;
+                for(za::SizeT i = 0; i < nf; ++i)
+                {
+                    const double s = n.x * cx[i] + n.y * cy[i] + n.z * cz[i] - dist; // (glm::dot's order)
+                    const double r = ax * hx[i] + ay * hy[i] + az * hz[i];
+                    const bool isBack = s + r <= onEpsilon;
+                    back += isBack;
+                    front += !isBack && s - r >= -onEpsilon;
+                }
+            }
+            const int splits = static_cast<int>(nf) - front - back;
+            const long long value = 5ll * cands_[ci].facing - 5ll * splits - za::abs(front - back) +
                                     (p.type < 3 ? 5 : 0);
             if(value > bestValue)
             {
@@ -2033,10 +2115,14 @@ private:
     PlaneIndex ownIndex_;                // (a builder on the pool) its own planes' index
     PlaneIndex* index_ = &ownIndex_;     // its planes by key(dist): the tree's, or its own
     za::SizeT* indexed_ = nullptr;       // (the tree's builder) how many of the tree's planes its index holds
-    za::Vector<za::SizeT> seen_;
-    za::Vector<int> facing_;
-    za::SizeT stamp_ = 0;
-    za::Vector<int> cands_;
+    struct Cand
+    {
+        int tag;    // the plane
+        int facing; // the faces on it
+    };
+    za::Vector<int> slots_; // (choose) its table: an index in cands_, or -1
+    za::Vector<Cand> cands_;
+    za::Vector<double> bounds_; // (choose) the pieces' bounds by axis: lo, hi, centre, half size
 };
 
 // A tree's build shared out on the game's thread pool, the same tree as the build on one thread (buildTree's reference,
@@ -2252,6 +2338,156 @@ int emit(TreeBuilder& tb, Unit& u, Merge& m)
     return node;
 }
 
+jobs::Site growSite{"hull grow"}; // (its parallelFor: vr_jobs_sites)
+
+// The brushes grown by the box into pieces (in list's order, into frags) as tb.grow on one thread grows them, but on the
+// pool: runs of growRun brushes, each run grown by a builder over tb's table as it is (only read meanwhile), with planes
+// of its own and every ask logged. Then, brush by brush in list's order, its asks are put to tb's table as on one thread:
+// if every answer is a plane of the same values as the run's answer (so its cuts were the same), its piece is taken, its
+// faces' planes renumbered to the table's; else (a nearly equal plane added before it by a brush the run did not see)
+// what its asks added is taken back out and the brush grown again here. vrstart2's 33k brushes a tree: 1.5 s on one
+// thread.
+constexpr za::SizeT growRun = 256;
+
+// The same plane in value (a zero's sign aside: a plane first asked for facing the other way is stored negated, -0 in
+// its zero components; every cut made with either is the same).
+bool sameValues(const mplane_t& a, const mplane_t& b)
+{
+    return a.normal[0] == b.normal[0] && a.normal[1] == b.normal[1] && a.normal[2] == b.normal[2] && a.dist == b.dist &&
+           a.type == b.type && a.signbits == b.signbits;
+}
+
+void growAllOnPool(TreeBuilder& tb, const Brushes& b, const za::Vector<const Brush*>& list, const glm::dvec3& ext,
+    Frags& frags)
+{
+    struct Run
+    {
+        za::Vector<mplane_t> planes;
+        za::Vector<mclipnode_t> nodes; // (unused: a builder's)
+        int solid = 0, empty = 0;
+        za::Vector<PlaneAsk> log;
+        Frags frags;
+        za::Vector<za::U32> logStart; // [brush of the run]: its first ask in log (and one past the last's)
+        za::Vector<int> fragOf;       // [brush of the run]: its piece in frags, or -1 (nothing left of it)
+        za::Vector<int> rebounded;    // [brush of the run]: its pieces cut back (bounded)
+        za::Vector<int> map;          // its planes' numbers in tb's table (-1: not yet)
+    };
+    const za::SizeT baseCount = tb.count();
+    // The planes the table gives the brushes' own planes (the most of its asks), asked in list's order of a builder over
+    // tb, as on one thread: the runs cut with these, so a brush's cuts are mostly the build on one thread's even where a
+    // brush before it, in another run, added a nearly equal plane first (most of vrstart2's brushes: its terrain's
+    // prisms share their sides' planes to within the table's epsilons).
+    za::Vector<za::U32> givenStart;
+    za::Vector<mplane_t> given;
+    {
+        za::Vector<mplane_t> planes;
+        za::Vector<mclipnode_t> nodes;
+        int solid = 0, empty = 0;
+        za::Vector<PlaneAsk> log;
+        TreeBuilder pb{tb, planes, nodes, solid, empty, log};
+        givenStart.reserve(list.size() + 1);
+        for(const Brush* br : list)
+        {
+            givenStart.pushBack(static_cast<za::U32>(given.size()));
+            for(za::U32 i = 0; i < br->count; ++i)
+            {
+                const Plane& q = b.planes[br->first + i];
+                given.pushBack(pb.planeAt(pb.plane(glm::dvec3{q.normal}, q.dist + support(q, ext))));
+            }
+        }
+        givenStart.pushBack(static_cast<za::U32>(given.size()));
+    }
+    za::Vector<Run> runs((list.size() + growRun - 1) / growRun);
+    jobs::parallelFor(growSite, runs.size(), 1,
+        [&](za::SizeT begin, za::SizeT end)
+        {
+            for(za::SizeT r = begin; r < end; ++r)
+            {
+                Run& run = runs[r];
+                TreeBuilder lb{tb, run.planes, run.nodes, run.solid, run.empty, run.log};
+                const za::SizeT last = za::min(list.size(), (r + 1) * growRun);
+                for(za::SizeT i = r * growRun; i < last; ++i)
+                {
+                    run.logStart.pushBack(static_cast<za::U32>(run.log.size()));
+                    const int before = lb.rebounded;
+                    Frag f;
+                    if(lb.grow(b, *list[i], ext, f, given.data() + givenStart[i]))
+                    {
+                        run.fragOf.pushBack(static_cast<int>(run.frags.size()));
+                        run.frags.pushBack(ZA_MOVE(f));
+                    }
+                    else
+                    {
+                        run.fragOf.pushBack(-1);
+                    }
+                    run.rebounded.pushBack(lb.rebounded - before);
+                }
+                run.logStart.pushBack(static_cast<za::U32>(run.log.size()));
+            }
+        });
+    za::Vector<za::SizeT> touched; // (a brush's) the run's planes it gave numbers to
+    for(za::SizeT r = 0; r < runs.size(); ++r)
+    {
+        Run& run = runs[r];
+        run.map.clear();
+        run.map.resize(run.planes.size(), -1);
+        for(za::SizeT k = 0; k + 1 < run.logStart.size(); ++k)
+        {
+            const za::SizeT saved = tb.count();
+            touched.clear();
+            bool same = true;
+            for(za::U32 q = run.logStart[k]; q < run.logStart[k + 1] && same; ++q)
+            {
+                const PlaneAsk& a = run.log[q];
+                const int got = tb.plane(a.n, a.d);
+                const auto id = static_cast<za::SizeT>(a.id);
+                const mplane_t& had = id < baseCount ? tb.planeAt(a.id) : run.planes[id - baseCount];
+                same = sameValues(tb.planeAt(got), had);
+                if(same && id >= baseCount)
+                {
+                    int& to = run.map[id - baseCount];
+                    if(to < 0)
+                    {
+                        to = got;
+                        touched.pushBack(id - baseCount);
+                    }
+                    same = to == got;
+                }
+            }
+            const Brush& br = *list[r * growRun + k];
+            if(!same)
+            {
+                tb.rollback(saved);
+                for(const za::SizeT p : touched)
+                {
+                    run.map[p] = -1;
+                }
+                Frag f;
+                if(tb.grow(b, br, ext, f))
+                {
+                    frags.pushBack(ZA_MOVE(f));
+                }
+                continue;
+            }
+            tb.rebounded += run.rebounded[k];
+            if(run.fragOf[k] < 0)
+            {
+                continue;
+            }
+            Frag& f = run.frags[static_cast<za::SizeT>(run.fragOf[k])];
+            for(Face& face : f.poly)
+            {
+                if(face.tag >= 0 && static_cast<za::SizeT>(face.tag) >= baseCount)
+                {
+                    face.tag = run.map[static_cast<za::SizeT>(face.tag) - baseCount];
+                }
+            }
+            frags.pushBack(ZA_MOVE(f));
+        }
+        mem::release(run.frags);
+    }
+}
+
 // The tree of one model (sub), built into t (its root: a node; a lone leaf gets a node of its own). Only t is written:
 // trees for different boxes are built at once on the pool (report false there: the pieces cut back are returned, for
 // the main thread to print). On the pool (vr_jobs_parallel) unless watching (vr_hull_leafdebug).
@@ -2291,7 +2527,7 @@ int buildTree(Tree& t, const Brushes& b, za::SizeT sub, const glm::dvec3* watch 
     if(!watch && jobs::parallel() && jobs::pool())
     {
         Merge m;
-        growAll();
+        growAllOnPool(tb, b, list, ext, frags);
         Unit top;
         speculate(top, tb, ZA_MOVE(frags), shareDepth);
         m.start = tb.count();
@@ -2432,10 +2668,12 @@ const MonsterClass monsterClasses[] = {
     {"monster_ogre", "Ogre", &vr_mhull_ogre},
     {"monster_knight", "Knight", &vr_mhull_knight},
     {"monster_hell_knight", "Death Knight", &vr_mhull_hknight},
+    {"monster_ranged_knight", "Ranged Knight", &vr_mhull_hknight}, // (Dawn of the Machine's: the death knight's width)
     {"monster_zombie", "Zombie", &vr_mhull_zombie},
     {"monster_wizard", "Scrag", &vr_mhull_wizard},
     {"monster_demon1", "Fiend", &vr_mhull_demon},
     {"monster_shambler", "Shambler", &vr_mhull_shambler},
+    {"monster_super_shambler", "Super Shambler", &vr_mhull_shambler}, // (Dawn of the Machine's: the shambler's width)
     {"monster_shalrath", "Vore", &vr_mhull_shalrath},
     {"monster_enforcer", "Enforcer", &vr_mhull_enforcer},
     {"monster_fish", "Rotfish", &vr_mhull_fish},
@@ -2746,15 +2984,327 @@ void compileTrees(const za::Vector<Tree*>& todo, const Brushes& b)
     }
 }
 
-// A tree compiled on the pool once the brushes are built.
+// ---------------------------------------------------------------------------------------------------------------
+// The world's compiled trees kept on disk (vr_hull_cache): `<gamedir>/cache/hulls/<build>/<world>_<box>.hul`, <world>
+// the world's content (keyOf: hull 0's and hull 1's nodes, the planes, the models' heads), <box> the tree's box, <build>
+// this file's compile time (changed code never reads an old tree). A tree is the same bytes whenever the same brushes are
+// compiled for the same box (the build on the pool is the build on one thread's, node for node), so a file is that
+// build's result: a cold start of a big map reads it instead of compiling it (vrstart2: four trees of 1.2-1.4 million
+// nodes, 9 s of 32 threads). Only trees that took diskMinMs or more are written (a small map's build is about as quick
+// as its file). A file is read and checked (magic, version, sizes, the world and the box, every node's numbers, a sum of
+// its bytes) on the tree's own job; anything amiss is compiled again and written over. Written beside its place and
+// renamed (another copy of the game never reads half a file). The first use in a session under a game directory
+// removes the other builds' folders and the oldest files past diskBudget. vr_hull_cache 2: read, then compiled anyway
+// and compared (vr_hull_stats counts them).
+
+constexpr char diskMagic[4] = {'Q', 'V', 'R', 'H'};
+constexpr za::U32 diskVersion = 1;
+constexpr double diskMinMs = 250.0;
+constexpr za::U64 diskBudget = 1024ull << 20; // bytes in the build's folder (vrstart2's four trees: 105 MB)
+
+za::String makeDiskBuild()
+{
+    const char* stamp = __DATE__ " " __TIME__;
+    za::U64 h = 14695981039346656037ull;
+    for(; *stamp; ++stamp)
+    {
+        h = (h ^ static_cast<unsigned char>(*stamp)) * 1099511628211ull;
+    }
+    char build[24];
+    snprintf(build, sizeof(build), "%016llx", static_cast<unsigned long long>(h));
+    return build;
+}
+const za::String diskBuild = makeDiskBuild(); // (made before main, only read)
+
+struct DiskHeader
+{
+    char magic[4];
+    za::U32 version;
+    za::U64 world;
+    float ext[3];
+    za::U32 nodes, planes;
+    za::I32 root, solid, empty, rebounded;
+    za::U64 sum; // of the nodes' and planes' bytes (diskSum)
+};
+
+constexpr za::U64 diskSeed = 14695981039346656037ull;
+
+// A sum of the bytes (eight at a time; the rest one by one).
+za::U64 diskSum(const void* data, za::SizeT size, za::U64 h)
+{
+    const unsigned char* c = static_cast<const unsigned char*>(data);
+    za::SizeT i = 0;
+    for(; i + 8 <= size; i += 8)
+    {
+        za::U64 w;
+        memcpy(&w, c + i, 8);
+        h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+        h ^= h >> 29;
+    }
+    for(; i < size; ++i)
+    {
+        h = (h ^ c[i]) * 1099511628211ull;
+    }
+    return h;
+}
+
+za::U64 diskSumOf(const za::Vector<mclipnode_t>& nodes, const za::Vector<mplane_t>& planes)
+{
+    return diskSum(planes.data(), planes.size() * sizeof(mplane_t),
+        diskSum(nodes.data(), nodes.size() * sizeof(mclipnode_t), diskSeed));
+}
+
+// What a tree's job does with the disk (made on the main thread when it is posted: the game directory, the setting).
+struct DiskJob
+{
+    int mode = 0;    // vr_hull_cache: 0 off, 1 read and write, 2 read, then compiled anyway and compared
+    za::String path; // its file
+    za::U64 world = 0;
+};
+
+// The disk cache's counts this session (vr_hull_stats), added to by the trees' jobs.
+struct DiskCounts
+{
+    std::atomic<int> read{0}, written{0}, missed{0}, rejected{0}, same{0}, differed{0};
+    std::atomic<long long> readUs{0};
+};
+DiskCounts diskCounts;
+za::Vector<za::String> diskPruned; // the cache roots pruned this session (the main thread)
+
+za::String diskRoot()
+{
+    return za::String{com_gamedir} + "/cache/hulls";
+}
+
+// The first use in a session under a game directory (the main thread, before the trees' jobs are posted): the other
+// builds' folders removed, then the oldest files (by their last write) until the build's folder is within diskBudget.
+void diskPrune()
+{
+    const za::String root = diskRoot();
+    if(za::find(diskPruned.begin(), diskPruned.end(), root) != diskPruned.end())
+    {
+        return;
+    }
+    diskPruned.pushBack(root);
+    za::Vector<za::String> others;
+    files::forEachEntry(root.cStr(), [&](const char* name, bool) {
+        if(strcmp(name, diskBuild.cStr()) != 0)
+        {
+            others.pushBack(root + "/" + name);
+        }
+    });
+    for(const za::String& other : others)
+    {
+        files::removeAll(other.cStr());
+    }
+    struct Entry
+    {
+        za::String path;
+        za::I64 time;
+        za::U64 bytes;
+    };
+    za::Vector<Entry> entries;
+    za::U64 total = 0;
+    const za::String dir = root + "/" + diskBuild;
+    files::forEachEntry(dir.cStr(), [&](const char* name, bool isDirectory) {
+        if(!isDirectory)
+        {
+            Entry e{dir + "/" + name, 0, 0};
+            e.time = files::lastWriteTime(e.path.cStr());
+            e.bytes = files::fileSize(e.path.cStr());
+            total += e.bytes;
+            entries.pushBack(ZA_MOVE(e));
+        }
+    });
+    if(total > diskBudget)
+    {
+        za::quickSort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.time < b.time; });
+        for(const Entry& e : entries)
+        {
+            if(total <= diskBudget * 3 / 4)
+            {
+                break;
+            }
+            if(files::remove(e.path.cStr()))
+            {
+                total -= e.bytes;
+            }
+        }
+    }
+    files::createDirectories(dir.cStr());
+}
+
+// The tree's job's disk (the main thread): off with the setting.
+DiskJob diskJob(const Tree& t, qmodel_t* world)
+{
+    DiskJob d;
+    d.mode = static_cast<int>(za::clamp(vr_hull_cache.value, 0.f, 2.f));
+    if(d.mode == 0 || !world || !com_gamedir[0])
+    {
+        d.mode = 0;
+        return d;
+    }
+    diskPrune();
+    d.world = keyOf(world);
+    char name[96];
+    snprintf(name, sizeof(name), "/%016llx_%g_%g_%g.hul", static_cast<unsigned long long>(d.world),
+        static_cast<double>(t.ext.x), static_cast<double>(t.ext.y), static_cast<double>(t.ext.z));
+    d.path = diskRoot() + "/" + diskBuild + name;
+    return d;
+}
+
+// The world's tree read into t (a fresh tree, its heads sized) and checked; false: no file, or one amiss (t untouched).
+bool diskRead(Tree& t, const DiskJob& d, int& rebounded)
+{
+    FILE* in = Sys_fopen(d.path.cStr(), "rb");
+    if(!in)
+    {
+        return false;
+    }
+    Sys_fseek(in, 0, SEEK_END);
+    const qfileofs_t size = Sys_ftell(in);
+    Sys_fseek(in, 0, SEEK_SET);
+    DiskHeader h{};
+    bool ok = size >= static_cast<qfileofs_t>(sizeof(h)) && fread(&h, 1, sizeof(h), in) == sizeof(h) &&
+              memcmp(h.magic, diskMagic, 4) == 0 && h.version == diskVersion && h.world == d.world &&
+              h.ext[0] == t.ext.x && h.ext[1] == t.ext.y && h.ext[2] == t.ext.z && h.nodes > 0 && h.root >= 0 &&
+              static_cast<za::U32>(h.root) < h.nodes &&
+              size == static_cast<qfileofs_t>(sizeof(h) + za::SizeT{h.nodes} * sizeof(mclipnode_t) +
+                                              za::SizeT{h.planes} * sizeof(mplane_t));
+    za::Vector<mclipnode_t> nodes;
+    za::Vector<mplane_t> planes;
+    if(ok)
+    {
+        // (room for the brush models' trees that follow in the same arrays, prepareBrushModels: exact sizes would grow
+        // by half at their first node, 10 MB more a tree on vrstart2)
+        nodes.reserve(za::SizeT{h.nodes} + h.nodes / 16 + 1024);
+        planes.reserve(za::SizeT{h.planes} + h.planes / 16 + 1024);
+        nodes.resize(h.nodes);
+        planes.resize(h.planes);
+        ok = fread(nodes.data(), sizeof(mclipnode_t), nodes.size(), in) == nodes.size() &&
+             fread(planes.data(), sizeof(mplane_t), planes.size(), in) == planes.size();
+    }
+    fclose(in);
+    ok = ok && diskSumOf(nodes, planes) == h.sum;
+    for(za::SizeT i = 0; ok && i < nodes.size(); ++i)
+    {
+        const mclipnode_t& n = nodes[i];
+        ok = n.planenum >= 0 && static_cast<za::U32>(n.planenum) < h.planes;
+        for(const int c : n.children)
+        {
+            ok = ok && (c >= 0 ? static_cast<za::U32>(c) < h.nodes : c >= CONTENTS_SKY);
+        }
+    }
+    if(!ok)
+    {
+        ++diskCounts.rejected;
+        return false;
+    }
+    t.nodes = ZA_MOVE(nodes);
+    t.planes = ZA_MOVE(planes);
+    t.index.clear(); // (made again by the next build that needs it: TreeBuilder)
+    t.indexed = 0;
+    t.heads[0] = h.root;
+    t.solidLeaves = h.solid;
+    t.emptyLeaves = h.empty;
+    rebounded = h.rebounded;
+    checkpoint(t); // (as buildTree does for the world)
+    return true;
+}
+
+// The world's tree just compiled into t written (all its nodes and planes: the world's, nothing else built yet).
+void diskWrite(const Tree& t, const DiskJob& d, int rebounded)
+{
+    DiskHeader h{};
+    memcpy(h.magic, diskMagic, 4);
+    h.version = diskVersion;
+    h.world = d.world;
+    h.ext[0] = t.ext.x;
+    h.ext[1] = t.ext.y;
+    h.ext[2] = t.ext.z;
+    h.nodes = static_cast<za::U32>(t.nodes.size());
+    h.planes = static_cast<za::U32>(t.planes.size());
+    h.root = t.heads[0];
+    h.solid = t.solidLeaves;
+    h.empty = t.emptyLeaves;
+    h.rebounded = rebounded;
+    h.sum = diskSumOf(t.nodes, t.planes);
+    char suffix[32];
+    snprintf(suffix, sizeof(suffix), ".%llx.tmp", static_cast<unsigned long long>(za::Clock::nowNanoseconds()));
+    const za::String tmp = d.path + suffix;
+    FILE* out = Sys_fopen(tmp.cStr(), "wb");
+    if(!out)
+    {
+        return;
+    }
+    bool ok = fwrite(&h, 1, sizeof(h), out) == sizeof(h) &&
+              fwrite(t.nodes.data(), sizeof(mclipnode_t), t.nodes.size(), out) == t.nodes.size() &&
+              fwrite(t.planes.data(), sizeof(mplane_t), t.planes.size(), out) == t.planes.size();
+    ok = fclose(out) == 0 && ok;
+    if(ok && files::rename(tmp.cStr(), d.path.cStr()))
+    {
+        ++diskCounts.written;
+    }
+    else
+    {
+        files::remove(tmp.cStr());
+    }
+}
+
+za::U32 hashOf(const Tree& t);
+
+// The world's tree in t from the disk, else compiled (and written when it took long enough); the pieces cut back.
+int diskOrCompile(Tree& t, const Brushes& b, const DiskJob& d)
+{
+    if(d.mode == 0 || (!t.heads.empty() && t.heads[0] >= 0) || !t.planes.empty() || !t.nodes.empty())
+    {
+        return compileWorldTree(t, b); // (not a fresh tree: a file holds a fresh tree's build)
+    }
+    t.heads.resize(b.subs.size(), -1);
+    const auto t0 = za::Clock::nowNanoseconds();
+    int rebounded = 0;
+    if(diskRead(t, d, rebounded))
+    {
+        const auto ns = za::Clock::nowNanoseconds() - t0;
+        ++diskCounts.read;
+        diskCounts.readUs += static_cast<long long>(ns / 1000);
+        t.ms += za::nanosecondsToMilliseconds(ns);
+        t.fromDisk = true;
+        if(d.mode == 2) // compiled anyway into a fresh tree, compared
+        {
+            Tree fresh;
+            fresh.ext = t.ext;
+            fresh.forClipnodes = t.forClipnodes;
+            fresh.heads.resize(b.subs.size(), -1);
+            (void)buildTree(fresh, b, 0, nullptr, false);
+            const bool same = fresh.heads[0] == t.heads[0] && fresh.solidLeaves == t.solidLeaves &&
+                              fresh.emptyLeaves == t.emptyLeaves && fresh.nodes.size() == t.nodes.size() &&
+                              fresh.planes.size() == t.planes.size() &&
+                              ZA_MEMCMP(fresh.nodes.data(), t.nodes.data(), t.nodes.size() * sizeof(mclipnode_t)) == 0 &&
+                              ZA_MEMCMP(fresh.planes.data(), t.planes.data(), t.planes.size() * sizeof(mplane_t)) == 0;
+            ++(same ? diskCounts.same : diskCounts.differed);
+        }
+        return rebounded;
+    }
+    ++diskCounts.missed;
+    rebounded = compileWorldTree(t, b);
+    if(t.ms >= diskMinMs && t.heads[0] >= 0)
+    {
+        diskWrite(t, d, rebounded);
+    }
+    return rebounded;
+}
+
+// A tree compiled on the pool once the brushes are built (or read from the disk: vr_hull_cache).
 void postTree(Tree* t)
 {
     pending.trees.pushBack(t);
+    DiskJob d = diskJob(*t, sv.worldmodel);
     pending.run.pushBack(jobs::async(
-        [t]
+        [t, d = ZA_MOVE(d)]
         {
             pending.brushes.wait(); // (only waited on until settle: nothing else touches it meanwhile)
-            return compileWorldTree(*t, built);
+            return diskOrCompile(*t, built, d);
         }));
 }
 
@@ -3038,10 +3588,11 @@ void stats_f()
     }
     const Tree& t = tree;
     Con_Printf("hull: %d brush models (%d external .bsp); method %s; compiled hull: %s%d nodes, %d planes, %d solid "
-               "and %d empty leaves, %.0f KB, built in %.1f ms\n",
+               "and %d empty leaves, %.0f KB, %s in %.1f ms\n",
         static_cast<int>(b->subs.size()), external, vr_hull_method.value != 0.f ? "compiled hull" : "brush sweep",
         t.forClipnodes == b->clipnodes ? "" : "(none yet) ", static_cast<int>(t.nodes.size()),
-        static_cast<int>(t.planes.size()), t.solidLeaves, t.emptyLeaves, tree.bytes() / 1024.0, t.ms);
+        static_cast<int>(t.planes.size()), t.solidLeaves, t.emptyLeaves, tree.bytes() / 1024.0,
+        t.fromDisk ? "read from the disk cache" : "built", t.ms);
     if(t.forClipnodes == b->clipnodes)
     {
         Con_Printf("hull: hash tree %gx%g %08x\n", t.ext.x * 2.f, t.ext.z * 2.f, hashOf(t));
@@ -3060,8 +3611,9 @@ void stats_f()
         }
         ++count;
         ms += m.ms;
-        Con_Printf("hull: monsters' tree %gx%g: %d nodes, %d planes, %.0f KB, built in %.1f ms\n", m.ext.x * 2.f,
-            m.ext.z * 2.f, static_cast<int>(m.nodes.size()), static_cast<int>(m.planes.size()), heldBytes(m) / 1024.0, m.ms);
+        Con_Printf("hull: monsters' tree %gx%g: %d nodes, %d planes, %.0f KB, %s in %.1f ms\n", m.ext.x * 2.f,
+            m.ext.z * 2.f, static_cast<int>(m.nodes.size()), static_cast<int>(m.planes.size()), heldBytes(m) / 1024.0,
+            m.fromDisk ? "read from the disk cache" : "built", m.ms);
         Con_Printf("hull: hash tree %gx%g %08x\n", m.ext.x * 2.f, m.ext.z * 2.f, hashOf(m));
     }
     Con_Printf("hull: monsters (vr_mhull %s): %d trees, %.0f KB, built in %.1f ms\n", vr_mhull.value != 0.f ? "on" : "off",
@@ -3071,6 +3623,11 @@ void stats_f()
         static_cast<int>(keepLimit()), static_cast<int>(kept.maps.size()), kept.bytes() / 1024.0,
         pending.kept ? "kept from its last load" : "built", static_cast<unsigned long long>(kept.hits),
         static_cast<unsigned long long>(kept.misses));
+    Con_Printf("hull: disk cache (vr_hull_cache %d, this session): %d trees read (%.1f ms), %d compiled (no file), %d "
+               "written, %d files amiss; compared (2): %d the same, %d different\n",
+        static_cast<int>(vr_hull_cache.value), diskCounts.read.load(), static_cast<double>(diskCounts.readUs.load()) / 1000.0,
+        diskCounts.missed.load(), diskCounts.written.load(), diskCounts.rejected.load(), diskCounts.same.load(),
+        diskCounts.differed.load());
 }
 
 // vr_hull_keeptest: the map's brushes and its trees' world models built again from scratch, their hashes against the

@@ -3,6 +3,7 @@ using QuakeVR.Installer.Core.Assets;
 using QuakeVR.Installer.Core.Detection;
 using QuakeVR.Installer.Core.Packaging;
 using QuakeVR.Installer.Core.Platform;
+using QuakeVR.Installer.Core.Prerequisites;
 using QuakeVR.Installer.Core.Shortcuts;
 
 // qvr-setup <command> [options]. Never writes the real desktop or Start menu: shortcuts go only into --shortcuts-dir.
@@ -11,10 +12,14 @@ const string Usage = """
     qvr-setup manifest <package folder> --version <text>
     qvr-setup install --package <zip|folder> --target <dir> [--quake <dir>] [--shortcuts-dir <dir>]
                       [--textures <zip>] [--relight] [--vispatch <id1_vis.tgz>...] [--unverified]
-    qvr-setup uninstall --target <dir> [--remove-textures]
+                      [--setup-from <QuakeVR-Setup.exe>] [--registry-file <json> | --register] --accept-statement
+    qvr-setup statement                              (prints the author's statement on AI usage; install needs --accept-statement)
+    qvr-setup uninstall --target <dir> [--remove-textures] [--registry-file <json> | --register]
     qvr-setup verify --target <dir>
+    qvr-setup vcredist [--check <vc_redist.x64.exe>] [--dry-run [--file <vc_redist.x64.exe>] [--assume-missing]] [--downloads <dir>]
     qvr-setup download --url <url> [--url <mirror>...] --out <file> [--size <bytes>] [--sha256 <hex>]
     qvr-setup feed --url <latest.json url>
+    qvr-setup feed --file <latest.json> [--assets <folder with its files>]   (exit 1 when a file's size or SHA-256 differs)
     qvr-setup assets --game <id1 folder> [--map <maps/x.bsp>] [--prefix <path prefix>]
     """;
 
@@ -45,6 +50,8 @@ for (var i = 1; i < args.Length; ++i)
 }
 string? Opt(string key) => options.TryGetValue(key, out var v) ? v[^1] : null;
 bool Flag(string key) => options.ContainsKey(key);
+// The Apps & Features entry: a made-up registry root in a JSON file (tests), the real HKCU only with --register.
+IRegistryWriter? Registry() => Opt("registry-file") is { } rf ? new JsonFileRegistry(rf) : Flag("register") ? new WindowsRegistryWriter() : null;
 
 var log = new SyncProgress<InstallProgress>(p =>
 {
@@ -72,8 +79,21 @@ try
             Console.WriteLine($"{m.Files.Count} files, {PathUtil.FormatSize(m.TotalSize)}: {Path.Combine(folder, PackageManifest.FileName)}");
             return 0;
         }
+        case "statement":
+        {
+            Console.Write(AiStatement.Format());
+            return 0;
+        }
         case "install":
         {
+            // The wizard's Statement page: the console installs only with YES to all four, given as --accept-statement.
+            if (!Flag("accept-statement"))
+            {
+                Console.Write(AiStatement.Format());
+                Console.WriteLine();
+                Console.WriteLine("To install, pass --accept-statement: it answers YES to all four statements above.");
+                return 3;
+            }
             var probe = new WindowsSystemProbe();
             var quake = Opt("quake") ?? DetectionReport.Run(probe).DefaultQuake?.BaseDir
                 ?? throw new InstallException("No Quake found: pass --quake <folder with id1>.");
@@ -96,6 +116,8 @@ try
                 HdTexturesZip = Opt("textures"),
                 VisPatchArchives = options.TryGetValue("vispatch", out var vis) ? vis : [],
                 OwnedPacks = owned,
+                SetupFiles = Opt("setup-from") is { } setupExe ? SetupCopy.FilesOf(setupExe, SetupCopy.IsSingleFile(setupExe)) : [],
+                Registry = Registry(),
                 Shortcuts = shortcutsDir is null
                     ? new ShortcutOptions { Desktop = false, StartMenu = false }
                     : new ShortcutOptions { DesktopDir = Path.Combine(shortcutsDir, "Desktop"), StartMenuDir = Path.Combine(shortcutsDir, "Programs") },
@@ -107,9 +129,9 @@ try
         case "uninstall":
         {
             var r = Uninstaller.Uninstall(Opt("target") ?? throw new ArgumentException("--target is required"),
-                new UninstallOptions { RemoveHdTextures = Flag("remove-textures") }, log);
+                new UninstallOptions { RemoveHdTextures = Flag("remove-textures"), Registry = Registry() }, log);
             Console.WriteLine($"removed {r.FilesRemoved} files, {r.ShortcutsRemoved} shortcuts; changed files kept: {r.ChangedKept.Count}; " +
-                              $"player files left: {r.PlayerFilesLeft.Count}; folder removed: {r.FolderRemoved}");
+                              $"player files left: {r.PlayerFilesLeft.Count}; folder removed: {r.FolderRemoved}; Apps & Features entry removed: {r.EntryRemoved}");
             foreach (var f in r.PlayerFilesLeft.Take(20))
             {
                 Console.WriteLine($"  left: {f}");
@@ -126,6 +148,34 @@ try
             Console.WriteLine(problems.Count == 0 ? "all files intact" : $"{problems.Count} problem(s)");
             return problems.Count == 0 ? 0 : 1;
         }
+        case "vcredist":
+        {
+            // The VC++ runtime: what is installed, a redistributable's signature, and what the install would do. Without
+            // --dry-run it really installs it when it is missing (one administrator prompt).
+            var info = VcRuntimeDetector.Detect(new WindowsSystemProbe());
+            Console.WriteLine($"VC++ runtime: {info.Describe()} ok: {info.Ok}");
+            using var http = Downloader.CreateClient();
+            var redist = VcRedist.ForWindows(http);
+            if (Opt("check") is { } check)
+            {
+                var sig = new AuthenticodeVerifier().Verify(check);
+                Console.WriteLine($"{check}: trusted {sig.Trusted}, Microsoft {sig.IsMicrosoft}, signer {sig.Signer ?? "none"} ({sig.Detail}); " +
+                                  $"version {VcRedist.FileVersionOf(check)?.ToString() ?? "none"}; {redist.Reject(check) ?? "would be run"}");
+                return 0;
+            }
+            if (Flag("assume-missing"))
+            {
+                info = new VcRuntimeInfo(null, info.Required);
+            }
+            var result = await redist.EnsureAsync(info, new VcRedistOptions
+            {
+                DryRun = Flag("dry-run"),
+                LocalCopies = Opt("file") is { } file ? [file] : [],
+                DownloadDir = Opt("downloads") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QuakeVR-Installer", "downloads"),
+            }, log, CancellationToken.None);
+            Console.WriteLine($"{result.Outcome}: {result.Message}");
+            return result.RuntimeReady || result.Outcome == VcRedistOutcome.DryRun ? 0 : 1;
+        }
         case "download":
         {
             using var http = Downloader.CreateClient();
@@ -139,9 +189,37 @@ try
         }
         case "feed":
         {
-            using var http = Downloader.CreateClient();
-            var feed = await ReleaseFeed.FetchAsync(http, (options.TryGetValue("url", out var urls) ? urls : []).Select(u => new Uri(u)), CancellationToken.None);
+            ReleaseFeed feed;
+            if (Opt("file") is { } feedFile)
+            {
+                // A latest.json on disk (Misc/release/make_release.ps1 checks the one it made), parsed as a download is.
+                feed = ReleaseFeed.Parse(File.ReadAllText(feedFile));
+            }
+            else
+            {
+                using var http = Downloader.CreateClient();
+                feed = await ReleaseFeed.FetchAsync(http, (options.TryGetValue("url", out var urls) ? urls : []).Select(u => new Uri(u)), CancellationToken.None);
+            }
             Console.WriteLine($"version {feed.Version}; package {feed.Package?.File} {PathUtil.FormatSize(feed.Package?.Size ?? 0)}; components: {string.Join(", ", feed.Components.Keys)}");
+            if (Opt("assets") is { } assetsDir)
+            {
+                // Each file the feed names, beside it: the size and SHA-256 the installer will check after downloading.
+                var bad = 0;
+                foreach (var (what, f) in feed.Components.Select(c => (c.Key, (FeedFile?)c.Value)).Prepend(("package", feed.Package)))
+                {
+                    if (f is null)
+                    {
+                        Console.WriteLine($"{what}: missing from the feed");
+                        ++bad;
+                        continue;
+                    }
+                    var path = Path.Combine(assetsDir, f.File);
+                    var ok = File.Exists(path) && new FileInfo(path).Length == f.Size && string.Equals(PackageManifest.HashFile(path), f.Sha256, StringComparison.OrdinalIgnoreCase);
+                    Console.WriteLine($"{what}: {f.File} {(ok ? "matches" : "DOES NOT MATCH")} ({f.Urls.Count} url(s), first {f.Urls[0]})");
+                    bad += ok ? 0 : 1;
+                }
+                return bad == 0 ? 0 : 1;
+            }
             return 0;
         }
         case "assets":

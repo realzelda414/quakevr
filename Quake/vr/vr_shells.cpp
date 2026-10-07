@@ -12,6 +12,7 @@
 
 #include "vr_modelmetadata.hpp"
 #include "vr_shells.hpp"
+#include "vr_autopump.hpp"
 #include "vr_engine.hpp"
 #include "vr_anchor.hpp"
 #include "vr_backend.hpp"
@@ -126,7 +127,8 @@ struct Pending
     int kind;
     int count;
     int flags;
-    double time;
+    double time;    // when it goes (the QC's delay),
+    double created; // when the QC said so (the shot: the shotgun's auto pump stroke it waits for)
 };
 
 // Each hand's ejection port as last seen, for its speed.
@@ -335,6 +337,15 @@ void trackPorts(const view::ViewEntity (&weapons)[2])
     return vel;
 }
 
+// The shotgun's spent shell waits for its auto pump's stroke to reach the back (vr_autopump.cpp), instead of the QC's
+// delay: true with that time in `rear` and the stroke's average speed back (model units per second) in `backSpeed`.
+[[nodiscard]] bool pumpedEject(const view::ViewEntity (&weapons)[2], const Pending& p, double& rear, float& backSpeed)
+{
+    const view::ViewEntity& ve = weapons[p.hand];
+    const Weapon* w = ve.visible && !(p.flags & FlagFlick) ? weaponFor(ve.ent.model) : nullptr;
+    return w && w->model == modelmeta::Id::VShot && autopump::rearTime(p.hand, p.created, rear, backSpeed);
+}
+
 void eject(const view::ViewEntity (&weapons)[2], const Pending& p)
 {
     const view::ViewEntity& ve = weapons[p.hand];
@@ -347,11 +358,27 @@ void eject(const view::ViewEntity (&weapons)[2], const Pending& p)
     const bool flick = (p.flags & FlagFlick) != 0;
     const glm::vec3 shift = animationShift(ve, *w);
     const float upm = unitsPerMetre();
+    double rear = 0.0;
+    float backSpeed = 0.f;
+    const bool pumped = pumpedEject(weapons, p, rear, backSpeed);
+    if(vr_debug_weaponfx.value)
+    {
+        Con_Printf("shells eject hand %d t %.3f%s\n", p.hand, cl.time,
+            pumped ? va(" (auto pump back at %.3f)", rear) : va(" (due %.3f)", p.time));
+    }
 
     for(int i = 0; i < p.count; i++)
     {
         const int port = i % w->ports;
-        const glm::vec3 at = w->port[port] + shift;
+        glm::vec3 at = w->port[port] + shift;
+        glm::vec3 portDir = w->dir[port];
+        if(const float open = w->model == modelmeta::Id::VShot2 ? view::ssgOpenAngle(p.hand) : 0.f; open > 0.f)
+        {
+            // The super shotgun broken open (immersive reloading): out of its chambers as they are drawn, turned down
+            // with the barrels (vr_view.cpp; make_ssg_open.py's breech face at x 12.7, z 7), backwards and up.
+            at = view::ssgTurned(glm::vec3{12.7f, w->port[port].y, 7.f}, open) + shift;
+            portDir = view::ssgTurned(portDir, open, false);
+        }
         const glm::vec3 pos = view::modelPoint(ve, at);
 
         // The weapon's axes at the port (right-handed again when the model is mirrored).
@@ -359,7 +386,7 @@ void eject(const view::ViewEntity (&weapons)[2], const Pending& p)
         glm::vec3 up = worldDir(ve, at, {0.f, 0.f, 1.f});
         const glm::vec3 left = glm::normalize(glm::cross(up, fwd));
         up = glm::cross(fwd, left);
-        const glm::vec3 dir = worldDir(ve, at, w->dir[port]);
+        const glm::vec3 dir = worldDir(ve, at, portDir);
 
         Shell& s = newShell();
         s = Shell{};
@@ -379,6 +406,12 @@ void eject(const view::ViewEntity (&weapons)[2], const Pending& p)
             const float speed = w->speed * upm * rnd(0.8f, 1.2f);
             const glm::vec3 scatter = onSphere() * (speed * 0.15f);
             s.vel = dir * speed + scatter + tracks[p.hand].vel * 0.9f;
+            if(pumped)
+            {
+                // Thrown back a little with the action, as fast as the stroke went back on average (a share of it).
+                const glm::vec3 back = view::modelPoint(ve, at - glm::vec3{backSpeed, 0.f, 0.f}) - view::modelPoint(ve, at);
+                s.vel += back * 0.4f;
+            }
         }
         s.vel = awayFromFace(pos, s.vel);
 
@@ -412,7 +445,8 @@ void tink(Shell& s, float impact)
     }
     const float loud = za::clamp(impact / (4.f * unitsPerMetre()), 0.15f, 1.f);
     vec3_t org{s.pos.x, s.pos.y, s.pos.z};
-    S_StartSound(0, 0, sfx, org, za::min(vr_shells_sound.value, 1.f) * 0.45f * loud, 2.f);
+    const float pct = za::clamp(vr_snd_pitch_jitter.value, 0.f, 25.f) * 0.01f; // (a little higher or lower each time)
+    S_StartSoundPitch(0, 0, sfx, org, za::min(vr_shells_sound.value, 1.f) * 0.45f * loud, 2.f, 1.f + rng.getF(-pct, pct));
 }
 
 // Going into a liquid between `dry` and `wet` (a move's ends): where it crosses the surface, a tiny splash (the splash
@@ -680,7 +714,7 @@ void ejectTest_f()
     {
         flick::spin(hand); // as a flick: the casings leave with the spin
     }
-    pending.pushBack({hand, 0, count, flags, cl.time});
+    pending.pushBack({hand, 0, count, flags, cl.time, cl.time});
 }
 
 } // namespace
@@ -697,7 +731,7 @@ void parseEject()
     {
         return;
     }
-    pending.pushBack({hand, kind, za::min(count, 8), flags, cl.time + delay});
+    pending.pushBack({hand, kind, za::min(count, 8), flags, cl.time + delay, cl.time});
 }
 
 void frame(const view::ViewEntity (&weapons)[2])
@@ -717,7 +751,11 @@ void frame(const view::ViewEntity (&weapons)[2])
         const Pending& pe = pending[i];
         const float spun = (pe.flags & FlagFlick) ? flick::spinAngle(pe.hand) : -1.f;
         const bool waitSpin = spun >= 0.f && spun < flickEjectAngle && cl.time < pe.time + flickEjectWait;
-        if(cl.time >= pe.time && !waitSpin)
+        // The shotgun's waits for its auto pump's stroke to reach the back instead of the QC's delay.
+        double rear = 0.0;
+        float backSpeed = 0.f;
+        const double due = pumpedEject(weapons, pe, rear, backSpeed) ? rear : pe.time;
+        if(cl.time >= due && !waitSpin)
         {
             if(vr_shells.value)
             {

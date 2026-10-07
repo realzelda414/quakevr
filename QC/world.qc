@@ -281,14 +281,22 @@ void() worldspawn =
     precache_sound("vr/phys/grab_stone1.wav");
     precache_sound("vr/phys/grab_stone2.wav");
     precache_sound("vr/phys/grab_stone3.wav");
+    // A blunt blow's layer on flesh (vr_crates.qc VR_Blunt_HitLayer; the engine precaches only 1 and 2 of these, for the
+    // bodies' knocks; its other layers, soft_m, wood_m and metal_l, are the physics sounds').
+    precache_sound("vr/phys/flesh_m1.wav");
+    precache_sound("vr/phys/flesh_m2.wav");
+    precache_sound("vr/phys/flesh_m3.wav");
+    precache_sound("vr/phys/flesh_m4.wav");
     precache_model("progs/v_ksword.mdl");
     precache_model("progs/v_hksword.mdl");
     VR_Chainsaw_Precache(); // VR: the ogres' chainsaw (vr_chainsaw.qc)
     VR_Crowbar_Precache(); // VR: the crowbar (vr_crowbar.qc)
+    VR_MG3_Weapons_Precache(); // VR: Dawn of the Machine's weapons, when its data is there (vr_mg3_weapons.qc)
     VR_EnemyGuns_Precache(); // VR: the grunts' shotguns and the enforcers' laser rifles (vr_enemyguns.qc)
     VR_Debris_Precache(); // VR: rocks and bricks lying about (vr_debris.qc)
     VR_SmallGib_Precache(); // VR: small gibs' squishes (vr_smallgibs.qc)
     VR_Crates_Precache(); // VR: wooden crates (vr_crates.qc)
+    VR_Reload_Precache(); // VR: immersive reloading's shells and sounds (vr_reload.qc)
 
     // setup precaches allways needed
     precache_sound("items/itembk2.wav");        // item respawn sound
@@ -371,7 +379,8 @@ void() worldspawn =
     // HIPNOTIC
     //MED 10/21/96 added flies sound
     precache_sound("misc/flys.wav");
-    precache_sound("misc/null.wav"); // QVR: stops the flies (VR_Head_StopFlies)
+    precache_sound("misc/null.wav"); // QVR: stops the flies (VR_Head_StopFlies), a fire's crackle (VR_Burn_Crackle)
+    precache_sound("ambience/fire1.wav"); // QVR: a burning body's crackle (VR_Burn_Crackle; the wall torches' loop)
     // (Quake VR ships these itself, quakevr/sound/misc: never gated on the pack: the player's footsteps use them)
     //MED 01/13/97 added explosion sounds
     precache_sound("misc/shortexp.wav");
@@ -546,12 +555,21 @@ void() StartFrame =
     MG1_H_TestFrame();
     MGH_PowerupFrame();
     MGH_TestFrame();
+    MG3_Frame();
     MG3_TestFrame();
+    VR_MG3_Weapons_Frame(); // the Super Axe's glow and chain (vr_mg3_weapons.qc)
+    MG3_WeaponsTestFrame(); // vr_mg3_wtest (vr_mg3_weapons_test.qc)
+    MG3_MonstersTestFrame(); // vr_mg3_mtest (vr_mg3_monsters_test.qc)
+    MG3_BestiaryTestFrame(); // vr_mg3_btest (vr_mg3_bestiary_test.qc)
+    MG3_ShubTestFrame(); // vr_mg3_shubtest (vr_mg3_shub_test.qc)
+    MG3_ChthonTestFrame(); // vr_mg3_ctest (vr_mg3_chthon_test.qc)
     VR_Liquids_Frame(); // VR: monsters in slime and lava burn (vr_liquids.qc)
     VR_Wounds_Frame(); // VR: wet up to where the liquid comes (vr_wounds.qc)
     VR_Crates_Frame(); // VR: at a new map's first frame, its crates (vr_crates.qc; before the rocks and bricks: they keep clear)
     VR_Debris_Frame(); // VR: at a new map's first frame, its rocks and bricks (vr_debris.qc)
     VR_SmallGib_TestFrame(); // VR: the small gibs' tests (vr_smallgibs_test, vr_smallgibs_test.qc)
+    VR_DropCapTest_Frame(); // VR: the cap on dropped enemy weapons' test (vr_dropcap_test, vr_dropcap_test.qc)
+    VR_MarksmanTest_Frame(); // VR: the marksman ogre's test aid (vr_marksman_test, vr_marksman_test.qc)
     VR_Decap_TestFrame(); // VR: decapitation's tests (vr_decap_test, vr_decap.qc)
     VR_Limb_TestFrame(); // VR: limb gore's tests (vr_limb_test, vr_limbs_test.qc)
     VR_PickupTest_Frame(); // VR: the weapon pickups' tests (vr_pickup_test, vr_pickup_test.qc)

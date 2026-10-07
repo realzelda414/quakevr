@@ -79,6 +79,24 @@ struct State
     // and kept until the next render (moves are sent before rendering).
     bool muzzleValid[2]{false, false};
     glm::vec3 muzzle[2]{glm::vec3{0.f}, glm::vec3{0.f}};
+    // Each held gun's loading port (immersive reloading, vr_view.cpp loadPorts), placed with the muzzles: where a round
+    // held in the other hand goes in.
+    bool loadPortValid[2]{false, false};
+    glm::vec3 loadPort[2]{glm::vec3{0.f}, glm::vec3{0.f}};
+    // The magazine attached to each hand's gun (held by its handle or carried; immersive reloading, vr_view.cpp
+    // magazineBox), as drawn: a box, its middle and its three half-axes (the first from the middle to the feed end, up
+    // into the well; then across it, then through it). All four zero: none. The server tests hits and grips on it.
+    bool magBoxValid[2]{false, false};
+    glm::vec3 magBox[2][4]{};
+    // Each hand on the magazine of the other hand's gun (within Pull Reach of its box, nearer it than the gun's other
+    // grips; or holding it two-handed): its hotspot is body::HS_MAGAZINE from the next frame (twohand::updateHotspots).
+    bool onMagazine[2]{false, false};
+    // Where each hand was (pos) when the view placed the muzzles and ports above, at the end of its render. A move is
+    // sent before the frame's render, so it carries them along by how far the hand has gone since (vr_client.cpp
+    // handMuzzle): after a map load (the last render was the old map's, or this one's with the player at the world's
+    // origin), a load or a teleport they were left far behind, and the server's line from the hand to its muzzle crossed
+    // the map, pressing a button on the way (ROUND21.md, "A far button pressed at a map load").
+    glm::vec3 placedFrom[2]{glm::vec3{0.f}, glm::vec3{0.f}};
 
     // Where the other hand grips each weapon in the "fixed" two-handed display mode (a
     // foregrip vertex of the weapon model), placed with the muzzles.
@@ -125,7 +143,13 @@ void portalCrossing(float yawDegrees);
 
 // Turns the play space (thumbstick turning), in degrees, positive to the left.
 void addTurn(float degrees);
+// A turn of the turning stick (smooth, or a snap): the play space's, and the lean kept on the body (vr_lean_turn).
+void stickTurn(float degrees, bool snap);
 [[nodiscard]] float playSpaceYaw();
+
+// vr_body_error [mark|label]: where the game has the body (its box, the feet) in the room and which way it faces there,
+// against the mark (vr_debug_body_error logs it).
+void bodyError_f();
 
 // Motion playback (vr_motion_play.cpp): the play space's turn as a take had it (a pending server yaw
 // dropped), and the head's lean off the box's middle (world units, horizontal).
