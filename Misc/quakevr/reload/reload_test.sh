@@ -140,9 +140,9 @@ check $(echo "$log" | grep -q "already closed: no hold" && echo "$log" | grep "^
 # jolt doesn't, the hand on the open barrels turns with them; a hit from above opens it, from below shuts it; B/Y opens
 # it; the flick's speeds; Close When Loaded; each way's switch disables only its own (the matrix); the rear sight's ring
 # on the barrels; the sights' colour shut, open, fired and on the shotgun's pump; the author's defaults; Break Open off.
-SSG="map e1m1;wait60;developer 1;vr_reload_debug 1;vr_debug_2h_grip 1;vr_weapon_grip_mode 1;impulse 9;wait2;impulse 155;wait3;vr_test_weaponinst 7;impulse 120;wait3;give s 30;vr_mock_hand off -0.15 1.25 -0.40 50 0 0;vr_mock_hand main 0.25 1.1 -0.3 0 0 0;wait10"
+SSG="map e1m1;wait60;developer 1;vr_reload_debug 1;vr_debug_2h_grip 1;vr_weapon_grip_mode 1;vr_reload_ssg_open_flick 1;vr_reload_ssg_flick_close_speed 650;impulse 9;wait2;impulse 155;wait3;vr_test_weaponinst 7;impulse 120;wait3;give s 30;vr_mock_hand off -0.15 1.25 -0.40 50 0 0;vr_mock_hand main 0.25 1.1 -0.3 0 0 0;wait10"
 REST="vr_mock_hand main 0.25 1.1 -0.3 0 0 0"
-FIRE="+offhandattack;wait10;-offhandattack;wait30"
+FIRE="+offhandattack;wait10;-offhandattack;wait70" # (its firing animation over: it opens only then)
 FLICK="+flickreloadleft;wait3;-flickreloadleft;wait40"
 BY="vr_mock_button off secondary 1;wait3;vr_mock_button off secondary 0;wait40"
 AT="vr_mock_hand_to main lport 8;wait5;vr_mock_hand_to main lport 8;wait10;vr_mock_hand_to main lport;wait5;vr_mock_hand_to main lport;wait10"
@@ -261,17 +261,17 @@ log=$(bash $KIT/run.sh $AGENT -Script "$M0PRE;$(OTO "heldspot 0");$OGRIP;-grabri
 holds=$(echo "$log" | grep "^reload: off hand")
 check $(echo "$log" | grep -q "handed off to the off hand" && h 1 | grep -q "off hand weapon 6 clip 24 mag 1" && echo "$log" | grep -q "hand 1 holds the magazine of the gun in hand 0" && h 2 | grep -q "off hand weapon 6 clip 0 mag 0 holds nothing | main hand weapon 0 clip 0 holds a round of 24" && h 3 | grep -q "off hand weapon 6 clip 24 mag 1 holds nothing | main hand weapon 0 clip 0 holds nothing" && echo 1 || echo 0) "a gun carried by the off hand: its magazine pulled out by the main hand, then seated again"
 
-# 9. The ammo button: from its front pressed, from behind never, at the defaults (vr_weapon_button_cone 80, _depth 0.5);
+# 9. The ammo button: from its front pressed, from behind never, at cone 80 (the default was; 50 now) and depth 0.5;
 #    from the side refused at cone 50 depth 0, from behind pressed at 180. Then approaches as a finger makes them (a
 #    straight line in to the button, a quarter unit a frame), 0-60 degrees off its face and 120-180 (behind), four ways round.
 BTN() { echo "vr_mock_hand_to main wbutton $1 6;wait10;vr_mock_hand_to main wbutton $1 6;wait10;vr_mock_hand_to main wbutton $1 1;wait10;vr_mock_hand_to main wbutton $1 1;wait15"; }
-log=$(bash $KIT/run.sh $AGENT -Script "$MPRE;$(BTN front);$(BTN back);vr_weapon_button_cone 50;vr_weapon_button_depth 0;$(BTN side);vr_weapon_button_cone 180;$(BTN back);toggleconsole;quit" -Filter "^weapon button" 2>&1 | grep "^weapon button")
+log=$(bash $KIT/run.sh $AGENT -Script "$MPRE;vr_weapon_button_cone 80;$(BTN front);$(BTN back);vr_weapon_button_cone 50;vr_weapon_button_depth 0;$(BTN side);vr_weapon_button_cone 180;$(BTN back);toggleconsole;quit" -Filter "^weapon button" 2>&1 | grep "^weapon button")
 check $(echo "$log" | sed -n 1p | grep -q "pressed, the fingertip came 0 deg" && [ $(echo "$log" | grep -c "^weapon button 0: pressed") = 2 ] && echo "$log" | grep -q "not pressed, the fingertip came 180 deg off its face (cone 80)" && echo "$log" | grep -q "not pressed, the fingertip came 90 deg off its face (cone 50)" && echo "$log" | tail -1 | grep -q "^weapon button 0: pressed, the fingertip came 180" && echo 1 || echo 0) "the ammo button: from its front pressed, from behind not; from the side not at cone 50; at 180 from behind too"
 approach() { local s="vr_mock_hand_to main wbutton $1 8 $2;wait5;"; for u in $(seq 8 -0.25 0.25); do s+="vr_mock_hand_to main wbutton $1 $u $2;wait1;"; done; echo "$s vr_mock_hand_to main wbutton $1 9 $2;wait10;"; }
 for set in "front|0 15 30 45 60" "behind|120 135 150 165 180"; do
     S=""; n=0
     for a in ${set#*|}; do for z in 0 90 180 270; do S+="$(approach $a $z)"; n=$((n + 1)); done; done
-    p=$(bash $KIT/run.sh $AGENT -Script "$MPRE;$S;toggleconsole;quit" -Filter "^weapon button" -Timeout 300 2>&1 | grep -c "^weapon button 0: pressed")
+    p=$(bash $KIT/run.sh $AGENT -Script "$MPRE;vr_weapon_button_cone 80;$S;toggleconsole;quit" -Filter "^weapon button" -Timeout 300 2>&1 | grep -c "^weapon button 0: pressed")
     if [ "${set%%|*}" = front ]; then
         check $([ $((p * 100)) -ge $((n * 95)) ] && echo 1 || echo 0) "the ammo button from the front: $p of $n approaches pressed (95% or more)"
     else
@@ -294,4 +294,29 @@ moved=$(awk -v a="$w0" -v b="$w1" 'BEGIN { split(a, x, " "); split(b, y, " "); d
 check $(awk -v l="$l1" -v m="$moved" 'BEGIN { print (l > 15.5 && m > 3) ? 1 : 0 }') "it goes up the port and forward into the tube (x $l1 in the gun) while the gun moves ($moved units), carried by it"
 log=$(bash $KIT/run.sh $AGENT -Script "${SSG/vr_reload_debug 1/vr_reload_debug 1;vr_debug_collect_fx 1};$FIRE;$BY;$POUCH;$GRIP;$AT;wait20;toggleconsole;quit" -Filter "^reload: [0-9]|collect fx" 2>&1)
 check $(echo "$log" | grep -q "^reload: 2 into the gun" && echo "$log" | grep -q "collect fx: progs/vr_shell_pair.mdl .* into hotspot 240" && echo "$log" | grep "collect fx: in gun 0" | tail -1 | grep -q " t 0.9" && echo 1 || echo 0) "the super shotgun's pair slides into its chambers"
+# 10. The author's notes of vrfiringrange_2026-10-07 (ROUND21.md, "Reloading: the firing range notes of 10-07").
+# The super shotgun isn't broken open while it fires: B/Y pressed during its firing animation does nothing, after it opens it.
+BYNOW="vr_mock_button off secondary 1;wait3;vr_mock_button off secondary 0;wait3"
+log=$(bash $KIT/run.sh $AGENT -Script "$SSG;+offhandattack;wait2;-offhandattack;$BYNOW;$REP;wait80;$BY;$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
+check $(echo "$log" | grep -q "is still firing (frame [1-6]): not opened" && echo "$log" | grep -q "broken open by the button: 2 spent" && [ "$(opens "$log")" = 01 ] && echo 1 || echo 0) "B/Y during the super shotgun's firing animation: not opened; after it: opened ($(opens "$log"), want 01)"
+# A super shotgun dropped broken open lies drawn open (its prop's U_QVR_SSGOPEN: drawn in its parts); dropped shut, whole.
+DROP="vr_weapon_grip_mode 0;+graboff;vr_mock_button off grip 1;wait5;vr_mock_button off grip 0;-graboff;wait60"
+log=$(bash $KIT/run.sh $AGENT -Script "$SSG;$BY;$DROP;toggleconsole;quit" -Filter "^ssg: a super|broken open" 2>&1)
+log2=$(bash $KIT/run.sh $AGENT -Script "$SSG;$DROP;toggleconsole;quit" -Filter "^ssg: a super" 2>&1)
+check $(echo "$log" | grep -q "^ssg: a super shotgun lying open (entity [0-9]*), 0 loaded, drawn in its parts" && ! echo "$log2" | grep -q "^ssg: a super shotgun lying open" && echo 1 || echo 0) "dropped open, the super shotgun lies drawn open (its parts); dropped shut, whole"
+# The super nailgun's magazine on its left, its ammo button on its right (22-10-39): in the off hand (drawn mirrored) at
+# x -0.15, both inward of it the magazine, outward the button.
+log=$(bash $KIT/run.sh $AGENT -Script "${MPRE/impulse 156/impulse 157};vr_reload_bump_speed 100;vr_mock_hand_to main mag 0;wait5;vr_mock_hand_to main mag 0;wait5;vr_mock_hand_to main wbutton front;wait5;vr_mock_hand_to main wbutton front;wait5;toggleconsole;quit" -Filter "vr_mock_hand_to: main hand at" 2>&1)
+mx=$(echo "$log" | grep "main hand at" | sed -n 2p | awk '{print $5}'); bx=$(echo "$log" | grep "main hand at" | sed -n 4p | awk '{print $5}')
+check $(awk -v m="$mx" -v b="$bx" 'BEGIN { print (m != "" && b != "" && m > -0.1 && b < -0.2) ? 1 : 0 }') "the super nailgun in the off hand (x -0.15): its magazine inward (x $mx), its ammo button outward (x $bx)"
+# The thunderbolt's cell sparks as it is taken out and seated (22-14-04); taken out spent, it smokes for
+# vr_reload_battery_smoke_time (7 s; 22-14-33), then stops; a part-used one doesn't smoke.
+SEAT="vr_mock_hand_to main lport 6;wait10;vr_mock_hand_to main lport;wait5;vr_mock_hand_to main lport;wait10"
+log=$(bash $KIT/run.sh $AGENT -Script "${MPRE/impulse 156/impulse 161};give c 100;$BY;$POUCH;$GRIP;$SEAT;$REP;+offhandattack;wait400;-offhandattack;$REP;$BY;$REP;wait700;$REP;toggleconsole;quit" -Filter "^reload: (the cell|a spent|the spent|a magazine)" 2>&1)
+check $(echo "$log" | grep -q "a magazine of 36 out of the gun" && [ "$(echo "$log" | grep -c "the cell's contact sparks (taken out): 14")" = 2 ] && echo "$log" | grep -q "the cell's contact sparks (seated): 14" && [ "$(echo "$log" | grep -c "a spent cell smoking")" = 1 ] && echo 1 || echo 0) "the thunderbolt's cell: sparks taken out (twice) and seated; only the spent one smokes"
+st=$(echo "$log" | grep "the spent cell stopped smoking after" | sed 's/.*after \([0-9.]*\) s: \([0-9]*\) wisps.*/\1 \2/')
+check $(echo "$st" | awk '{print ($1 >= 6.9 && $1 <= 7.3 && $2 >= 30) ? 1 : 0}') "the spent cell smokes for 7 s, then stops (after, wisps: ${st:-none})"
+log=$(bash $KIT/run.sh $AGENT -Script "${MPRE/impulse 156/impulse 161};give c 100;vr_reload_battery_sparks 0;vr_reload_battery_smoke_time 2;+offhandattack;wait400;-offhandattack;$BY;wait300;$REP;toggleconsole;quit" -Filter "^reload: (the cell|a spent|the spent)" 2>&1)
+st=$(echo "$log" | grep "the spent cell stopped smoking after" | sed 's/.*after \([0-9.]*\) s.*/\1/')
+check $(! echo "$log" | grep -q "contact sparks" && awk -v t="$st" 'BEGIN { print (t != "" && t >= 1.9 && t <= 2.3) ? 1 : 0 }') "Contact Sparks 0: none; Spent Cell Smoke 2: it smokes for 2 s ($st)"
 exit $fail

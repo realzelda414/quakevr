@@ -523,6 +523,8 @@ void parseParticle2()
         case Preset::Splash: break; // Quake had none (vr_particles.cpp)
         case Preset::WoodDust: puff(22, count * 2); break; // (the browns)
         case Preset::ChainsawSmoke: break;                 // (too faint for Quake's dots)
+        case Preset::ContactSparks: puff(111, count); break;
+        case Preset::BatterySmoke: break;                  // (too faint for Quake's dots)
         default: puff(73, count); break;
     }
 }
@@ -764,6 +766,8 @@ extern "C" void VR_ParseEntityUpdate(int num, int bits)
     data.spin = (bits & U_QVR_SPIN) != 0;
     data.weaponUid = (bits & U_QVR_WEAPONUID) ? MSG_ReadLong() : 0;
     data.noMag = (bits & U_QVR_NOMAG) != 0;
+    data.ssgOpen = (bits & U_QVR_SSGOPEN) != 0;
+    data.ssgLoaded = data.ssgOpen ? MSG_ReadByte() : 0;
 }
 
 extern "C" void VR_DebugDrawnBoxes(void)

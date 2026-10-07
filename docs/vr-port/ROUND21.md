@@ -30057,3 +30057,109 @@ Checklist:
 
 - [ ] Body > Flashlight > Cord: None, Chain, Coiled; Chain the default. Coiled: springy, its turns opening as you pull
   the torch away, sagging and swinging; flick the torch over and pass it hand to hand.
+
+## Flashlight grab test: stale since the saved attachment (2026-10-07)
+
+`flash_grab_test.py all` failed at HEAD (6c253416), the same each run (3 of 3): mounted 12 spots "lit and not taken"
+(6 printed), returning 3, and 9 more checks the earlier report missed (timing 1, options 4 "let go, onhead", gunzone 2
+"let go at the butt, ongun", clipon 3). Not a VR regression: the test went stale.
+
+- **Culprit: a236bb0d** ("Address October 4 VR playtest notes", 2026-10-04): the flashlight's on/off and attachment are
+  saved and restored, so turning the flashlight off (`vr_flashlight 0`, the `!enabled()` branch of `setupView`) no
+  longer puts it back on the belt. The test reset the lamp between trials with `vr_flashlight 0; wait2;
+  vr_flashlight 1`; since then a lamp clipped on stayed on the head or gun into the next trial (the options, gunzone and
+  clipon failures), and a lamp let go of was still springing home at the next spot (1751 of the 8019 `mounted` probes:
+  mode returning). Bisected with `gunzone` as the oracle (dcb6d715, `all` passing, to HEAD; deterministic). A first
+  bisect with `returning` as the oracle named 4be5e5bf, a PVS experiment's revert, by chance: those failures sit at the
+  very edge of the reach and flip with any change.
+- **The edge failures:** the probe runs before the view that precedes the mock press, so its "lit" is a frame stale; the
+  tail of the flight home creeps a millimetre or two a frame, and a hand 9.0x cm off saw it lit, dark in the next view,
+  and pressed on that (`reachesLamp` at the press: 9.126 cm, reach 9.0, the last view's lit 0). The press agrees with
+  the view just before it, which is what a player sees: lit implies taken holds in VR.
+- **Fix (test and test aids):** `vr_flashlight_home` (new; Debug > Views > Flashlight Home): the torch back on the belt at
+  once, the light as it was; the test calls it before each `vr_flashlight 0` reset. The engine also remembers whether
+  the lamp was lit for a hand at its last press (`vr_flashlight_probe` prints `presslit`, `presses`) and the test judges
+  a press by that when the probe after it shows one more press (the returning trials press during the flight by
+  design). A hysteresis on the lit state (lit to 1 cm past the reach once lit) was tried and dropped: a lamp creeping
+  away still leaves any band a frame before the press. VR behaviour unchanged.
+- **timing's t1_4_2.2_-6** (the head turned -45, 2.2 m/s, the grip pressed 6 frames, 18 cm, before the lamp): the
+  press was nearer the left chest holster (hotspot 8) than the lamp, so the game's grip won there (a draw: by design,
+  `gameGripWins`) and no late grip started; run alone, a degree of the torso's turn the other way, it takes the lamp.
+  The probe now also prints `pressgame` (the game's grip won at the last press) and `timing` counts such a trial as
+  "pressed at a holster (the game's)", not wrong. Its bisect is no use: before b4767f23 the worktree's tracked
+  `quakevr/ironwail.cfg.baseline` (an October 4 config) was the runs' config, after it whatever the last run left.
+- Runs without `quakevr/ironwail.cfg.baseline` in the worktree (the kit's, untracked) keep each run's cvars in
+  `ironwail.cfg`: moving it aside for a bisect polluted later runs until it was put back.
+## Reloading: the firing range notes of 10-07 (2026-10-07)
+
+The author's notes vrfiringrange_2026-10-07_22-01-29 .. 22-14-33 (reload_test.sh section 10 checks each).
+
+- **The super shotgun isn't broken open while it fires** (22-07-20, "major"). Opened during its firing animation, the
+  gun was drawn in its two parts copied from the gun's entity, whose frame blending the renderer no longer moved on (it
+  wasn't drawn): frozen at the firing frame, its muzzle flash held, open. Now every way to open it (flick, pry, hit,
+  B/Y) does nothing until its animation is over (QC `VR_Reload_SsgFrame`: weapon frame 0; the log says "is still firing
+  (frame N): not opened"), and the open parts are always drawn at rest (frame 0, no blending: vr_view.cpp `setSsgPart`).
+  The magazine guns have no such race: ejected mid-burst their clip is empty and the animation ends by itself
+  (`player_nail_BaseImpl`, `player_light1`); their magazine is drawn at frame 0 already.
+- **A dropped super shotgun shows its state** (22-08-37). A super shotgun prop broken open is sent with
+  `U_QVR_SSGOPEN` (the protocol's spare `U_UNUSED21`, the VR bits above 24 being full; a byte: its loaded chambers) and
+  drawn open in its two parts as in the hands (vr_view.cpp `setupWorldSsgs`, the first 4 lying about; their own
+  entities taken out of the frame's list), at the open angle, the barrels' skin its loaded chambers. `vr_reload_debug 1`
+  with `developer 1` prints "ssg: a super shotgun lying open" once a second.
+- **The super nailgun's magazine on its left, its ammo button on its right** (22-10-39). make_mags.py makes the
+  magazine and its well on the right face as before and mirrors them onto the left one (seat (7.2, 5.44, 1.2), middle
+  y 9.79: vr_view.cpp `loadPorts`, `magMounts`; the kick anchors 196 and 254, the mirrors of 192 and 250); the ammo
+  button's Y and Roll mirrored (slots 4 and 12: -1.5, 65.4), and weapon settings version 37 takes them where a config
+  still has the old ones. In the left hand the gun is drawn mirrored: the magazine stays on the inner side.
+- **The thunderbolt's cell sparks and smokes** (22-14-04, 22-14-33). Seated or taken out (the button, the pull, a
+  knock), a cell throws `vr_reload_battery_sparks` (14; 0 none) small blue-white sparks at the gun's well (QC
+  `VR_Reload_CellSparks`; the new particle preset 17, ContactSparks: glowing, streaked, gone in 0.1-0.4 s). Taken out
+  spent (empty), it smokes for `vr_reload_battery_smoke_time` (7 s; 0 never), held or lying about: a thin grey wisp off
+  its top every tenth of a second, thinning out towards the end (`VR_Reload_CellSmoke` from the round's think; preset 18,
+  BatterySmoke, each wisp `vr_reload_battery_smoke_alpha` 0.45 opaque). Weapons > Reloading > Thunderbolt, "Sparks and
+  Smoke". The log: "the cell's contact sparks (seated|taken out)", "a spent cell smoking for 7 s", "the spent cell
+  stopped smoking after 7.1 s: 52 wisps".
+- **The shotgun's loading port no longer shimmers** (22-01-29). Its housing's four walls were boxes whose inner faces
+  lay in the very planes of the well's lining (the MDL's vertex steps, 0.22 units along the gun and 0.03 across, put
+  both on the same values): 29 pairs of faces in one plane, z-fighting. The housing is now its outer faces and its rim
+  at the mouth only (polish_weapons.py `loading_port`, mitred at the corners), the lining its inner faces; the lining
+  ends at the mouth (it stood 0.08 out past it). Checked: no coplanar overlapping pair left in the port
+  (29 before); seen from below between two frames 202 pixels changed (511 with the old model). Other same-facing
+  coplanar pairs remain elsewhere on v_shot.mdl (by the trigger at x 8, along the top at z 4.4, at the muzzle): not
+  touched.
+- **The author's tweaks are the defaults** (22-08-51; his config of 22:46 against the shipped defaults). Config version
+  100 (`vr_cvars.cpp` defaultChanges: a config still holding the old default takes the new one):
+  `vr_ammo_pouch_counter` 0 (was 1), `vr_ammo_pouch_x` 3.02 (0), `vr_decap_pop_sg_falloff` 1.5 (4),
+  `vr_flashlight_flick_speed` 800 (600), `vr_knockdown_ledge_drop` 16 (64), `_margin` 24 (16), `_reach` 1.25 (1),
+  `vr_reload_pull_snap` 225 (300), `vr_reload_ssg_flick_close_speed` 400 (650), `vr_reload_ssg_open_flick` 0 (1: the
+  flick no longer opens the super shotgun), `vr_weapon_button_cone` 50 (80), `vr_weapon_throw_damage_mult` 0.35 (0.5).
+  Held object settings version 65: the gremlin's head at Size 0.6 (slot 7). His weapon settings match the shipped ones
+  (but for the super nailgun's button, mirrored above). Left as they are: bookkeeping (`vr_cfg_version`,
+  `vr_props_version`, `vr_bindings_version`, `vr_xr_runtime`), his body (`vr_height_calibration`, `vr_bodycal_*`, the
+  arms' `vr_body_elbow_back/hand/lift`: the player's), the motion recorder's (`vr_motion_*`), the menus' state and
+  looks (`vr_menu_positions`, `_level` 2, `_scale` 0.16, `_distance`, `_fine_step`), the desktop window
+  (`vr_window_view` 0, `vr_spectator_fov` 120, `vr_mirror_hide_hud_text` 1), performance (`vr_foveated` 2,
+  `vr_detail` 0), comfort (`vr_comfort_vignette_strength` 0.5), slider noise (`vr_ammo_pouch_scale` 0.999,
+  `vr_relight_strength` 1.1988), and the held object slots the game filled for him (`vr_prop_id_33`, `_54` to `_59`).
+  reload_test.sh's super shotgun runs set the flick on (and its close speed 650) and its ammo button runs cone 80, as
+  they test those ways.
+
+## Stale in-game relights (relit_custom) no longer override a changed map
+
+- **Bug**: `vrstart` loaded the old hub after the island took its name: `relit_custom/quakevr/maps/vrstart.bsp`, an
+  in-game relight of the old hub, won by name (VR_ModelFile), and its `.relight` held only the settings hash.
+- **Fix**: the `.relight` gets `source <game>/maps/<map>.bsp <size> <wyhash>` (the map's own file, also when light was
+  given relight_maps.py's relit/ copy). VR_ModelFile uses a relit_custom copy only when `relight::customCurrent`
+  finds the file the game loads as `maps/<map>.bsp` has that size and hash (read and hashed once per map and session:
+  the answer is kept by the original's place, size and write time and the copy's write times). Otherwise the copy's
+  four files move to `relit_custom/_stale/<game>/maps/` (an older stale copy there replaced) and one console line
+  says so. A `.relight` without the line (all made before this) counts as stale: a relight is ~1 s a map. A batch
+  skips a map only when the hash and the source line both match (`relitAlready`), so it relights changed maps and
+  old-format ones.
+- **Checked, unchanged**: relight_maps.py's `relit/` copies (id1, hipnotic, rogue only) keep a `.relit` stamp that
+  hashes the map with the command, which the script checks; the engine does not verify them. The disk caches
+  (hulls, AO, textures, images) are keyed by content or the opened file's identity. The installer's first-start
+  marker only starts a batch.
+- **Test**: a test map relit, then its .bsp replaced by another map: the load uses the original, moves the copy aside,
+  prints the line; unchanged map: copy used; old-format `.relight`: moved aside on load, relit by a batch; batch on a
+  changed map: relit, not skipped; e1m1 (a .pak map from relit/'s copy): relit, then loaded as current.
