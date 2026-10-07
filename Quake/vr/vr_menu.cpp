@@ -1845,7 +1845,7 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
         open("Overhead Grip", pageIndex(pageFlashlightOverheadGrip)).help("The torch turned over in your hand (B or Y): its place, its turn and the fingers on it."),
         open("On a Gun or Head", pageIndex(pageFlashlightMounts)).help("Where the torch clips on a gun or on your head, and the zones that clip it on."),
         header("Flashlight"),
-        open("Chest Flashlight and Side: Body and Display", pageIndex(pageBodyDisplay)).help("The chest flashlight on or off and its hip are on Body and Display."),
+        open("Chest Flashlight and Side: Body and Display", pageIndex(pageBodyDisplay)).help("The chest flashlight on or off and its side are on Body and Display."),
         slider("Brightness", vr_flashlight_brightness, 0.25f, 2.5f, 0.05f, "%.2fx").extend(),
         slider("Range", vr_flashlight_range, 300.f, 2000.f, 50.f, "%.0f").extend(100.f, 6000.f),
         slider("Visible Beam", vr_flashlight_beam, 0.f, 1.f, 0.05f, "%.2f").help("A soft cone of light in the air from the lamp (0: none)."),
@@ -2849,8 +2849,11 @@ void hologramTestMessage()
             .help("A weapon lying on the floor is taken where the fist touches it: a crowbar by its bar, a sword by its "
                   "blade. Off: only with the hand at its handle."),
         slider("Weapon Grab Slack", vr_weapon_grab_slack, 0.f, 10.f, 0.5f, "%.1f cm")
-            .help("With Weapons by the Fist: a weapon is taken with the fist this far off it too (a gun lying flat on the "
-                  "floor is thinner than the lowest your fist gets over it)."),
+            .help("With Weapons by the Fist: a weapon lying on the floor is taken with the fist this far off it too (a gun "
+                  "lying flat is thinner than the lowest your fist gets over it). Not one in the air: caught by the fist on it."),
+        toggle("Lenient Weapon Catch", vr_weapon_grab_box)
+            .help("The old catch: a weapon is also taken when your hand comes within a hand's width of its handle, the "
+                  "fist up to 20 cm off it. Off: only when your closed fist touches it, as a box or a gib."),
         toggle("Weapons by Their Hotspots", vr_weapon_grab_hotspots)
             .help("Grip a weapon on the floor nearer one of its other grips than its handle (a chainsaw's front handle, "
                   "a crowbar's bar, a sword's blade, a gun's pump) and you carry it by that grip, as when your other hand "
@@ -6915,6 +6918,22 @@ za::Vector<Item> pageMain()
             .help("Every pair of holsters back to its shipped place. Each pair's own values (its turn and reach too): "
                   "Advanced VR Options > Weapons > Hip Holsters, and > Hotspots."),
 
+        // (The author's note e1m1_2026-10-07_22-40-30: its basics here, after the holsters; the rest of it, its turn, its
+        // reach and the counter's place, on Advanced VR Options > Weapons > Reloading.)
+        header("Ammo Pouch"),
+        slider("Ammo Pouch Forward", vr_ammo_pouch_x, -10.f, 10.f, 0.25f, "%+.2f").extend(-40.f, 40.f)
+            .help("Immersive reloading's pouch on the front of your belt, where you take rounds and magazines: forward "
+                  "(negative: back, round the hips), in Quake's units (about 3 cm). With the body drawn, 0 is on the belly."),
+        slider("Ammo Pouch Right", vr_ammo_pouch_y, -10.f, 10.f, 0.25f, "%+.2f").extend(-40.f, 40.f)
+            .help("The ammo pouch to your right (negative: left), in Quake's units (about 3 cm)."),
+        slider("Ammo Pouch Up", vr_ammo_pouch_z, -10.f, 10.f, 0.25f, "%+.2f").extend(-40.f, 40.f)
+            .help("The ammo pouch up (negative: down) from the hip holsters' height, in Quake's units (about 3 cm)."),
+        slider("Ammo Pouch Size", vr_ammo_pouch_scale, 0.2f, 3.f, 0.05f, "%.2fx").extend(0.05f, 10.f)
+            .help("How big the ammo pouch is drawn (how near a hand must come to reach into it: Advanced VR Options > "
+                  "Weapons > Reloading > Reach)."),
+        toggle("Ammo Counter", vr_ammo_pouch_counter)
+            .help("A small screen on the ammo pouch: how many of what it gives (shells, nails, cells) you have left."),
+
         header("Locomotion"),
         cycle("Move Towards", vr_menu_move_towards, {{1.f, "Head"}, {2.f, "Left Hand"}, {3.f, "Right Hand"}})
             .help("Where pushing the stick forward takes you: where you look (Head), or where that hand points, so you "
@@ -6966,8 +6985,8 @@ za::Vector<Item> pageMain()
         toggle("Flashlight", vr_flashlight)
             .help("A torch on your belt: trigger at it with an open hand switches it on or off; grip takes it in your "
                   "hand."),
-        cycle("Flashlight Side", vr_flashlight_side, {{0.f, "Left hip"}, {1.f, "Right hip"}})
-            .help("The hip the torch hangs on."),
+        cycle("Flashlight Side", vr_flashlight_side, {{0.f, "Left"}, {1.f, "Right"}})
+            .help("The side of your chest the torch hangs on."),
 
         header("Lighting"),
         slider("Ambient Light", "vr_ambient_light", 0.f, 0.4f, 0.01f, "%.2f").extend()
@@ -7074,11 +7093,11 @@ za::Vector<Item> pageMain()
     return {
         header("Sides"),
         cycle("Handedness", vr_handedness, {{0.f, "Custom"}, {1.f, "Right-handed"}, {2.f, "Left-handed"}})
-            .help("Sets which stick moves you, the wrist gadget's arm and the flashlight's hip together. Left-handed: the right "
-                  "stick moves, the gadget on the right arm, the torch on the right hip (Custom: set apart, below)."),
+            .help("Sets which stick moves you, the wrist gadget's arm and the flashlight's side together. Left-handed: the right "
+                  "stick moves, the gadget on the right arm, the torch on the right (Custom: set apart, below)."),
         toggle("Swap Stick Functions", vr_stick_swap).help("Off: the left stick moves you and the right one turns. On: the right stick moves, the left turns."),
         cycle("Wrist Gadget Arm", vr_gadget_arm, {{0.f, "Left"}, {1.f, "Right"}}).help("The arm the wrist gadget (the HUD) is on."),
-        cycle("Flashlight Side", vr_flashlight_side, {{0.f, "Left hip"}, {1.f, "Right hip"}}).help("The hip the torch hangs on (Chest Flashlight)."),
+        cycle("Flashlight Side", vr_flashlight_side, {{0.f, "Left"}, {1.f, "Right"}}).help("The side of your chest the torch hangs on (Chest Flashlight)."),
 
         header("Body"),
         slider("World Scale", vr_world_scale, 0.5f, 2.f, 0.05f, "%.2f").extend(0.25f, 4.f)
@@ -9406,9 +9425,11 @@ SliderHold sliderHold; // (stepSlider: the menu's keys)
 // The sliders' fine adjustment: while either grip is held in the headset (a grip does nothing else in the menus), or
 // Shift on a flat screen, a slider steps by vr_menu_fine_step of its step (0.1: a tenth), and shows the decimals that
 // takes (sliderText).
+bool fineForced = false; // (vr_menu_slider_step's "fine": the modifier as if held)
+
 [[nodiscard]] bool fineHeld()
 {
-    return keydown[K_SHIFT] || keydown[K_LSHOULDER] || keydown[K_RSHOULDER];
+    return fineForced || keydown[K_SHIFT] || keydown[K_LSHOULDER] || keydown[K_RSHOULDER];
 }
 
 [[nodiscard]] float sliderStep(const Item& item)
@@ -9491,9 +9512,12 @@ float stepSlider(const Item& item, int dir, bool repeat)
         const double held = realtime - outsideSince;
         step *= held < 1.0 ? 1.f : held < 2.0 ? 2.f : held < 3.0 ? 5.f : 10.f;
     }
-    // On the fine steps' grid (a value fine-tuned keeps its fine part on a whole step).
-    const float grid = item.step * CLAMP(0.01f, vr_menu_fine_step.value, 1.f);
-    float v = za::round((cur + dir * step) / grid) * grid;
+    // On the steps' grid: a plain step lands on a whole step (a round value, as before the fine steps: on the fine grid
+    // it landed off it with a fine step that isn't a whole fraction, 0.6998, 0.7997 with vr_menu_fine_step 0.0999: the
+    // author's note vrfiringrange_2026-10-07_22-23-40); a fine one on the fine steps' grid.
+    const double grid = fineHeld() ? static_cast<double>(item.step) * CLAMP(0.01f, vr_menu_fine_step.value, 1.f)
+                                   : static_cast<double>(item.step);
+    float v = static_cast<float>(std::round((static_cast<double>(cur) + dir * static_cast<double>(step)) / grid) * grid);
 
     float lo = item.min;
     float hi = item.max;
@@ -11073,6 +11097,52 @@ void qvr::menu::mapsPageStats_f()
 }
 
 // vr_menu_search <text>: the Search page's results for the text, best first, with their scores and pages.
+// vr_menu_slider_step <cvar> <steps> [fine]: the slider of `cvar` (the first on the VR menus' pages) stepped that many
+// times (negative: down) as the menu's keys step it, with the fine modifier held if "fine"; each value printed as the
+// cvar holds it and as the slider shows it (the plain steps' round values: the author's note
+// vrfiringrange_2026-10-07_22-23-40).
+void qvr::menu::sliderStep_f()
+{
+    if(Cmd_Argc() < 3)
+    {
+        Con_Printf("vr_menu_slider_step <cvar> <steps> [fine]\n");
+        return;
+    }
+    const char* name = Cmd_Argv(1);
+    const int steps = Q_atoi(Cmd_Argv(2));
+    const bool fine = Cmd_Argc() > 3 && !q_strcasecmp(Cmd_Argv(3), "fine");
+    const int was = levelOverride;
+    levelOverride = LevelDeveloper;
+    for(int p = 0; p < pageCount; p++)
+    {
+        if(pages[p].build == pageSearch || pages[p].build == pageChanged)
+        {
+            continue;
+        }
+        for(const Item& found : items(p))
+        {
+            if(found.kind != Item::Slider || !found.cvar || q_strcasecmp(found.cvar->name, name))
+            {
+                continue;
+            }
+            const Item item = found; // (change may build the page again)
+            fineForced = fine;
+            for(int i = 0; i < za::abs(steps); i++)
+            {
+                change(item, steps > 0 ? 1 : -1);
+                char text[64];
+                sliderText(item, item.cvar->value, text, sizeof(text));
+                Con_Printf("vr_menu_slider_step: %s \"%s\" shown %s\n", item.cvar->name, item.cvar->string, text);
+            }
+            fineForced = false;
+            levelOverride = was;
+            return;
+        }
+    }
+    levelOverride = was;
+    Con_Printf("vr_menu_slider_step: no slider of %s\n", name);
+}
+
 void qvr::menu::search_f()
 {
     if(Cmd_Argc() < 2)
