@@ -1852,7 +1852,7 @@ void flashlightFingers(za::Vector<Item>& list, const FlashlightFingerCvars& c, i
         cycle("Beam Quality", vr_flashlight_beam_quality, {{0.f, "Low"}, {1.f, "Medium"}, {2.f, "High"}})
             .help("How closely the visible beam fades where walls cut it. Higher looks for them more often, costing more time each frame."),
         toggle("Casts Shadows", vr_flashlight_shadows).help("Its light casts shadows (takes one of the shadowed dynamic lights)."),
-        cycle("Cord", vr_flashlight_cord, {{0.f, "None"}, {1.f, "Low-Poly Chain"}}).help("The retracting cord from the clip on your belt to the torch while it is off the belt: a rusty low-poly iron chain (chunky links of square bar, flat-shaded: Quake's look), springy, swinging as your hand moves, or none drawn."),
+        cycle("Cord", vr_flashlight_cord, {{0.f, "None"}, {1.f, "Chain"}, {2.f, "Coiled"}}).help("The retracting cord from the clip on your belt to the torch while it is off the belt. Chain: a rusty low-poly iron chain (chunky links of square bar, flat-shaded: Quake's look). Coiled: a springy coiled cord like an old telephone's, its turns opening out as you pull it. Both sag and swing as your hand moves. None: no cord drawn."),
         hueSlider("Beam Hue", vr_flashlight_hue).help("The beam's colour, with Beam Saturation (at 0 it is white): its light, the beam in the air and the lens. 40 warm, 200 cold blue; Player's: the Player Effects Hue."),
         slider("Beam Saturation", vr_flashlight_saturation, 0.f, 1.f, 0.05f, "%.2f").help("0 white (the default), 1 the Beam Hue in full."),
         header("Turning It Over"),
@@ -4688,6 +4688,10 @@ za::Vector<Item> pageDebugTools()
             .help("vr_maps_allow_progs: packages that ship their own progs.dat replace the game's code, so they are left out of the list by default. They are in the index either way (maps_info shows them, maps_stats counts them)."),
         slider("Download Cache Size", vr_maps_cache_mb, 0.f, 4096.f, 64.f, "%.0f MB").extend(0.f, 65536.f)
             .help("vr_maps_cache_mb: the downloaded packages' zips (cache/maps/) kept up to this size; past it the oldest are removed (before a download, at start-up, and when this is lowered). 0: none kept once a package is installed. Installed maps are not affected."),
+        slider("Largest Download", vr_maps_max_download_mb, 0.f, 4096.f, 64.f, "%.0f MB").extend(0.f, 65536.f)
+            .help("vr_maps_max_download_mb: a package whose zip is over this size is refused (the index's size, and the bytes as they arrive). 0: no limit (the default). The free disk space is checked either way, before the download and before the unpacking."),
+        slider("Pretend Free Disk Space", vr_maps_debug_free_mb, 0.f, 4096.f, 64.f, "%.0f MB").extend(0.f, 65536.f)
+            .help("vr_maps_debug_free_mb: test aid - the map installer is told the disk has this much free (a low disk simulated: its message, before the download or the unpacking). 0: the disk's real free space."),
         command("Download Cache Usage", "maps_cache")
             .help("maps_cache [trim]: the download cache's zips, oldest first (the first removed when it is over the size above), and how much of it they use. maps_cache trim: trimmed to the size now."),
         command("Map Browser Costs", "maps_page_stats")
@@ -5547,6 +5551,10 @@ za::Vector<Item> pageDebugTests()
         toggle("Show Load Points", "vr_reload_show_ports")
             .help("Each held gun's load point and radius, a held magazine's top, an attached magazine's box (blue)."),
         toggle("Show the Pouches' Reach", "vr_show_grenade_pouch").help("Spheres where the grenade pouch and the ammo pouch are reached."),
+        header("Hubs"),
+        command("The Old Hub (vrstart_old)", "vr_campaign_hub vrstart_old")
+            .help("vr_campaign_hub vrstart_old: the hub before the island (vrstart until 2026-10-07). Nothing goes there by "
+                  "default; vr_hub_map vrstart_old makes it the hub again."),
         header("Climbing"),
         command("Climbing Test Map", "map vrclimb").help("map vrclimb: rungs, ledges, a jump wall, moving and floating ledges."),
         command("To the Jump Wall", "setpos -40 -310 24 0 0 0; noclip")
@@ -5738,7 +5746,7 @@ za::Vector<Item> pageDebugTests()
                   "built at every load."),
         cycle("Hitboxes on Disk", vr_hull_cache, {{0.f, "Off"}, {1.f, "On"}, {2.f, "Check"}})
             .help("A big map's compiled hulls kept on disk (cache/hulls) and read at its next load instead of compiled "
-                  "again (vrstart2: 9 s to 0.1 s). Check: read, then compiled anyway and compared (Hitbox Stats counts "
+                  "again (vrstart: 9 s to 0.1 s). Check: read, then compiled anyway and compared (Hitbox Stats counts "
                   "them). Off: compiled at every load (vr_hull_cache)."),
         command("Hitbox Keep Test", "vr_hull_keeptest")
             .help("Builds the map's brushes and compiled hulls again from scratch and prints whether the server's (kept "

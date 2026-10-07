@@ -12,7 +12,7 @@ phases, the author testing after each.
   `isReloadHolsterHotspot`, QC/weapons.qc) and by the client for the ammo screens (`clip/size` over the reserve:
   vr_view.cpp `queueWeaponText`, `idleWeaponText`). Reloading also needs the immersive weapon mode
   (`vr_holster_mode 0`) and a human player (`.ishuman`: bots never reload). Also on the setup boards
-  (vr_setup.cpp `"reload"`) and the old hub (vrstart.ent: raw-cvar buttons 0 and 1, left alone).
+  (vr_setup.cpp `"reload"`) and the old hub (vrstart_old.ent: raw-cvar buttons 0 and 1, left alone).
 - **Magazines.** Every weapon is a record (QC/vr_weaponinst.qc: `weapon_inst`, `.wi_clip`) that the hand, the holster
   or the prop it lies as refers to: its magazine and its blood go with it through holstering, throwing, hand-offs and
   level changes. Map pickups come loaded (`weapon_touch`, items.qc: the base clip from the reserve), drops full.
@@ -153,5 +153,8 @@ Headless (mock hands, `vr_fixed_frames 1`), per phase:
 3. **Grenade and proximity launchers**: a port under each; grenades from the front pouch (a launcher's grenade or a
    proximity one by the B/Y as the back pouch's multi-grenade; armed and dropped as a back pouch grenade is); the back
    pouch stays.
+   Later (noted, not done: the magazine code is magfix's): a magazine seated at its well drawn sliding the last bit home
+   (a short seat slide, as the shells' slide into the guns: vr_collectfx.cpp's "into the gun" variant, its path the
+   well's axis).
 4. **Rockets**: a rocket prop loaded at the launcher's back end, one at a time; thrown rockets don't light, but a shot
    (hitscan, a nail, a blast) sets them off, in the air or lying.

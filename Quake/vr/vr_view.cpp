@@ -504,6 +504,22 @@ float ssgStep(SsgDrawn& st, const qmodel_t* gun, int flags)
     return local.x > ssgHinge.x ? view::modelPoint(gun, ssgTurn(local, deg)) : w; // (behind the hinge: the frame's)
 }
 
+// The barrels' turn `deg` degrees down about the hinge as a turn in the world (the gun as drawn, mirrored or not): what
+// turns a hand holding them (setupHand).
+[[nodiscard]] glm::mat3 ssgWorldTurn(const view::ViewEntity& gun, float deg)
+{
+    const glm::vec3 o = view::modelPoint(gun, glm::vec3{0.f});
+    const glm::mat3 m{view::modelPoint(gun, {1.f, 0.f, 0.f}) - o, view::modelPoint(gun, {0.f, 1.f, 0.f}) - o,
+        view::modelPoint(gun, {0.f, 0.f, 1.f}) - o};
+    if(std::abs(glm::determinant(m)) < 1e-9f)
+    {
+        return glm::mat3{1.f};
+    }
+    const glm::mat3 r{ssgTurn({1.f, 0.f, 0.f}, deg, false), ssgTurn({0.f, 1.f, 0.f}, deg, false),
+        ssgTurn({0.f, 0.f, 1.f}, deg, false)};
+    return m * r * glm::inverse(m);
+}
+
 struct Entities
 {
     view::ViewEntity weapon[2];
@@ -1414,6 +1430,7 @@ struct WorldHotspot
     glm::vec3 visualPos{0.f};
     glm::vec3 visualAngles{0.f};
     weapons::Hotspot def; // as set (its fingers set by hand, among the rest)
+    bool ssgTurned{false}; // on the open super shotgun's barrels: turned down with them (the hand on it too)
 };
 WorldHotspot worldHotspots[2][weapons::maxHotspots];
 int chosenGrip[2]{-1, -1}; // per holding hand: the grip hotspot the other hand holds, or last took
@@ -1756,7 +1773,9 @@ void setupWeapon(hands::State& s, int hand, qmodel_t* model, int frame, bool flo
             // The super shotgun open: its fore-end (where the other hand holds it) turned down with the barrels.
             if(ssgOpen > 0.f)
             {
+                const glm::vec3 was = w.pos;
                 w.pos = w.end = ssgTurnWorld(ve, w.pos, ssgOpen);
+                w.ssgTurned = w.pos != was;
             }
         }
         else if(h.type == weapons::HotspotType::Blade && s.muzzleValid[hand])
@@ -4102,6 +4121,17 @@ void setupHand(const hands::State& s, int hand)
             }
             const glm::quat from = glm::quat_cast(anglesBasis(handRot)), to = glm::quat_cast(anglesBasis(attached));
             handRot = basisAngles(glm::mat3_cast(glm::slerp(from, to, gripBlend)));
+            // The super shotgun open: the hand on its fore-end turned down with the barrels (the author: it kept the
+            // shut gun's turn, as if it held nothing).
+            if(heldSpot && heldSpot->ssgTurned)
+            {
+                handRot = basisAngles(ssgWorldTurn(entities.weapon[other], ssgHands[other].angle) * anglesBasis(handRot));
+                if(vr_reload_debug.value >= 2 && developer.value)
+                {
+                    Con_Printf("ssg: the hand on the open barrels turned %.1f deg with them (pitch %.1f)\n",
+                        static_cast<double>(ssgHands[other].angle), static_cast<double>(handRot.x));
+                }
+            }
         }
     }
     // Round 21, third pass: the held hotspot's hand offset (vr_wofs_hsN_v*): its drawn pose moved and turned once it
@@ -6219,6 +6249,78 @@ void setupFrontButton(int hand)
 
 namespace qvr::view
 {
+
+bool gunToWorld(int hand, const glm::vec3& p, glm::vec3& out)
+{
+    if(hand < 0 || hand > 1 || !entities.weapon[hand].visible || !entities.weapon[hand].ent.model)
+    {
+        return false;
+    }
+    out = modelPoint(entities.weapon[hand], p);
+    return true;
+}
+
+bool gunFromWorld(int hand, const glm::vec3& w, glm::vec3& out)
+{
+    glm::vec3 o, x, y, z;
+    if(!gunToWorld(hand, glm::vec3{0.f}, o) || !gunToWorld(hand, {1.f, 0.f, 0.f}, x) || !gunToWorld(hand, {0.f, 1.f, 0.f}, y) ||
+        !gunToWorld(hand, {0.f, 0.f, 1.f}, z))
+    {
+        return false;
+    }
+    const glm::mat3 m{x - o, y - o, z - o};
+    if(std::abs(glm::determinant(m)) < 1e-9f)
+    {
+        return false;
+    }
+    out = glm::inverse(m) * (w - o);
+    return true;
+}
+
+bool gunAxes(int hand, glm::mat3& out)
+{
+    if(hand < 0 || hand > 1 || !entities.weapon[hand].visible || !entities.weapon[hand].ent.model)
+    {
+        return false;
+    }
+    out = held::axesFromAngles(entities.weapon[hand].ent.angles, false);
+    return true;
+}
+
+bool loadPath(int hand, glm::vec3& port, glm::vec3& deep, glm::vec3& end)
+{
+    if(hand < 0 || hand > 1 || !entities.weapon[hand].visible || !entities.weapon[hand].ent.model)
+    {
+        return false;
+    }
+    const qmodel_t* model = entities.weapon[hand].ent.model;
+    const auto& info = modelmeta::get(model);
+    for(const LoadPort& lp : loadPorts)
+    {
+        if(!info.is(lp.model) || lp.magazine)
+        {
+            continue;
+        }
+        const glm::vec3 at = lp.point + glm::vec3{lp.offset[0]->value, lp.offset[1]->value, lp.offset[2]->value};
+        if(lp.model == modelmeta::Id::VShot2)
+        {
+            // Into the chambers, along the barrels as they are drawn open.
+            const float open = ssgOpenAngle(hand);
+            const glm::vec3 along = ssgTurn({1.f, 0.f, 0.f}, open, false);
+            port = ssgTurn(at, open);
+            deep = port + along * 1.f;
+            end = port + along * 2.2f;
+            return true;
+        }
+        // The shotgun: up through the port's well (polish_weapons.py loading_port: its ceiling 1 unit up), then forward
+        // into the magazine tube.
+        port = at;
+        deep = at + glm::vec3{0.f, 0.f, 1.6f};
+        end = deep + glm::vec3{2.5f, 0.f, 0.4f};
+        return true;
+    }
+    return false;
+}
 
 float ssgOpenAngle(int hand)
 {

@@ -29856,3 +29856,204 @@ In VR:
 - [ ] Punch the magazine's far end: it pops out.
 - [ ] The hand on the magazine: does it look right? Tune Hand X/Y/Z and the turn per gun.
 - [ ] The ammo button from the front, as you press it: does it press every time? From behind: never.
+
+## Map Library: no 200 MB limit on packages (2026-10-07)
+
+Asked: the Map Library would not download the Liminal Spaces Jam (510,755,797 bytes in the index, 1013 files):
+"the package is 487 MB (up to 200 MB)". The limits were `vr_mapinstall.hpp`'s constants: `maxZipBytes` 200 MB (the
+index's size before the download, and the bytes as they arrived) and `maxUnpackedBytes` 400 MB (the zip's files), with
+`maxFiles` 4000; the whole zip was downloaded into memory, hashed, written to the cache, then unpacked from memory, with
+every root pak held in memory until the end. Now:
+
+- **No size limit by default.** `vr_maps_max_download_mb` (0 = none; Debug > External Map Index > Largest Download)
+  refuses a larger package before and during its download, for whoever wants one. A server that sends over twice the
+  index's size (and 16 MB) is stopped as not the package (the sha256 would fail anyway; the disk never fills).
+- **Streamed to disk**: each mirror's transfer goes to `cache/maps/<sha256>.zip.part`, hashed as it arrives
+  (`sha256::Hasher`, incremental; `vr_sha256_test` 12/12: the 6 vectors whole and fed in 1-97 byte pieces), renamed to
+  `<sha256>.zip` once it matches the index (the sha256 check kept: a mismatch fails that mirror and tries the next).
+  The unpacking reads the zip from its file (miniz's reader on a FILE*, seeks only when needed); one file in memory at
+  a time, root paks taken out of the zip one at a time after the loose files. A part file is removed when its job
+  fails, and a stale one (the game quit mid-download) at the next start-up. Trims never count it.
+- **Free disk space checked** (`files::freeSpace`: GetDiskFreeSpaceExW / statvfs): before the download, the zip and as
+  much again for its files (installing) plus `diskMargin` 64 MB on the cache's volume; before the unpacking, the files'
+  own size plus 64 MB on the package folder's volume. The message: "not enough disk space: unpacking its files needs
+  200.0 MB and 64.0 MB to spare, and 200.0 MB is free on <folder>". A write that fails mid-download says how much was
+  free. `vr_maps_debug_free_mb` (Debug > External Map Index > Pretend Free Disk Space) simulates a low disk.
+- **Zip-bomb guard by ratio**, not size: files that unpack to more than 100 times the zip (`maxUnpackRatio`, past
+  `unpackRatioFloor` 256 MB) are refused ("1024.0 MB from a zip of 1020 KB (1028 to 1; up to 100 to 1): refused as a
+  zip bomb"). Real packages are 1-10 to 1. `maxFiles` 4000 -> 20000.
+- **The cache trim** already skipped the running job's zip; the part file isn't a cache name. Tested with the cap at
+  1 MB, then 2 MB in the middle of a 300 MB install: installed, its zip removed only after the job.
+
+Test: `python Misc/quakevr/maplibrary_large_test.py <agent>` (packages generated in scratch/maplib/, a test index
+written over the agent's cached one and put back, served from 127.0.0.1:8766; one real-time run): low disk refused
+before the download, `vr_maps_max_download_mb 100` refused, a wrong sha256 refused, a 1 GB-of-zeros bomb refused, low
+disk (200 MB) refused before unpacking a 24 MB zip of 200 MB, a 300 MB stored package (incompressible) installed
+("2 file(s) written (download 1842 ms, unpack 869 ms)"), then uninstalled and trimmed: 7/7.
+
+- [ ] Map Library: Liminal Spaces Jam (487 MB): downloads, installs, plays (its start map).
+
+## vrstart2 on ericw-tools 2.0 again: the qbsp holes' cause, leaner geometry, compile presets (2026-10-07)
+
+Your request: vrstart2 compiled with 2.0's qbsp like everything else (no 0.18.1, no `lit_liquids`), the cause of 2.0's
+lost faces fixed in the generator, fewer brushes, detail where right, a fast and a final compile preset.
+
+**Why 2.0 lost faces.** Its qbsp makes faces from the BSP's portals and decides contents by flooding through them
+(the fill). Slivers thinner than its epsilons break both: a portal whose brush side it cannot find gets no face ("N
+sides not found"), and a missing portal lets the fill turn whole regions of air solid (slabs standing in the air, no
+faces: most of the holes, often far from the sliver that caused them; deterministic but chaotic, any edit moves them).
+Found by bisecting small regions of the map (a ddmin over brushes, qbsp on each subset) down to 2-15 brushes:
+- terrain neighbours nearly coplanar (the old wedges), or a fraction of a unit apart along their edge: the old
+  `terrain_planes` itself made those steps (a shared plane meets the neighbour's corner 0.1-0.5 off);
+- 2,500 water tiles (0.18's lighting workaround) overlapping the terrain: 766 holes with 2.0;
+- faces of one brush folded a fraction of a degree (points snapped to the 1/8 grid: crystals, beams, logs);
+- corners a fraction of a unit through the ground or the water (boulders, logs, the cliffs' feet: a cliff corner 2 units
+  over the water meets the waterline 0.3 units away);
+- pine cones sharing one tip; rope pieces meeting at a degree or two; nearly level faces beside level ones;
+- runs of nearly straight terrain edges (the jittered lattice's rows, the paths' edges): nearly parallel vertical
+  planes meeting at a corner (a thin phantom slab stood out of the ground beside the pavilion's path);
+- the fill itself: the default midsplit and the fill both made phantom solid; -forcegoodtree and -nofill none.
+
+**Fixes** (mapgeom.py, vrstart2_gen.py): `terrain_mesh` (no steps: each prism's top through its own corners, exact
+reals; nearly coplanar neighbours, under a unit across or 1.5 degrees, made exactly coplanar by moving a corner, as far
+as 3 units across a slope; the island's walkable ground pinned: its steps of 8 are what keep the player from
+snagging; tops within 0.6 degrees of level levelled; corners within 4 units across the slope of the water's surface put
+on it), then exactly coplanar triangles of one texture merged into convex prisms; `unbend` (points moved 2-4 units off
+nearly straight runs, at most 6); `simplify_points` (greedy insertion away from the island: lake floor 3 units,
+cliffs 2, mountains 6: only 86 points go, the noise needs the rest); `hull` merges folds under 3 degrees, turns faces
+within 1.5 degrees of an axis to it, settles corners within 1.5 units of the ground or the water 2 units clear; pines'
+cones end three quarters up the cone above; boulders' undersides 4 under the ground; ropes in 2 pieces (were 3-5); the
+water one brush; the sealing floor's outer faces skip. **Compile** (`compile_map`): qbsp twice at once, spliced
+(`bsp_splice.py`): hull 0 from `-nofill -noclip -forcegoodtree -tjunc rotate`, the clipping hulls from a normal run
+(unfilled they were 18 million clipnodes, a 250 MB .bsp). `-tjunc rotate`: 2.0's default cut 16,000 more faces.
+Presets `--preset fast|final` (`--help`, MAPPING.md); `--check N` runs the new hole test, `bsp_holes.py`.
+
+| | before (0.18.1 qbsp) | after (2.0) |
+|---|---|---|
+| .map brushes | 14,399 (2,500 water tiles, 10,518 terrain) | 10,432 (9,073 terrain prisms) |
+| world faces | 76,869 | 81,198 |
+| hull 0 leaves / nodes / clipnodes | 35,200 / 56,832 / 124,036 | 52,467 / 110,393 / 173,372 |
+| .bsp | 18.1 MB | 23.1 MB |
+| holes (bsp_holes.py) | 0 in 1,000,000 rays | 1 hit in 300,000 (a sub-unit sliver on the lake floor), 0 in another 300,000 |
+| qbsp "sides not found" | (0.18: n/a; 2.0 on the old map: 435) | 71 (none of them a hole the rays find) |
+| final compile | qbsp 39 s, vis 9 s, light 356 s: 6m50 | qbsp 19 s and 285 s (parallel), vis 16 s, light 458 s: 12m55 |
+| fast compile | qbsp 37 s, (no vis), light 23 s: 1m07 | qbsp 23 s and 239 s, vis 16 s, light 58 s: 5m32 |
+
+(Compile times on the shared machine: +-20%.) The hole count is not 0 in every build: 2.0's slivers are chaotic and
+every variant tried had 0-9 hits in 600,000 rays (0.18.1: 0 in a million); this one had the fewest.
+
+**Tested**: the ray test (above); before/after shots from 11 fixed places (`scratch/contact_vs2bsp.png`: before, after,
+difference x4; mean differences 0.5-3.5 per channel against 0.4-1.8 between two runs of the same map, the campfire view
+16 against 9: flames, smoke and a barrel's random skin; the slipgate's surface is lit now, as 2.0 always made it);
+the walk test 18 of 18 three times (the old map also misses a leg now and then: 1 of 4 runs); the tutorial, a lectern
+and Turning pressed by hand (`vr_debug_wallbuttons`: the same three buttons as on the old map); the 20 barrels and
+crates resting within 2 units of where they rested; 289 recovered clip brushes (180); e1m1's smoke test. **Loads**
+(exclusive, 4 alternating runs, hull files there): cold 1,240 ms (old 1,212), warm 310 ms (old 282): the water's
+surface is 7,500 faces (5,700: its wave mesh +15 ms) and hull 0 is twice the nodes.
+
+### Back to qbsp 0.18.1, the cleaned-up map kept (the author's decision)
+
+qbsp is 0.18.1's again (`-bsp2 -splitturb`, one run; `bsp_splice.py` kept, unused), vis and light 2.0's. `-splitturb`
+cuts the water's faces to 240 units and leaves them lit: no `lit_liquids` patch, the water one brush. Fixed on the way:
+`hull`'s axis turn put faces facing -x/-y/-z at the mirrored coordinate (8 of the terrace's stones were broken brushes:
+0.18 said "Couldn't create brush faces"; 2.0 had dropped them silently). Results (final preset):
+
+| | shipped (0.18.1, old map) | now (0.18.1, cleaned map) |
+|---|---|---|
+| .map brushes | 14,399 | 10,432 |
+| faces / leaves / clipnodes | 77,042 / 35,200 / 124,036 | 71,398 / 32,307 / 151,675 |
+| .bsp | 18.1 MB | 17.7 MB |
+| holes (bsp_holes.py, 1,000,000 rays) | 0 | 0 |
+| final compile | qbsp 39 s, vis 9 s, light 356 s | qbsp 31 s, vis 7 s, light 399 s (7m32) |
+| fast compile | qbsp 37 s, light 23 s (no vis) | qbsp 36 s, vis 7 s, light 40 s (1m34) |
+| load cold / warm (exclusive, 4 alternating) | 1,196 / 285 ms | 1,256 / 299 ms |
+
+The load is 14 ms slower warm and about 60 cold: `VR_NewMap: liquids` (the water's wave mesh) takes 117 ms against 102
+(5,278 water faces cut along the BSP by -splitturb, against the old 2,500 160-unit tiles; -subdivide 160 made it 128);
+the rest is the same. Tested: walk test 18 of 18 in 4 of 5 runs (one run missed the terrace and bridge legs: the old map
+also misses one now and then), the three buttons pressed by hand as before, the 20 barrels and crates within 2 units of
+their old rest, `vr_menu_path_check` 0 missing, e1m1's smoke test. The contact sheet (`scratch/contact_vs2bsp_q018.png`
+in the agent's worktree): the same look (differences 0.6-3.8 per channel, the campfire's 12 its flames, smoke and a
+barrel's random skin) except the slipgate's surface, now lit and showing its texture (as the first 2.0 builds drew it;
+0.18 without -splitturb left it unlit and dark).
+
+## vrstart2 becomes vrstart; the old hub is vrstart_old (2026-10-07)
+
+The author's request: the island is the hub. `git mv`: `vrstart.bsp`/`.ent` -> `vrstart_old.*`, `vrstart2.bsp/.lit/.lux/.map`
+-> `vrstart.*`, `vrstart2_gen.py` -> `vrstart_gen.py` (MAPNAME `vrstart`; the .map the same but its header line),
+`vrstart2_walktest.py` -> `vrstart_walktest.py`. Engine: `VR_HubMap()` is `vrstart`, or `vrstart_old` when `vr_hub_map`
+names it (default `vrstart`); `VR_IsVrMap` knows `vrstart_old` (and `vrstart2`); **`VR_MapAlias`** (SV_SpawnServer):
+`vrstart2` loads `vrstart`, so an old save made on the island, a bind or a script still work (the same map: the save's
+entities fit). `vr_cfg_version` 99: a config's `vr_hub_map vrstart2` becomes `vrstart` (without it, it would be
+`vrstart` anyway). Seen tips: `tips_seen.txt` keys `vrstart2:...` count as `vrstart:...` (the island's tips stay seen;
+the old hub's tip names are different). Debug > Tests > Hubs > The Old Hub (`vr_campaign_hub vrstart_old`). The
+tutorial's, calibration room's, test hall's and example map's ways back already said `map vrstart`: they lead to the
+island now. Bench scenario `load_vrstart2` -> `load_vrstart`; `stray_press_test.sh` loads vrstart and vrstart_old; docs
+(MAPPING, TESTING, FEATURES, GRAPHICS, HULLS, RELOAD_PLAN, EXPANSIONS), the checklist, code comments and the FGD's
+help follow.
+
+**Not aliased: a save made on the old hub** (mapname `vrstart`) now loads the island with the old hub's entities
+(wrong). The hub is rarely saved in; the alias would need to tell the two apart (the save's entity count, say).
+
+**Tested**: a fresh start (`vr_startgame`) and `vr_campaign_hub` land in vrstart; `vr_campaign_hub vrstart_old` loads
+the old hub; `map vrstart2` loads vrstart; `changelevel vrstart` from the calibration room; a save whose map was
+renamed to vrstart2 loads on vrstart; a config at vr_cfg_version 98 with `vr_hub_map vrstart2` comes up `vrstart` (99);
+`vrstart2:vs2_welcome` in tips_seen.txt shows as seen in vrstart; the walk test 18 of 18 (twice), the three buttons, the
+bench scenario `load_vrstart` validates (3 loads, the same twice), `vr_menu_path_check maps/vrstart.map` 0 missing,
+e1m1's smoke test.
+## Immersive reloading: the author's notes on the super shotgun, and the shells sliding in (2026-10-07)
+
+- **The rear sight's ring** (a piece of its own over the cut) is on the barrels part now: it swings open with them
+  (make_ssg_open.py; it floated on the frame).
+- **The sights' colour**: the guns' parts drawn instead of the gun (the shotgun's auto pump parts, the open super
+  shotgun's) were not recoloured as the gun's sights are (vr_sights.cpp lists the models by name) nor glowed as it
+  (vr_weapon_glow's boost asked the part's own slot): the sights turned the painted orange-red as the shotgun pumped and
+  the super shotgun opened. Both now (weapons::slotForPart: a part's gun's slot).
+- **Each way to open and close it is its own switch** (Weapons > Reloading > Super Shotgun: "Open by" and "Close by"):
+  open by the flick (`vr_reload_ssg_open_flick`), the pry (`vr_reload_ssg_pry`), a hit from above (`_open_hit`), B/Y
+  (`_open_button`); close by the flick (`_close_flick`), lifting the barrels (`_close_pry`), a hit from below
+  (`_close_hit`), by itself once loaded (`_close_auto`, off). Every opening throws every shell out, spent and live.
+- **Thresholds**: the flick's own speeds to open and to close (`vr_reload_ssg_flick_open_speed`, `_close_speed`: 650
+  deg/s; the classic flick reload's 6.5 rad/s was 372: small flicks opened and shut it); the pry the author's 60 deg at
+  250 deg/s (and the open angle his 45); the lift its own angle, speed and hold (`_lift_angle` 60, `_lift_speed` 300
+  deg/s, `_lift_hold` 0.2 s: a jolt doesn't shut it; it was far too easy); the hits their speed and angle off the gun's
+  own down or up (`_hit_open_speed` 3 m/s, `_hit_open_angle` 40, `_hit_close_*` the same) within `_hit_reach` (6 units)
+  of the front 40% of the barrels (turned down, open), from that side (where it came from 50 ms before), not by a round
+  in the hand nor in the 0.6 s after one went in (the loading hand drawing back), nor while both hands hold it (the pry
+  and the lift are theirs).
+- The pry is sent on the other (front) hand's flick bit, so the server tells it from a flick (QC VR_Reload_SsgFrame).
+- **The hand on the open barrels** turns down with them (vr_view.cpp: the held hotspot's world turn).
+- **The pouch** gives a single shell when one chamber is loaded (a pair only for two empty ones).
+- **The shotgun's loading port** is a well now (polish_weapons.py loading_port: a steel housing 0.9 deep under the keel,
+  its inner walls lined from dull steel at the mouth to black up at a black ceiling; parts can't be cut out of the old
+  mesh without moving the anchors). The load point is where it was.
+- **The shells slide into the gun** (`vr_reload_insert_time`, 0.13 s; vr_collectfx.cpp's "into the gun" variant, the
+  collect message's hotspot 240): the round is loaded at the contact as before (the count, the sound, the haptics) and
+  the hand lets go; its copy slides to the load point and on (up the shotgun's well into its tube; into the super
+  shotgun's chambers), at its size, carried by the gun in its model space (it follows the gun as it moves), then is gone
+  inside it. A magazine's seat slide is noted for later (RELOAD_PLAN.md).
+- Mock: `vr_mock_turn_velocity 1` (the hands' angular velocity from their turns). Tests: reload_test.sh sections 7 and 8
+  (75 checks in all), the self-test 67 of 67.
+## Flashlight cord: the coiled cord back, as a choice (2026-10-07)
+
+The author: some people liked the coiled cord; restore it, not as the default. Branch `agent/coilcord`.
+
+- **Cord** (Body > Flashlight): None / Chain / Coiled, `vr_flashlight_cord` 0 / 1 / 2; the default stays 1 (the
+  low-poly chain, compiled and `vr_defaults.cfg`); no config migration (a config's 0 or 1 means what it did).
+- **Coiled** is the cord removed in 8b90a36d, as it was: `coil::Style::turns` (64) and `coilRadius` (6.5 mm) back,
+  the helix round the same simulated line in `Cord::build` (its turns keep their wire's length: stretched, they open
+  out and the coil narrows; tapered over 1.5 cm into each end), 3.8 mm dark wire (albedo 0.14), 8/6/4 segments a turn
+  and 6/5/4 sides by distance. Its line, springs, mass and relaxed length (0.243 m) are the chain's, so it hangs,
+  stretches and swings as the chain does; the clip, the flick turn-over and hand-to-hand passing move its ends as they
+  do the chain's. Like the chain it is drawn in the opaque scene only (neither casts a shadow). The chainsaw's starter
+  cord (turns 0, a plain cable) is unchanged.
+- Checked (mock, e1m1, torch in the left hand): `scratch/cord_compare.png` (chain relaxed / stretched over coiled
+  relaxed / stretched); coiled 513 rings x 6 sides (6.1k triangles) near, chain 405-459 rings x 4 sides; `vr_profile`
+  "flashlight cord" CPU 0.026-0.041 ms coiled vs 0.019-0.031 chain, the frame's GPU time the same (0.84-0.88 ms);
+  flick_test with Coiled flips as with the chain; flash_grab_test `all` with Coiled fails the same spots as with the
+  chain (mounted 6, returning 3: not the cord's).
+
+Checklist:
+
+- [ ] Body > Flashlight > Cord: None, Chain, Coiled; Chain the default. Coiled: springy, its turns opening as you pull
+  the torch away, sagging and swinging; flick the torch over and pass it hand to hand.
