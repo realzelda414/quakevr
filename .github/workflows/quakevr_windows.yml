@@ -26,8 +26,8 @@ jobs:
         Write-Host "Using $($exe.FullName)"
         echo "FTEQCC=$($exe.FullName)" >> ${env:GITHUB_ENV}
 
-    # Upstream package-quakevr.ps1 has a PowerShell parse error: "...in $bin: crash..." reads as a
-    # drive-qualified variable. This rewrites "$bin:" to "${bin}:". It's a no-op once upstream fixes it.
+    # Older package-quakevr.ps1 versions had a parse error ("...in $bin: crash..."). Upstream has fixed it,
+    # so this normally prints "Nothing to patch"; it's kept as a harmless safety net.
     - name: Patch upstream script parse error
       shell: pwsh
       run: |
@@ -37,17 +37,15 @@ jobs:
         if ($fixed -ne $t) { Write-Host 'Patched $bin: in package-quakevr.ps1' } else { Write-Host 'Nothing to patch' }
         Set-Content $p -Value $fixed -NoNewline -Encoding utf8BOM
 
-    # The script's last step is Compress-Archive (dist\QuakeVR.zip). Windows PowerShell 5.1 can be
-    # extremely slow at that with its progress bar on, so progress is turned off here. If the zip
-    # still hangs, this step is stopped after 20 minutes; by then dist\QuakeVR is already complete,
-    # and the next steps check that and upload it. The zip itself isn't needed.
+    # -NoZip skips dist\QuakeVR.zip (not uploaded anyway; GitHub zips the artifact itself). The script
+    # still writes manifest.json into dist\QuakeVR. The step limit covers the whole engine build too.
     - name: Build engine, compile QuakeC, package
       id: package
       shell: pwsh
-      timeout-minutes: 20
+      timeout-minutes: 45
       continue-on-error: true
       run: |
-        $cmd = "`$ProgressPreference='SilentlyContinue'; & 'Windows\package-quakevr.ps1' -Build -Fteqcc '$env:FTEQCC'"
+        $cmd = "`$ProgressPreference='SilentlyContinue'; & 'Windows\package-quakevr.ps1' -Build -NoZip -Fteqcc '$env:FTEQCC'"
         powershell -ExecutionPolicy Bypass -Command $cmd
         if ($LASTEXITCODE -ne 0) { throw "Packaging failed" }
 
@@ -56,7 +54,7 @@ jobs:
       shell: pwsh
       run: |
         Get-ChildItem dist -ErrorAction SilentlyContinue | Format-Table Name, Length
-        $need = "dist\QuakeVR\ironwail.exe", "dist\QuakeVR\QuakeVR.bat", "dist\QuakeVR\quakevr\progs.dat"
+        $need = "dist\QuakeVR\ironwail.exe", "dist\QuakeVR\QuakeVR.bat", "dist\QuakeVR\quakevr\progs.dat", "dist\QuakeVR\manifest.json"
         $missing = $need | Where-Object { -not (Test-Path $_) }
         if ($missing) { throw "Missing from package: $($missing -join ', ')" }
         Write-Host "Package looks complete (packaging step outcome: ${{ steps.package.outcome }})"
