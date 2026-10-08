@@ -1342,7 +1342,11 @@ namespace
 
 constexpr float kCross = 24.f;    // how near the plane the body is watched for its crossing
 constexpr float kAperture = 0.f;  // how far outside a gate's faces its aperture still counts as its opening
-constexpr double kCooldown = 0.5; // seconds after a crossing before the next (no bouncing between two gates)
+// (No cooldown after a crossing: one of 0.5 s let a player who stepped straight back into the gate he had just come out
+// of, or walked on into the one he had just backed out of, take his torso past its plane uncarried - the split body
+// lets it go there - and at 24 units past it the split ended, leaving him inside the wall behind the gate: the
+// softlock pushing a crate in, ROUND21.md "Slipgates: shooting yourself, stuck behind a gate". A carried body comes out
+// in front of the exit's plane moving away from it, so nothing bounces back; one crossing a tick at most.)
 
 // Each client's last seamless crossing (and each monster's: vr_portals_monsters).
 struct ClientState
@@ -1354,6 +1358,7 @@ struct ClientState
     bool torsoKnown = false;
 };
 ClientState clients[MAX_SCOREBOARD];
+int unstuckCount = 0; // times a player was got out of the wall behind a gate (vr_portals_stuck prints it)
 za::Vector<ClientState> monsters; // by edict number
 
 ClientState& crossingState(edict_t* ent)
@@ -1524,6 +1529,20 @@ ClientState& crossingState(edict_t* ent)
     return bodyFitsGateAt(ent, sd, vec(ent->v.origin));
 }
 
+// A two-sided sheet: whether `p` is in front of the other face of `sd`'s gate (its side turned the other way).
+[[nodiscard]] bool inFrontOfOpposite(const Side& sd, const glm::vec3& p)
+{
+    for(const Side& o : sides)
+    {
+        if(&o != &sd && o.trigger == sd.trigger && glm::dot(o.normal, sd.normal) < -0.99f &&
+           glm::dot(o.normal, p) - o.dist > 0.f)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void setVec(float* out, const glm::vec3& v)
 {
     out[0] = v.x;
@@ -1602,6 +1621,93 @@ void crossPlayer(edict_t* ent, const Side& sd, edict_t* trig, ClientState& cs, i
     portalCrossed(ent, sd, trig, from, returnSide);
 }
 
+// The player's box in the world's solid at `p` (a gate's split body included: SV_Move takes each half in its room).
+[[nodiscard]] bool solidAt(edict_t* ent, const glm::vec3& p)
+{
+    vec3_t o{p.x, p.y, p.z};
+    return SV_Move(o, ent->v.mins, ent->v.maxs, o, MOVE_NOMONSTERS, ent).startsolid;
+}
+
+// The safety net (vr_portals_unstick): a player found in the wall behind a gate - his box in the world's solid where he
+// stands, his torso by a gate's plane (in front of it by less than his box's half depth, or behind it, up to his box's
+// depth and a step more) over its aperture - is got out at once: carried on through if his torso is past the plane and
+// he fits at the far side (a little further on if the exit's floor or the wall behind it holds him), else put back in
+// front of the plane, else carried on after all. Never left in the wall, however he got there.
+bool unstick(edict_t* ent, ClientState& cs)
+{
+    if(vr_portals_unstick.value <= 0.f || static_cast<int>(ent->v.movetype) != MOVETYPE_WALK)
+    {
+        return false; // (noclip goes through walls: let it)
+    }
+    const glm::vec3 origin = vec(ent->v.origin), torso = torsoOf(ent), size = vec(ent->v.maxs) - vec(ent->v.mins);
+    const Side* best = nullptr;
+    float bestD = 0.f, bestHalf = 0.f;
+    for(const Side& sd : sides)
+    {
+        const float d = glm::dot(sd.normal, torso) - sd.dist;
+        const float half = 0.5f * glm::dot(glm::abs(sd.normal), size);
+        if(d > half || d < -(2.f * half + 32.f) || !onGate(sd, torso - sd.normal * d, 8.f) ||
+           (best && za::fabs(d) >= za::fabs(bestD)))
+        {
+            continue;
+        }
+        best = &sd;
+        bestD = d;
+        bestHalf = half;
+    }
+    if(!best || !solidAt(ent, origin))
+    {
+        return false;
+    }
+    const Side& sd = *best;
+    const int index = static_cast<int>(&sd - sides.data());
+    const glm::vec3 exitNormal = sd.turn * -sd.normal;
+    const auto complete = [&]() -> bool {
+        const int oldLeaving = cs.leavingSide;
+        cs.leavingSide = index; // (its trailing half behind the exit's plane is split as a crossing's is)
+        for(float k = 0.f; k <= 2.f * bestHalf + 32.f; k += 2.f)
+        {
+            const glm::vec3 to = carried(sd, origin) + exitNormal * k;
+            if(!solidAt(ent, to))
+            {
+                crossPlayer(ent, sd, EDICT_NUM(sd.trigger), cs);
+                setVec(ent->v.origin, to);
+                setVec(ent->v.oldorigin, to);
+                SV_LinkEdict(ent, true);
+                Con_DPrintf("VR portal: unstuck edict %d: carried on through side %d (%.0f on)\n", NUM_FOR_EDICT(ent), index, k);
+                return true;
+            }
+        }
+        cs.leavingSide = oldLeaving;
+        return false;
+    };
+    const auto revert = [&]() -> bool {
+        for(float k = za::max(-bestD, 0.f) + 1.f; k <= za::max(-bestD, 0.f) + bestHalf + 32.f; k += 2.f)
+        {
+            const glm::vec3 to = origin + sd.normal * k;
+            if(!solidAt(ent, to))
+            {
+                setVec(ent->v.origin, to);
+                setVec(ent->v.oldorigin, to);
+                SV_LinkEdict(ent, true);
+                Con_DPrintf("VR portal: unstuck edict %d: back out of side %d (%.0f)\n", NUM_FOR_EDICT(ent), index, k);
+                return true;
+            }
+        }
+        return false;
+    };
+    const bool done = bestD < 0.f ? (complete() || revert()) : (revert() || complete());
+    if(done)
+    {
+        unstuckCount++;
+    }
+    else
+    {
+        Con_DPrintf("VR portal: edict %d stuck by side %d (torso %.1f): no way out found\n", NUM_FOR_EDICT(ent), index, bestD);
+    }
+    return done;
+}
+
 // A monster carried through (VR_PortalMonsterCross): where it is, how it moves, where it faces and means to (ideal_yaw)
 // turned and shifted by the side's mapping; then what Quake's teleport does besides moving it (VR_Portal_Crossed: the
 // trigger's targets). No flash, no telefrag: it walked through.
@@ -1676,8 +1782,11 @@ extern "C" int VR_PortalBodyMove(edict_t* ent, const float* start, const float* 
         {
             continue;
         }
-        // Do not enter a sheet's opposite face while leaving it.
-        if(d < 0.f && glm::dot(sd.normal, b - a) > 0.f) { continue; }
+        // Do not enter a sheet's opposite face while leaving it: the body in front of the sheet's other face (the same
+        // gate's side turned the other way) walking into that face. (Any torso behind a plane walking back out of it
+        // was taken for that, and a player half through a gate in a wall, not carried yet, could not back out of it:
+        // he stood frozen in the wall, ROUND21.md "Slipgates: shooting yourself, stuck behind a gate".)
+        if(d < 0.f && glm::dot(sd.normal, b - a) > 0.f && inFrontOfOpposite(sd, torso)) { continue; }
         nearest = za::fabs(d);
         gate = &sd;
     }
@@ -1769,7 +1878,7 @@ extern "C" void VR_PortalClientCross(edict_t* ent)
             return;
         }
     }
-    if(qcvm->time - cs.crossed < kCooldown)
+    if(cs.crossed == qcvm->time || unstick(ent, cs)) // (one crossing a tick; out of a gate's wall)
     {
         return;
     }
@@ -1805,6 +1914,39 @@ extern "C" void VR_PortalClientCross(edict_t* ent)
     // to cross; raised openings require a jump into them.
     crossPlayer(ent, *best, EDICT_NUM(best->trigger), cs);
 }
+
+namespace qvr::portals
+{
+// vr_portals_stuck (Debug > Slipgates): whether the local player's box is in the world's solid where he stands (a
+// gate's split body included: each half in its own room), the gate side nearest his torso and how far his torso is in
+// front of its plane (under 0: behind it), and how many times he was got out of the wall behind a gate.
+void stuck_f()
+{
+    if(!sv.active || !enabled() || svs.maxclients < 1 || !svs.clients[0].edict)
+    {
+        Con_Printf("portal stuck: no server, or slipgates off\n");
+        return;
+    }
+    qcvm_t* oldVm = nullptr;
+    PR_PushQCVM(&sv.qcvm, &oldVm);
+    if(!current()) { build(); }
+    edict_t* ent = svs.clients[0].edict;
+    vec3_t o{ent->v.origin[0], ent->v.origin[1], ent->v.origin[2]};
+    const trace_t tr = SV_Move(o, ent->v.mins, ent->v.maxs, o, MOVE_NOMONSTERS, ent);
+    const glm::vec3 torso = torsoOf(ent);
+    int nearest = -1;
+    float nearestD = 1e9f;
+    for(int i = 0; i < static_cast<int>(sides.size()); i++)
+    {
+        const Side& sd = sides[static_cast<za::SizeT>(i)];
+        const float d = glm::dot(sd.normal, torso) - sd.dist;
+        if(za::fabs(d) < za::fabs(nearestD) && onGate(sd, torso - sd.normal * d, 16.f)) { nearest = i; nearestD = d; }
+    }
+    Con_Printf("portal stuck: %d at %.1f %.1f %.1f, side %d torso %.1f, unstuck %d\n", tr.startsolid ? 1 : 0, o[0], o[1],
+        o[2], nearest, nearest >= 0 ? nearestD : 0.f, unstuckCount);
+    PR_PopQCVM(oldVm);
+}
+} // namespace qvr::portals
 
 // CL_RelinkEntities: an entity's last two places far apart (over 100 units on an axis: Quake's teleport, no lerp). The
 // client draws a tick behind the server, lerping from the older place to the newer; snapping to the newer at a
@@ -2134,7 +2276,15 @@ extern "C" void VR_PortalToss(edict_t* ent)
         }
         // Its middle carried through (its box's offset kept: it is axis-aligned), a little further on where it does not fit.
         const glm::vec3 dir = sd.turn * v;
-        const glm::vec3 to = carried(sd, vec(ent->v.origin));
+        glm::vec3 to = carried(sd, vec(ent->v.origin));
+        // A small thing (a nail, a rocket: its box shallower than its middle's way to the plane) would come out wholly
+        // behind the exit's plane, inside the wall there, and strike it: its middle put just out of the plane instead
+        // (where its path crossed, carried), the frame's move going on from there.
+        if(!behind && halfDepth < d0)
+        {
+            const Side out = reverseSide(sd);
+            to = carried(sd, c) + out.normal * (halfDepth + 0.5f) - sd.turn * mid;
+        }
         // Keep the straddling placement. Only its destination half needs to
         // clear the level; the trailing half belongs to the original room.
         const Side exit = reverseSide(sd);
@@ -2174,6 +2324,8 @@ extern "C" void VR_PortalToss(edict_t* ent)
         }
         const int gateField = ED_FindFieldOffset("vr_ai_gate");
         if(gateField >= 0) { GetEdictFieldValue(ent, gateField)->_float = 0.f; }
+        // Come out of a gate, it meets its owner (VR_PortalHitsOwner): your nail at your own image hits you.
+        if(progs::fields().vr_gate_crossed >= 0) { progs::fieldFloat(ent, progs::fields().vr_gate_crossed) = za::max(static_cast<float>(qcvm->time), 0.001f); }
         SV_LinkEdict(ent, false);
         return;
     }
@@ -2259,7 +2411,7 @@ extern "C" void VR_PortalMonsterCross(edict_t* ent)
             return;
         }
     }
-    if(qcvm->time - cs.crossed < kCooldown)
+    if(cs.crossed == qcvm->time) // (one crossing a tick)
     {
         return;
     }
@@ -2505,6 +2657,7 @@ void lightViews_f()
 }
 
 void reachTest_f();
+void stuck_f();
 void rebuild_f() { if(sv.active) { build(); } }
 void registerCommands()
 {
@@ -2515,6 +2668,7 @@ void registerCommands()
     Cmd_AddCommand("vr_portals_shot", shot_f);
     Cmd_AddCommand("vr_portals_pulltest", pullTest_f);
     Cmd_AddCommand("vr_portals_reachtest", reachTest_f);
+    Cmd_AddCommand("vr_portals_stuck", stuck_f);
 }
 
 } // namespace qvr::portals
@@ -2533,6 +2687,10 @@ namespace
 
 constexpr int kMaxTraceCrossings = 2;
 int traceCrossings = 0;
+bool traceFromImage = false; // the last MOVE_PORTALS traceline began at a player's image (a muzzle held through a gate)
+// A player's shot beginning this far from his box (units) began through a gate (his muzzle reached through: reachAlong,
+// carried to the far side); no arm and gun reach it.
+constexpr float kImageReach = 72.f;
 glm::vec3 traceEntry[kMaxTraceCrossings];
 glm::vec3 traceExit[kMaxTraceCrossings];
 glm::mat3 traceTurn{1.f};
@@ -2543,6 +2701,7 @@ glm::mat3 traceTurn{1.f};
 extern "C" void VR_PortalTraceBegin(void)
 {
     qvr::portals::traceCrossings = 0;
+    qvr::portals::traceFromImage = false;
     qvr::portals::traceTurn = glm::mat3{1.f};
 }
 
@@ -2562,6 +2721,19 @@ extern "C" void VR_PortalTrace(const float start[3], const float end[3], int typ
     if(sides.empty() || total < 1.f)
     {
         return;
+    }
+    // A player's shot from a muzzle held through a gate (carried to its far side, far from his body): it meets him too
+    // (MOVE_HITPASS), as one come out of a gate does: the gun reached into the loop's gate shoots your back.
+    const int passNum = passedict ? NUM_FOR_EDICT(passedict) : 0;
+    if(passNum >= 1 && passNum <= svs.maxclients && !(type & MOVE_HITPASS))
+    {
+        const glm::vec3 nearest = glm::clamp(s, vec(passedict->v.absmin), vec(passedict->v.absmax));
+        if(glm::distance(s, nearest) > kImageReach)
+        {
+            traceFromImage = true;
+            type |= MOVE_HITPASS;
+            *trace = SV_Move(const_cast<float*>(start), vec3_origin, vec3_origin, const_cast<float*>(end), type, passedict);
+        }
     }
     float before = 0.f; // the length gone before the current part
     for(int n = 0; n < kMaxTraceCrossings; n++)
@@ -2617,12 +2789,28 @@ extern "C" void VR_PortalTrace(const float start[3], const float end[3], int typ
         s = from;
         e = to;
         vec3_t a{s.x, s.y, s.z}, b{e.x, e.y, e.z};
-        *trace = SV_Move(a, vec3_origin, vec3_origin, b, type, passedict);
+        // Out of the gate it meets the shooter too (MOVE_HITPASS): your shot at your own image hits you.
+        *trace = SV_Move(a, vec3_origin, vec3_origin, b, type | MOVE_HITPASS, passedict);
     }
     if(traceCrossings)
     {
         trace->fraction = za::min((before + trace->fraction * glm::distance(s, e)) / total, 1.f);
     }
+}
+
+// QuakeC (portal_from_image): whether the last MOVE_PORTALS traceline began at a player's image, his muzzle held
+// through a gate (then what it strikes may be him: LightningDamage's MOVE_HITPASS).
+extern "C" float VR_PortalFromImage(void)
+{
+    return qvr::portals::enabled() && qvr::portals::traceFromImage ? 1.f : 0.f;
+}
+
+// SV_MoveRun: a missile carried through a gate (VR_PortalToss) meets its owner, Quake's owner rule off for it.
+extern "C" int VR_PortalHitsOwner(edict_t* missile)
+{
+    using namespace qvr;
+    const int ofs = progs::fields().vr_gate_crossed;
+    return missile && ofs >= 0 && missile->v.owner && progs::fieldFloat(missile, ofs) > 0.f ? 1 : 0;
 }
 
 // QuakeC: the last MOVE_PORTALS traceline's gates (portal_crossings), where it went into the i-th and came out of it
