@@ -397,6 +397,11 @@ QVR_CVAR(vr_window_hud_spectator, "0", CVAR_ARCHIVE)
 // headset still shows it. The spectator camera's (on: trailers) and the mirror's (Left Eye, Smoothed Mirror; off).
 QVR_CVAR(vr_spectator_hide_hud_text, "1", CVAR_ARCHIVE)
 QVR_CVAR(vr_mirror_hide_hud_text, "0", CVAR_ARCHIVE)
+// Recording mode: no tips (vr_tips.cpp), no messages on the wrist gadget (its log and hologram: vr_gadget.cpp) and no
+// head-locked text (centre prints, notify lines: vr_stereo.cpp), in the headset too: clean takes. The player's switch (Graphics > Recording), and the map's (QC sets it at every map
+// load: 1 in the trailer scene, info_vr_trailer; 0 elsewhere). Either one turns it on: qvr::recordingClean().
+QVR_CVAR(vr_recording_clean, "0", CVAR_ARCHIVE)
+QVR_CVAR(vr_recording_clean_map, "0", CVAR_NONE)
 QVR_CVAR(vr_window_log, "0", CVAR_NONE)               // 1: print the head's and the window camera's angles every frame (tests)
 // Highlight markers for trailers (vr_highlights.cpp; docs/vr-port/TRAILER.md): the game's cool moments logged in real
 // time from a sync mark to <game dir>/highlights/ (CSV as they happen; JSON and Resolve's marker EDL as the log stops).
@@ -593,6 +598,9 @@ QVR_CVAR(vr_menu_remember, "1", CVAR_ARCHIVE)          // opening the menu after
 QVR_CVAR(vr_menu_dropdown, "4", CVAR_ARCHIVE)          // a VR page's choice row with this many choices or more opens a list of them on a click or Enter / A (vr_menu.cpp; left and right still step; 0: never, a click steps)
 QVR_CVAR(vr_menu_help_wpm, "200", CVAR_ARCHIVE)        // the VR pages' help under the list: a help longer than its box shows a part at a time, each kept as long as reading its words takes at this many words a minute (vr_menu.cpp drawHelp; 60 to 600)
 QVR_CVAR(vr_tutorial_started, "0", CVAR_ARCHIVE)      // 1: the tutorial (vrtutorial2) has been started once (its worldspawn sets it, QC vr_tutorial.qc): VR starts in the hub; 0 (a new install): vr_startgame and the first calibration's way out go to the tutorial (vr_main.cpp startGameCommands, QC changelevel_touch); configs from before vr_cfg_version 103 have it 1
+// The trailer scene (maps/vrtrailer; QC vr_trailer.qc): Debug > Tests > Trailer Scene.
+QVR_CVAR(vr_trailer_reset, "0", CVAR_NONE)            // 1: the scene as at its start (the grunt, the Super Axe on its pedestal, the player at the start); QC sets it back to 0
+QVR_CVAR(vr_trailer_log, "0", CVAR_NONE)              // 1: the grunt's state (enemy, frame, think, stealth, oblivious), the axe's and the player's places, four times a second
 QVR_CVAR(vr_tutorial_goto, "0", CVAR_NONE)            // Debug > Tests > Tutorial > Go to a Lesson: in vrtutorial2, a change to N (1..12) puts you at lesson N's checkpoint (QC vr_tutorial.qc VR_Tutorial_Frame)
 QVR_CVAR(vr_setup_pending, "0", CVAR_ARCHIVE)         // 1: VR Calibration starts the next time the headset is on and no game runs (set at a first start, no saved config: vr_migrate_config new; cleared as it starts; vr_setup.cpp)
 QVR_CVAR(vr_comfort_preset, "0", CVAR_NONE)          // Locomotion's Comfort (vr_menu.cpp presets; not saved: the settings it sets are): 1 Comfortable, 2 Moderate, 3 Full Freedom; 0 Custom (shown when the settings match none)
@@ -1246,7 +1254,7 @@ QVR_CVAR(vr_relight_tool_dir, "", CVAR_NONE)         // testing: the folder vr_r
 QVR_CVAR(vr_relight_tool_url, "", CVAR_NONE)         // testing: where vr_relight_get_tool downloads from, mirrors separated by spaces tried in order ("": the pinned ones, Quake VR's support-files release then ericw-tools' own; any other must serve the same file, its sha256 is checked)
 QVR_CVAR(vr_relight_strength, "1.2", CVAR_ARCHIVE)   // all light from textures (lamps, glowing panels, lava), times relight_textures.cfg's strengths (1.2: the author's, 2026-10-06; relight_maps.py's default too)
 QVR_CVAR(vr_relight_lamps, "1", CVAR_ARCHIVE)        // ... the lamps and light panels' (fixtures), times that
-QVR_CVAR(vr_relight_glows, "1", CVAR_ARCHIVE)        // ... glowing buttons, panels, runes and slipgates', times that
+QVR_CVAR(vr_relight_glows, "1", CVAR_ARCHIVE)        // ... glowing buttons, panels, runes and teleporters', times that
 QVR_CVAR(vr_relight_liquids, "1", CVAR_ARCHIVE)      // ... lava's and slime's, times that
 QVR_CVAR(vr_relight_maplights, "1", CVAR_ARCHIVE)    // the map's own lights (as far, this much brighter)
 QVR_CVAR(vr_relight_sunlight, "1", CVAR_ARCHIVE)     // the map's sunlight and sky light (maps that have them)
@@ -1628,24 +1636,24 @@ QVR_CVAR(vr_eyeshot, "0", CVAR_NONE)                  // 1: save the next frame'
 QVR_CVAR(vr_map_liquid_alpha, "0", CVAR_ARCHIVE)      // a map's own wateralpha, lavaalpha, slimealpha, telealpha (its worldspawn keys) win over r_wateralpha and the others (Ironwail's rule); 0: your settings always
 QVR_CVAR(vr_water_waves, "1", CVAR_ARCHIVE)           // waves on water, slime and lava (normal-mapped, in the shader: the faces stay flat): strength
 QVR_CVAR(vr_water_fresnel, "1", CVAR_ARCHIVE)         // water more see-through looking down, reflecting the room at grazing angles
-QVR_CVAR(vr_slipgates, "1", CVAR_ARCHIVE)             // the whole slipgate feature (vr_portals.cpp): 0 none of it runs, no gate is built or looked through and nothing goes through one - slipgates are Quake's teleporters exactly as before the feature (vr_portals and vr_portals_walk then do nothing)
-QVR_CVAR(vr_portals_debug_split, "0", CVAR_NONE)   // debug: each frame, every entity drawn cut by a slipgate (vr_portals.cpp VR_PortalAlias): its place, the gate and how far through; -1 also the main hand's held object every frame, N>0 also entity N every frame; and each tossed or rigid thing's middle and velocity, and why a gate did not take it (VR_PortalToss)
+QVR_CVAR(vr_teleporters, "1", CVAR_ARCHIVE)           // the whole see-through teleporter feature (vr_portals.cpp): 0 none of it runs, no gate is built or looked through and nothing goes through one - teleporters are Quake's plain ones exactly as before the feature (vr_portals and vr_portals_walk then do nothing). vr_slipgates until 2026-10-08, still a silent alias (VR_CvarAlias), as are the other vr_slipgate_* below
+QVR_CVAR(vr_portals_debug_split, "0", CVAR_NONE)   // debug: each frame, every entity drawn cut by a teleporter (vr_portals.cpp VR_PortalAlias): its place, the gate and how far through; -1 also the main hand's held object every frame, N>0 also entity N every frame; and each tossed or rigid thing's middle and velocity, and why a gate did not take it (VR_PortalToss)
 QVR_CVAR(vr_portals_ai_test, "0", CVAR_NONE)          // disposable mock fixture controls (vr_portal_ai_test.qc)
 QVR_CVAR(vr_portals_ai, "1", CVAR_ARCHIVE)            // monsters see and fire at one-hop player images; melee/navigation stay local
-QVR_CVAR(vr_portals_monsters, "1", CVAR_ARCHIVE)      // with vr_portals_walk: monsters walk through paired slipgates (out of the other gate's face) as players do; 0 (and at other gates, or one too big for the opening) Quake's teleport, to the destination marker
-QVR_CVAR(vr_portals_unstick, "1", CVAR_NONE)          // debug, the safety net (vr_portals.cpp unstick): a player found in the wall behind a slipgate (his box in solid there, his torso by its plane over its aperture) is got out at once - carried on through the gate if his torso is past its plane and he fits there, else put back in front of it; 0 off (vr_portals_stuck prints the count)
+QVR_CVAR(vr_portals_monsters, "1", CVAR_ARCHIVE)      // with vr_portals_walk: monsters walk through paired teleporters (out of the other gate's face) as players do; 0 (and at other gates, or one too big for the opening) Quake's teleport, to the destination marker
+QVR_CVAR(vr_portals_unstick, "1", CVAR_NONE)          // debug, the safety net (vr_portals.cpp unstick): a player found in the wall behind a teleporter (his box in solid there, his torso by its plane over its aperture) is got out at once - carried on through the gate if his torso is past its plane and he fits there, else put back in front of it; 0 off (vr_portals_stuck prints the count)
 QVR_CVAR(vr_portals_walk, "1", CVAR_ARCHIVE)          // ... walking and shooting through them is seamless (kept where you are, how you move and look, as the view through the gate shows; missiles and grenades too): 0 Quake's teleport
-QVR_CVAR(vr_portals, "1", CVAR_ARCHIVE)               // slipgates show where they lead, for each visible gate and camera (vr_portals.cpp): how much of it, 0 Quake's shimmer
-QVR_CVAR(vr_slipgate_pair_exits, "1", CVAR_ARCHIVE) // a gate whose destination stands in front of a gate of its size facing out (a two-way pair) comes out of that gate's face: 0 out at the destination marker, as built (vrslipgates: 48 units out, a gap)
+QVR_CVAR(vr_portals, "1", CVAR_ARCHIVE)               // teleporters show where they lead, for each visible gate and camera (vr_portals.cpp): how much of it, 0 Quake's shimmer
+QVR_CVAR(vr_teleporter_pair_exits, "1", CVAR_ARCHIVE) // a gate whose destination stands in front of a gate of its size facing out (a two-way pair) comes out of that gate's face: 0 out at the destination marker, as built (vrteleporters: 48 units out, a gap)
 QVR_CVAR(vr_portals_maxviews, "4", CVAR_ARCHIVE) // visible destination scenes per camera, 1..8
 QVR_CVAR(vr_portals_recursion, "2", CVAR_ARCHIVE) // views within views: how many more gates deep a gate seen through a gate shows where it leads (0 none: its faces left out, as before; 1..3)
 QVR_CVAR(vr_portals_recursion_views, "2", CVAR_ARCHIVE) // ... the gates shown so within a view through a gate, 1..8 (deeper: the nearest and largest alone)
 QVR_CVAR(vr_portals_recursion_max, "4", CVAR_ARCHIVE) // ... at most this many views within views for an eye (the gate looked at most first), 0..64
 QVR_CVAR(vr_portals_recursion_scale, "2", CVAR_ARCHIVE) // ... each gate deeper drawn at this many times fewer pixels a side (1..4; r_scale for that view)
-QVR_CVAR(vr_slipgate_self_head, "1", CVAR_ARCHIVE) // your body seen through a slipgate has its head (the eyes' own views never draw it): 0 headless there too
-QVR_CVAR(vr_slipgate_surface_size, "1.12", CVAR_ARCHIVE) // entrance shimmer's visual size; collision aperture is unchanged
-QVR_CVAR(vr_slipgate_surface_opacity, "1", CVAR_ARCHIVE) // entrance shimmer's share over the portal view
-QVR_CVAR(vr_slipgate_surface_fade, "0.3", CVAR_ARCHIVE) // ... fading out over the eye's last metres to the gate's plane (gone at the crossing: no step of light), 0 never
+QVR_CVAR(vr_teleporter_self_head, "1", CVAR_ARCHIVE) // your body seen through a teleporter has its head (the eyes' own views never draw it): 0 headless there too
+QVR_CVAR(vr_teleporter_surface_size, "1.12", CVAR_ARCHIVE) // entrance shimmer's visual size; collision aperture is unchanged
+QVR_CVAR(vr_teleporter_surface_opacity, "1", CVAR_ARCHIVE) // entrance shimmer's share over the portal view
+QVR_CVAR(vr_teleporter_surface_fade, "0.3", CVAR_ARCHIVE) // ... fading out over the eye's last metres to the gate's plane (gone at the crossing: no step of light), 0 never
 QVR_CVAR(vr_water_reflections, "1", CVAR_ARCHIVE)     // water and slime reflect the room round them (a cube map of the world made at the surface near you, vr_envmap.cpp): strength, 0 a plain sheen
 QVR_CVAR(vr_water_refraction, "1", CVAR_ARCHIVE)      // what is under translucent water bent by the waves (needs r_oit 1; with anti-aliasing the scene is resolved for it first): strength
 QVR_CVAR(vr_water_glints, "1", CVAR_ARCHIVE)          // light glinting off the waves: strength
@@ -2405,7 +2413,7 @@ QVR_CVAR(vr_handgrenade, "1", CVAR_ARCHIVE)             // hand grenades: an emp
 QVR_CVAR(vr_handgrenade_fuse, "2.5", CVAR_ARCHIVE)      // s from arming a hand grenade to its going off (the launcher's is 2.5)
 QVR_CVAR(vr_handgrenade_arm, "0", CVAR_ARCHIVE)         // 0: the trigger pulls the pin (let go of unarmed, it is a dud); 1: letting go arms it (the lever flies off)
 QVR_CVAR(vr_ogre_aim_height, "1", CVAR_ARCHIVE)          // ogres (and zombies) lob at your height: a ballistic arc at their throw's speed (0: Quake's flat lob)
-QVR_CVAR(vr_activestartpaknameidx, "0", CVAR_ARCHIVE)  // the hub's campaign lecterns: what its slipgate starts (0 Quake, 1 Scourge of Armagon, 2 Dissolution of Eternity: "start"; 3 Dimension of the Past, 4 Dimension of the Machine, 5 Dawn of the Machine: the selector, VR_CanChangeCampaignMap)
+QVR_CVAR(vr_activestartpaknameidx, "0", CVAR_ARCHIVE)  // the hub's campaign lecterns: what its teleporter starts (0 Quake, 1 Scourge of Armagon, 2 Dissolution of Eternity: "start"; 3 Dimension of the Past, 4 Dimension of the Machine, 5 Dawn of the Machine: the selector, VR_CanChangeCampaignMap)
 QVR_CVAR(vr_hub_map, "vrstart", CVAR_ARCHIVE)           // the VR hub (where VR starts, and the menus' VR Hub): vrstart (the island at night, Misc/quakevr/maps/vrstart_gen.py; vrstart2 until 2026-10-07: vr_cfg_version 99 moves it), or vrstart_old (the old hub); anything else is vrstart
 QVR_CVAR(vr_verbosebots, "0", CVAR_NONE)
 QVR_CVAR(vr_finger_grip_bias, "0.0", CVAR_ARCHIVE)
@@ -2822,7 +2830,7 @@ QVR_CVAR(vr_finger_base_z, "0.0", CVAR_ARCHIVE)
 // Exact uncached-reference checks for prop optimization regression runs; never archived.
 QVR_CVAR(vr_prop_query_verify, "0", CVAR_NONE)
 // The force grab's target search (findportalcone, every frame for each hand): 1 the edicts linked near the hand (and
-// near its images through slipgates) from the area grid, 0 a walk of every edict, as before. _verify 1: the walk as
+// near its images through teleporters) from the area grid, 0 a walk of every edict, as before. _verify 1: the walk as
 // well, its chain compared (the same edicts in the same order), differences counted and the first few printed
 // (vr_forcegrab_grid_stats). PERF_DECISIONS.md 11.
 QVR_CVAR(vr_forcegrab_grid, "1", CVAR_NONE)
@@ -2860,7 +2868,7 @@ QVR_CVAR(vr_honey_context, "0", CVAR_ROM) // actual start map source is Honey, n
 
 QVR_CVAR(vr_mg_world_test, "0", CVAR_NONE) // Debug > Tests: 1 report authored native fog; 2 environment acceptance with a destructive e5m1 barrel test
 
-QVR_CVAR(vr_mg_trigger_test, "0", CVAR_NONE) // Debug > Tests: 1 shared triggers, 2 authored mge5m2 route, 3 lightning damage, 4 slipgate retarget
+QVR_CVAR(vr_mg_trigger_test, "0", CVAR_NONE) // Debug > Tests: 1 shared triggers, 2 authored mge5m2 route, 3 lightning damage, 4 teleporter retarget
 
 QVR_CVAR(vr_mg_horde_test, "0", CVAR_NONE) // Debug > Tests: authored Horde waves, currency, pickups, revival and save reports
 QVR_CVAR(vr_mg_hub_test, "0", CVAR_NONE) // Debug > Tests: 1 MG1 hub/rune semantics, 2 authored electrode/egg route, 3 progression/inventory report; destructive tests reload afterward
@@ -2903,7 +2911,7 @@ QVR_CVAR(vr_stealth_noise_blasts, "1", CVAR_ARCHIVE) // times an explosion's rea
 QVR_CVAR(vr_stealth_noise_wall, "0.5", CVAR_ARCHIVE) // a noise's reach kept round a corner (in sight of the place, not in line)
 QVR_CVAR(vr_stealth_noise_solid, "0.15", CVAR_ARCHIVE) // and through solid walls (out of sight of the place)
 QVR_CVAR(vr_stealth_noise_absorb, "0.6", CVAR_ARCHIVE) // and past a prop (a crate) in the way
-QVR_CVAR(vr_stealth_gates, "1", CVAR_ARCHIVE)        // through paired slipgates: every monster sees you, noises are heard, and Alert ones walk through to look
+QVR_CVAR(vr_stealth_gates, "1", CVAR_ARCHIVE)        // through paired teleporters: every monster sees you, noises are heard, and Alert ones walk through to look
 QVR_CVAR(vr_stealth_seethrough, "1", CVAR_ARCHIVE)  // fences, grates and see-through walls ('{' textures, alpha) let sight, light and sound through
 QVR_CVAR(vr_stealth_investigate, "1", CVAR_ARCHIVE)  // an Alert monster walks to what it heard or saw (0: it only turns and looks)
 QVR_CVAR(vr_stealth_turn, "0.6", CVAR_ARCHIVE)       // an Alert monster's turn speed (times its own)

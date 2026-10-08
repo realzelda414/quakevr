@@ -11,8 +11,9 @@
 .float vr_flashlight_state; // packed client lamp state, saved and carried by parm50
 .float vr_gib; // a gib or head that can be carried (VR_MakeGibGrabbable)
 .entity vr_wpn_from; // a weapon lying about or flying: the player whose hand it left (DropWeaponInHandScaled), else world
+.float vr_grab_by_handle; // a weapon lying about: a hand closing anywhere on it takes it by its handle, never carries it by a hotspot (func_weapon_grabbable BY_HANDLE)
 .float vr_born; // when it was made (set by the engine, ED_Alloc: vr_cheats.cpp; VR_Scene_IsRuntimeProp)
-.float vr_gate_crossed; // when a missile was last carried through a slipgate (set by the engine: VR_PortalToss); then it meets its owner (VR_OwnerSpared)
+.float vr_gate_crossed; // when a missile was last carried through a teleporter (set by the engine: VR_PortalToss); then it meets its owner (VR_OwnerSpared)
 .float vr_sgib; // a small gib (vr_smallgibs.qc): when it was made
 .float vr_sgib_id; // its serial in the small gibs' ring (0: gone)
 .float vr_flies; // a severed head's flies buzz round it (HeadThink, player.qc; VR_Head_StopFlies)
@@ -60,7 +61,7 @@
 .entity fg_player;
 .float fg_hand;
 .float fg_state;    // 0 not pulled, 1 flying to the hand, 2 missed: falling, not yet touchable
-.float fg_portal;   // one-based slipgate used by this gravity-glove flight, 0 same room
+.float fg_portal;   // one-based teleporter used by this gravity-glove flight, 0 same room
 .float fg_arrive;   // when it reaches the hand
 .float fg_gravity;  // of its arc
 .float fg_movetype; // as it was before
@@ -171,6 +172,14 @@
 //
 //
 //
+// ----------------------------------------------------------------------------
+// A monster oblivious until hurt (the map's "vr_oblivious" "1": vrtrailer's grunt; vr_trailer.qc): nothing wakes it --
+// no sight, sound, footsteps, shove or stealth AI (FindTarget, VR_EnemyShove_Check, VR_Stealth_Applies) -- until it
+// takes damage (T_Damage clears it); a beheading cut on it always kills (VR_Trailer_Take).
+// ----------------------------------------------------------------------------
+
+.float vr_oblivious;
+
 // ----------------------------------------------------------------------------
 // Map tips (func_vr_tip: QC/vr_tips.qc)
 // ----------------------------------------------------------------------------
