@@ -153,35 +153,67 @@ bodies); `find(p, classname, "player")` after the first player (`VR_EnemyShove_T
   secret2's server phase 4.44 -> 3.39 ms (medians of 4; the fight differs run to run, so this one is noisy: the walks
   also evicted ~230 KB of cache each).
 
-### 10. The kill frame's spawns (still open)
+### 10. The kill frame's spawns (decided 2026-10-08: optimise, identical output; done)
 
 A death costs 0.15-0.2 ms on these maps (BENCHMARKS.md); in map2's kill-all frame the small gibs' spawns 2.1 ms,
 `WeaponInst_Find` 1.4 ms (a weapon instance's id: every record walked, by `find`), the caps' walks (done: one walk
-each). `ED_Alloc` walks from the clients up for a free edict on every spawn. An index of weapon instances by id, and a
-lowest-free hint for `ED_Alloc`, would be exact but touch save/load and every free; worth it only if real fights show
-death-frame hitches (a rocket into 10 monsters: ~2 ms). Not done.
+each). Vittorio's decision: optimise, with the output identical (the same entities, in the same order, the same
+`random()` calls). **Done:**
+- **Weapon ids without the walks** (vr_weaponinst.qc): ids are written only by `WeaponInst_Make` (from
+  `WeaponInst_FreeUid`), so a bound above every record's id (`qvr_weaponinst_idtop`, `nosave`: worked out by one walk
+  after a load or a map, then raised as ids are given) answers "is this id taken?" without walking for any id at or
+  past it, which is every new weapon's. The same ids as before: a check run beside the old search (temporary, not
+  kept) agreed on all 128 weapons of `mg3_map2_kill` and in a save, load and level change with weapons carried, held
+  and holstered; no `random()` or entity change. `mg3_map2_kill`'s kill frame (`profile_qc`, its 9 frames):
+  `WeaponInst_Find` 0.69 ms -> gone; the frame's QuakeC 22.7 -> 20.7 ms (one run each; the rest is run-to-run spread).
+- **The small gibs' and limbs' `dprint(sprintf(...))`** with `developer 0` (item 12, done there): 1.2 ms of that frame
+  was formatting text nobody printed (`VR_SmallGib_MakeRoom` 0.67, `VR_SmallGib_Roll` 0.42, `VR_Limb_MakeRoom` 0.12).
+- **`ED_Alloc` needs no hint:** Ironwail takes a free edict from the head of its free list (`qcvm->free_edicts`), not
+  by a walk from the clients up as this item first said; nothing to do.
+- **`vr_bench_statehash` cannot judge a QuakeC change:** string fields hold offsets into the progs' strings, so a
+  progs with one string more hashes differently from its first frame; and the kill frame differs run to run on one
+  build (QuakeC's `random()` shares `rand()` with the client). Equality checks run beside the old code are the test.
+- Left: `SUB_UseTargets` > `find` 0.46 ms of that frame (MG3's monsters' targets: `find` on .targetname walks every
+  edict, ~6 us each; an index of .targetname would be the edict index's classname work again).
 
-### 11. The force grab's search every frame
+### 11. The force grab's search every frame (decided 2026-10-08: the area grid, identical results; done)
 
 `findportalcone` (each hand's force-grab target, every frame): 0.07 ms a call on secret2 (1800 entities, each one's
 model centre worked out before the portal broad phase). A box-based pre-test would need the centre's bound from the
-box (not exact for models whose centre lies outside their box). Small; not done.
+box (not exact for models whose centre lies outside their box). Vittorio's decision: query the engine's spatial grid
+instead of walking, the results identical. **Done** (`vr_forcegrab_grid`, on; vr_builtins.cpp):
+- The candidates are the edicts the area grid links (`SV_AreaEdictsUnordered`, as `VR_TouchLinks` uses it: every
+  edict that can pass is linked, only SOLID_NOT isn't) within a box round the hand and round each of its images through
+  the slipgates (`pullSearchOrigins`): the range, the broad phase's margin and 128 units for a drawn middle outside its
+  box (the most measured: a knocked-down ogre's 47 units; weapons and backpacks 6-12). Sorted into edict order and
+  tested exactly as the walk tests each edict, so the chain is the same edicts in the same order.
+- Checked: `vr_forcegrab_grid_verify 1` walks as well and compares the chain (the walk's answer used on a difference,
+  which is printed and counted: `vr_forcegrab_grid_stats`; Debug > Profiling and Memory). 0 differences in 14,186
+  searches (secret2 awake and its tour, map2 awake, its kill-all and its tour, combined, combat_48, a 1000-prop pile
+  and a blast through it, `start`'s slipgates with a pull through a gate, vrslipgates); `vr_prop_query_test` (96
+  ordered-chain comparisons, ranges 0 to 4096) passes on each.
+- **Win** (`profile_qc`, 525 frames, the same build both ways): `mg3_secret2_awake` 0.119 / 0.135 -> 0.005 / 0.006 ms
+  a frame (two runs each; ~11 edicts tested a search instead of ~1100). `combined` (300 props packed round you)
+  0.050 -> 0.057 ms: there the grid finds the pile anyway, and sorts it.
 
-### 12. QuakeC left after the index (2026-10-08, `profile_qc` caller > builtin pairs, secret2 awake)
+### 12. QuakeC left after the index (2026-10-08, `profile_qc` caller > builtin pairs, secret2 awake; the dprints decided and done)
 
 One loop moved to a builtin: the stealth AI's look about tested each lit torch's and body's distance and cone in
 QuakeC (0.05 ms a frame on secret2 after the index); `findflagsinview` does it in the engine in QuakeC's own float
 steps (`VR_Stealth_LookAbout` with its callees 0.062 -> 0.010 ms; ROUND21.md). What remains is engine work QuakeC asks
 for, or behaviour-visible:
-- `findportalcone` 0.13 ms (item 11: each model's centre before the broad phase; a bound needs the shape's fields,
-  as dear to read as the centre).
+- `findportalcone` 0.13 ms (item 11: done since, by the area grid: 0.006 ms).
 - `findradius` 0.03 (`VR_Grenade_CatchCheck`), 0.02 (`VR_Stealth_Gather`): it writes `.chain` on every solid
   entity in range, monsters or not; an index of solids would need the engine's `solid` writes (10 sites, some
   temporary inside SV_PushMove) and would hold nearly every edict anyway.
 - `sprintf` 0.034 ms, 21 calls a frame, in `VR_Prop_Flung`'s `dprint(sprintf(...))` for gibs touching monsters
-  while still harmless: formatted with `developer 0`. A `developer` test round it saves it, but changes the temp
-  strings' rotation (only code holding a temp string too long could see it). **Option**: guard the dprints (or a
-  `dprintf` builtin that formats only with developer on).
+  while still harmless: formatted with `developer 0`. **Decided and done (2026-10-08): guarded** (`if(cvar("developer"))
+  dprint(sprintf(...))`, the text the same with developer on). Guarded with it, the others `profile_qc` found formatting
+  every frame or in a burst of deaths: `VR_Prop_Flung` (5), `VR_SmallGib_Roll` (2), `VR_SmallGib_Gibbed`,
+  `VR_SmallGib_MakeRoom`, `VR_Limb_MakeRoom`, `VR_EnemyWeapons_MakeRoom`, `VR_Debris_Impact`. sprintf calls a frame
+  (`profile_qc`, 525 frames): `mg3_secret2_awake` 20.9 -> 0.05, `combat_48` 0.61 -> 0.16; `mg3_map2_kill`'s kill frame
+  204.9 -> 4.8 a frame of its 9 (its QuakeC 20.7 -> 19.2 ms). The other ~600 `dprint(sprintf())` run at a map's load,
+  on a use or in a test: left. The temp strings' rotation changes (nothing keeps one past its frame).
 - `traceline` (`point_visible`, `VR_Stealth_WalkNow`), `movetogoal` (`ai_run`, `VR_Stealth_WalkNow`): the engine's
   traces and steps.
 

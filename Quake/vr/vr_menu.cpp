@@ -4586,6 +4586,15 @@ za::Vector<Item> pageDebugProfiling()
         command("Edict Index Stats", "vr_edictindex_stats")
             .help("vr_edictindex_stats: the index's searches, rebuilds, edicts read again, searches verified and "
                   "differences since the last time."),
+        toggle("Force Grab Search by Grid", vr_forcegrab_grid)
+            .help("vr_forcegrab_grid: the force grab's target search (each hand, every frame) tests only the entities "
+                  "linked near the hand and its images through slipgates (the same results). Off: it walks every entity."),
+        toggle("Verify Force Grab Search", vr_forcegrab_grid_verify)
+            .help("vr_forcegrab_grid_verify: every search walks as well; a difference is counted and printed, and the "
+                  "walk's answer used. Force Grab Search Stats prints the counts."),
+        command("Force Grab Search Stats", "vr_forcegrab_grid_stats")
+            .help("vr_forcegrab_grid_stats: the searches, the entities each tested, searches verified and differences "
+                  "since the last time."),
         command("Game State Hash", "vr_bench_statehash")
             .help("vr_bench_statehash: one hash of every entity's QuakeC fields (and which are in use), printed with the "
                   "server's time: the same script on two builds gives the same hash when a change left the game the same."),
@@ -5326,6 +5335,8 @@ za::Vector<Item> pageMg3Tests()
             .help("Destructive: shotgun and nailgun in the hands (magazines 3/7; hold both grips to carry them), six shotguns holstered (1..6), upgrade masks 5 2 8192 16384 1."),
         command("Give the Four Runes", "vr_mg3_test 36")
             .help("Destructive: all four runes (serverflags 15), e.g. to open the hub's exit to secret2 in a Bloody Nightmare new game."),
+        slider("Ghosts' Opacity", vr_mg3_ghost_alpha, 0.05f, 1.f, 0.05f, "%.2f")
+            .help("How solid Dawn of the Machine's ghosts look: 0.4 see-through (default), 1 solid."),
         toggle("Aggro Groups", vr_mg3_aggro_groups)
             .help("A waking monster wakes what its aggro_target names (map3, map7, map8). Upstream ships this off; off by default."),
     };
@@ -5678,9 +5689,13 @@ za::Vector<Item> pageDebugTests()
              {103.f, "Small Explosive Box"}, {104.f, "Explosive Box (Never Blows Up)"}, {105.f, "Ogre's Head"},
              {106.f, "Gib"}, {107.f, "Small Crate"}, {108.f, "Large Crate"}, {109.f, "Two Crates Stacked"},
              {110.f, "Rocks and Bricks"}, {111.f, "Barrel"}, {112.f, "Barrel Lying"}, {113.f, "Silver Key"}})
-            .help("What Put It There puts ahead of you, facing you. The mission packs' monsters need their game installed; Dawn "
+            .help("What Put It There puts ahead of you, facing you (or as Facing says). The mission packs' monsters need their game installed; Dawn "
                   "of the Machine's (its infected, which burst into zombies and fiends; its own monsters, the orb, the sacrifice: MG3's data, read in place)."),
         slider("Distance", vr_test_spawn_dist, 32.f, 256.f, 8.f, "%.0f units").extend().help("How far ahead."),
+        cycle("Facing", vr_test_spawn_facing, {{0.f, "As Each Spawner"}, {1.f, "Towards You"}, {2.f, "Away"}, {3.f, "Its Own Angle"}})
+            .help("Which way monsters put ahead of you face: Put It There, impulse 244 (a grunt ahead) and vr_physics_spawn "
+                  "(Spawn a Crowd). As Each Spawner: the first two face you, vr_physics_spawn keeps the map's angle. Away: "
+                  "they look where you look (trailer shots from behind them)."),
         toggle("Into the Main Hand", vr_test_spawn_hold)
             .help("A box or a crate (Health Box .. Explosive Box, the crates) put into your empty main hand, as if gripped: "
                   "to test held props (the blood on what you hold: vr_gore_spatter_test, vr_gore_hands_info)."),
@@ -7344,7 +7359,7 @@ za::Vector<Item> pageMain()
             .help("Whether you run or walk; holding the speed button does the other."),
         slider("Stick Deadzone", vr_deadzone, 0.f, 50.f, 5.f, "%.0f%%")
             .help("How far a stick must be pushed before it does anything. Raise it if you drift or turn without "
-                  "touching the stick."),
+                  "touching the stick: worn sticks often need 20-25%."),
         toggle("Swap Stick Functions", vr_stick_swap)
             .help("Off: the left stick moves you and the right one turns. On: the right stick moves, the left turns."),
         cycle("Swimming", vr_swim, {{1.f, "Immersive"}, {0.f, "Vanilla"}})

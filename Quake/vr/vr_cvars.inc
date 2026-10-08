@@ -455,7 +455,7 @@ QVR_CVAR(vr_crosshair_depth, "0", CVAR_ARCHIVE)
 QVR_CVAR(vr_crosshair_size, "1", CVAR_ARCHIVE)
 QVR_CVAR(vr_crosshair_alpha, "0.85", CVAR_ARCHIVE)
 QVR_CVAR(vr_crosshair_hue, "-1", CVAR_ARCHIVE)        // its colour: hue (degrees; 0 red; -1 vr_player_hue)
-QVR_CVAR(vr_deadzone, "25", CVAR_ARCHIVE)
+QVR_CVAR(vr_deadzone, "10", CVAR_ARCHIVE)
 // Controller rotation offsets, the released values: tuned for OpenVR's raw controller pose, which
 // the OpenXR backend reproduces from the grip pose with vr_controller_legacy_pose 1 (Touch, Quest
 // and Index controllers), so that they and the weapon offsets line up as in the old engine.
@@ -2467,6 +2467,7 @@ QVR_CVAR(vr_debug_gun_wall, "0", CVAR_NONE)          // 1: print each frame a he
 QVR_CVAR(vr_debug_hand_offset, "0", CVAR_NONE)       // 1: print each hand drawn away from where it is tracked (0.01 units or more), and by what: the walls, the weight's spring, the models, a prop in the other hand, the body; 2: every frame (tests)
 QVR_CVAR(vr_test_spawn, "0", CVAR_NONE)               // impulse 241 (tests): what it puts ahead of you: 0..17 the firing range's dispenser monsters (0 grunt, 1 ogre, 2 zombie, 3 shambler, ...; 18 the Guardian, 19 the dragon, 20 the marksman ogre: tests only), 100 a health box, 101 a shells box, 102/103 an explosive box/a small one, 104 an explosive box that never blows up, 107-109 crates, 110 the rocks and bricks (a row of each), 111/112 a barrel upright/lying
 QVR_CVAR(vr_test_spawn_dist, "56", CVAR_NONE)         // and how far ahead (units)
+QVR_CVAR(vr_test_spawn_facing, "0", CVAR_NONE)        // the test spawners' monsters (impulse 241 and 244, vr_physics_spawn): 0 as each did (241 and 244 facing you, vr_physics_spawn its own angle), 1 facing you, 2 facing away (trailer shots), 3 their own angle (a map's 0)
 QVR_CVAR(vr_test_pile_count, "500", CVAR_NONE)       // Debug > Tests > Physics Stress: the props a pile of rocks, bricks or both has (vr_physics_bigpile without a count)
 QVR_CVAR(vr_test_pile_crates, "80", CVAR_NONE)       // and the crates its Wall of Crates has (vr_physics_bigpile crates)
 QVR_CVAR(vr_test_spawn_hold, "0", CVAR_NONE)          // 1: a box or a crate (vr_test_spawn 100..104, 107..109) put into the empty main hand (QC weapons.qc)
@@ -2820,6 +2821,12 @@ QVR_CVAR(vr_finger_base_z, "0.0", CVAR_ARCHIVE)
 
 // Exact uncached-reference checks for prop optimization regression runs; never archived.
 QVR_CVAR(vr_prop_query_verify, "0", CVAR_NONE)
+// The force grab's target search (findportalcone, every frame for each hand): 1 the edicts linked near the hand (and
+// near its images through slipgates) from the area grid, 0 a walk of every edict, as before. _verify 1: the walk as
+// well, its chain compared (the same edicts in the same order), differences counted and the first few printed
+// (vr_forcegrab_grid_stats). PERF_DECISIONS.md 11.
+QVR_CVAR(vr_forcegrab_grid, "1", CVAR_NONE)
+QVR_CVAR(vr_forcegrab_grid_verify, "0", CVAR_NONE)
 
 // The edict index (vr_edictindex.cpp): find() on .classname and findflags() on .flags (QuakeC's bits) and a few QuakeC
 // fields step to the next match instead of walking every edict. 0: they walk, as Quake did. _verify 1: they walk as
@@ -2865,6 +2872,7 @@ QVR_CVAR(vr_mg3_ctest, "0", CVAR_NONE) // Debug > Tests > Dawn of the Machine: C
 QVR_CVAR(vr_mg3_wtest, "0", CVAR_NONE) // Debug > Tests > Dawn of the Machine Weapons: 1 report, 2 Super Axe blows (QC/vr_mg3_weapons_test.qc; not archived)
 QVR_CVAR(vr_mg_route_stage, "0", CVAR_NONE) // MG1/MG3 route sweep driver: each new map's first frame runs mg1route<stage>.cfg (MG3: mg3route<stage>.cfg) once (0 off; the scripts raise it); not archived
 QVR_CVAR(vr_mg3_test, "0", CVAR_NONE) // Debug > Tests > Dawn of the Machine Tests: 1 state report (developer campaign only; not archived)
+QVR_CVAR(vr_mg3_ghost_alpha, "0.4", CVAR_ARCHIVE) // Dawn of the Machine's ghosts: how opaque they are drawn (0.05..1; 1 solid; QC/vr_mg3_ghost.qc, Debug > Tests > Dawn of the Machine Tests)
 QVR_CVAR(vr_mg3_aggro_groups, "0", CVAR_ARCHIVE) // Dawn of the Machine: a waking monster wakes what its aggro_target names (upstream ships this off; Debug > Tests > Dawn of the Machine Tests)
 QVR_CVAR(vr_mg3_bn_discovered, "0", CVAR_ARCHIVE) // Dawn of the Machine: Bloody Nightmare found in a game (the hell knight's head): the Official Campaigns menu offers it
 QVR_CVAR(vr_mg3_bn_start, "0", CVAR_NONE) // Official Campaigns > Bloody Nightmare: the next Dawn of the Machine start map begins a Bloody Nightmare game (QC clears it)
