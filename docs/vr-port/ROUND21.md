@@ -32205,3 +32205,61 @@ Player-visible text that said "portal" says teleporter too ("Portal Stars" is Te
 - **What still says slipgate:** id's (e1m1's name, the Slipgate Complex; the finale texts in client.qc; the mission
   packs' `$map_walk_slipgate_exit`), the aliases above and their notes, quoted commit subjects, and the names of
   scripts deleted before the rename (REPO_CLEANUP.md).
+
+## Loose rounds slide into the gun too (2026-10-08)
+
+Vittorio: a shell hand-fed into a shotgun lying as a prop slid in, but one dropped onto it or thrown into its receiver
+just vanished. The slide (vr_collectfx.cpp's "into the gun", `collectfx` hotspot 241 `QVR_CFX_INTO_PROP`) went to the
+loading player's client only, and a loose round loading by contact has no player, so `VR_Reload_PropSlide` sent nothing.
+
+- **Into a gun lying about:** `collectfx` with hotspot 241 now goes to every client that can see the gun
+  (`server::sendCollectSeen`: `SV_VisibleToClient`, the gun's fat PVS from each client's eye), whoever `self` is, from a
+  hand or a loose round alike. The client draws it as before: the round's model from the server's pose, along the
+  lying gun's load path in its model space (`view::propGun`, `modelLoadPath`), carried by the gun. Other players now
+  see a hand-fed one slide in too. Shells, the super shotgun's pair (lying open) and the launchers' rounds slide;
+  magazines seat at once, as from a hand (they have no slide either way).
+- **Into a held gun:** a loose round by contact already slid in on the holder's client (`VR_Reload_LoadInto` sends
+  `QVR_CFX_INTO_GUN` with the other hand); checked, unchanged. Other players still see it vanish (their view of
+  someone's held gun has no load path).
+- **Test aid:** `vr_reload_test 26` (Debug > Tests > Reloading, "Drop a Round Onto the Lying Gun"): a loose round
+  for the nearest lying gun let go of 6 units above its load point. `gunshape_test.sh` section 6: tossed into and
+  dropped onto the lying shotgun, the pair into the open super shotgun, a grenade into the lying launcher (each slides
+  from its port to the end of the path, 33 frames drawn), the nailgun's magazine seats with no slide, a loose shell
+  into the held shotgun slides as before.
+
+## Guns lying about taken by the handle; the super shotgun with pouch shells in hand (2026-10-08)
+
+**Taken by the handle.** The author: "very hard to grab guns by the main handle while they're in prop form ... without
+force grabbing". Headless (a shotgun let go of, the off hand stepped down over its handle a unit at a time): the closing
+hand nudged the gun, a Box3D prop, awake from then on, so not FL_ONGROUND, so not "lying" (vr_physics.cpp lyingWeapon):
+vr_weapon_grab_slack's 5 cm dropped to 0, and the fist pushed it on ahead of itself (the gap held at 2.6-4.9 cm, never
+taken; pushed further, 40 units across the floor). Now a weapon barely moving (under 100 units/s) with the floor under
+its handle lies too, and **vr_weapon_grab_handle_leniency** (5 cm; Hands > Handle Grab Leniency) adds to the slack when
+the hand's point is within vr_weapon_grab_anywhere_min (12 cm) of the handle (its origin): taken by the handle with the
+fist up to 10 cm off it. In the air nothing changes (no floor under it, or flying faster: the catch is by the fist on
+it, slack 0), nor a force grab (its catch runs the weapon's handtouch itself, VR_Forcegrab_Catch, not handOn).
+weapon_catch_test.sh checks 4-5: taken at 7.7 cm (allowed 10), and with the leniency 0 the slack's 5 alone, not taken
+from 10 cm over it. Check 3 (the crowbar, gripped at its middle, its handle) now sets the leniency 0 to test the slack.
+
+**The super shotgun hit with shells in the hand.** The author: still unable to hit it open or shut with the off hand
+holding shells from the pouch. VR_Reload_SsgHit returned at once for any round the other hand held (it was there so a
+pair brought to the breech wouldn't count as a hit). Now a held round hits as the fist holding it or by its own shape
+(shapenearest), whichever is nearer the barrels' front half. Shut, it breaks it open (a shut gun's chambers take nothing:
+the tap at the breech is unchanged). Open, the round within the port's radius plus 4 units of the chambers loads and
+never hits (the load wins); a fast hit on the front half of the barrels from below elsewhere shuts it, the pair kept in
+the hand. reload_test.sh: a pouch pair hits it open from above, shut from below, kept (10).
+
+**Shut straight after loading.** The author: after loading fresh shells into the open super shotgun, a long wait before
+he could flick it shut. No timer stood in the flick's way; two things did (headless, real time, the mock's turns
+reporting their angular velocity). (1) The flick is measured from the hand's up while it was still (vr_flick.cpp
+restUp), and "still" was under 1.5 rad/s (86 deg/s): a gun hand still turning as the pair went in (bringing the gun back
+up) kept its up from before, so the flick had to swing past that before it counted, and did nothing until the hand had
+paused (a pair loaded with the gun hand turning 94 deg/s, flicked: never shut). Now **vr_reload_ssg_flick_rest** (180
+deg/s, at most 3/4 of the flick's speed; Weapons > Reloading > Flick Rest Speed) for the super shotgun that breaks open,
+and the up is tracked whether it may flick or not (it wasn't while shut with Open by Flick off, his setting). (2) A flick
+seen late in its swing set its bit for one client frame, lost among the moves the server reads at its tick (seen: "flick
+reload" printed, the gun stayed open): the bit is now held 0.12 s, as the pry's is. And a hit opened or shut it only
+0.6 s after a shell went in (the loading hand drawing back): **vr_reload_ssg_hit_after_load** 0.13 s, the slide-in's
+time (Hit After Loading). vr_reload_debug 2 prints the flick's speed and how far the barrel is towards the up at rest.
+reload_test.sh: loaded with the gun hand turning 150 deg/s and flicked 0.15 s later, shut; a hit from below straight
+after the load shuts it (with 0.6 it doesn't).

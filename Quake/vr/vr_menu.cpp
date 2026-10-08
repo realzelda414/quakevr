@@ -2975,6 +2975,11 @@ void hologramTestMessage()
         slider("Weapon Grab Slack", vr_weapon_grab_slack, 0.f, 10.f, 0.5f, "%.1f cm")
             .help("With Weapons by the Fist: a weapon lying on the floor is taken with the fist this far off it too (a gun "
                   "lying flat is thinner than the lowest your fist gets over it). Not one in the air: caught by the fist on it."),
+        slider("Handle Grab Leniency", vr_weapon_grab_handle_leniency, 0.f, 10.f, 0.5f, "%.1f cm")
+            .extend(0.f, 20.f)
+            .help("A gun lying on a table or the floor is taken by its handle with your fist this much farther off it than "
+                  "the slack above (the hand at its handle; your hand nudging it doesn't stop it). Only a direct grab: a "
+                  "weapon caught in the air still needs your fist on it, and a force grab is unchanged. 0: as anywhere on it."),
         toggle("Lenient Weapon Catch", vr_weapon_grab_box)
             .help("The old catch: a weapon is also taken when your hand comes within a hand's width of its handle, the "
                   "fist up to 20 cm off it. Off: only when your closed fist touches it, as a box or a gib."),
@@ -5883,7 +5888,11 @@ za::Vector<Item> pageDebugTests()
             .help("The off hand's gun let go of: it lies as a prop, its rounds with it. Guns lying about load as held "
                   "ones do, by hand and by contact."),
         command("Toss a Round Into the Lying Gun", "vr_reload_test 21; impulse 125")
-            .help("A loose round for the nearest gun lying about, tossed into its opening lying right: it goes in."),
+            .help("A loose round for the nearest gun lying about, tossed into its opening lying right: it goes in, seen "
+                  "sliding in (a shell, a pair, a launcher's round)."),
+        command("Drop a Round Onto the Lying Gun", "vr_reload_test 26; impulse 125")
+            .help("The same let go of 6 units above its load point, lying right: it falls in where the opening is up "
+                  "enough, seen sliding in."),
         command("Toss One Sideways at the Lying Gun", "vr_reload_test 24; impulse 125")
             .help("The same lying sideways a unit out of its opening: it stays out."),
         command("Hold a Round at the Lying Gun", "vr_reload_test 22; impulse 125")

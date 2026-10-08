@@ -181,6 +181,25 @@ check $(echo "$log" | grep -q "broken open by the button" && [ "$(opens "$log")"
 check $(echo "$log" | grep "ssg: the hand on the open barrels turned" | head -1 | grep -q "turned 45.0 deg" && echo 1 || echo 0) "the hand on the open barrels turns down with them (45 deg)"
 log=$(bash $KIT/run.sh $AGENT -Script "$SSG;$FIRE;$HITDOWN;$REP;$HITUP;$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
 check $(echo "$log" | grep -q "broken open by a hit from above" && echo "$log" | grep -q "closed by a hit from below" && [ "$(opens "$log")" = 10 ] && echo 1 || echo 0) "a hit from above on the barrels breaks it open, one from below shuts it ($(opens "$log"))"
+# A pouch pair in the hand hits too (the author's note of 2026-10-08: shells in the hand never opened or shut it): the
+# shut gun broken open by it from above, the open one shut from below (the pair kept: not loaded), and at the open
+# chambers it loads (no hit).
+log=$(bash $KIT/run.sh $AGENT -Script "$SSG;$FIRE;$POUCH;$GRIP;$HITDOWN;$REP;$HITUP;$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
+check $(echo "$log" | grep -q "broken open by a hit from above" && echo "$log" | grep -q "closed by a hit from below at .*: 0 loaded" && [ "$(opens "$log")" = 10 ] && echo "$log" | grep "^reload: off hand" | tail -1 | grep -q "clip 0 .*holds a round of 2" && echo 1 || echo 0) "a pouch pair in the hand hits it open from above, shut from below, kept in the hand ($(opens "$log"), want 10)"
+# Shut straight after loading (the author's note of 2026-10-08: a long wait before the flick shut it): a pair loaded
+# while the gun hand turns (150 deg/s, over the old 86 deg/s rest), flicked 0.15 s after it went in, real time: shut
+# (Flick Rest Speed 180, the flick's bit held 0.12 s); a hit from below straight after the load shuts it (Hit After
+# Loading 0.13 s; at the old 0.6 s it stays open).
+LOADP="vr_mock_hand_to main lport 8;wait5;vr_mock_hand_to main lport 8;wait10;vr_mock_hand_to main lport;wait1;vr_mock_hand_to main lport;wait1"
+TILTF=$(for i in $(seq 8); do printf "vr_mock_hand_turn off -2.5 0 0;wait1;"; done; for i in $(seq 4); do printf "vr_mock_hand_turn off 25 0 0;wait1;"; done)
+log=$(bash $KIT/run.sh $AGENT -RealTime -Script "$SSG;vr_mock_turn_velocity 1;$FIRE;$FLICK;wait30;vr_mock_hand off -0.15 1.25 -0.40 50 0 0;wait30;$POUCH;$GRIP;$LOADP;$TILTF wait30;$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
+check $(echo "$log" | grep -q "2 into the gun (hand 0)" && echo "$log" | grep -q "closed by a flick: 2 loaded" && echo 1 || echo 0) "loaded with the gun hand turning, flicked 0.15 s later: shut ($(opens "$log"))"
+FASTUP="$LETGO;vr_mock_hand_to main held 0.85 -25;wait2;vr_mock_hand_to main held 0.85 -25;wait2;vr_mock_hand_to main held 0.85 -12;wait3;vr_mock_hand_to main held 0.85 -2;wait10;$REST;wait30"
+for after in 0.13 0.6; do
+    log=$(bash $KIT/run.sh $AGENT -Script "$SSG;vr_reload_ssg_hit_after_load $after;$FIRE;$FLICK;wait30;$POUCH;$GRIP;$LOADP;$FASTUP;$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
+    [ $after = 0.13 ] && check $(echo "$log" | grep -q "closed by a hit from below.*: 2 loaded" && echo 1 || echo 0) "a hit from below straight after loading shuts it ($(opens "$log"))"
+    [ $after = 0.6 ] && check $(echo "$log" | grep -q "2 into the gun" && ! echo "$log" | grep -q "closed by" && echo 1 || echo 0) "Hit After Loading 0.6: the same hit does nothing ($(opens "$log"))"
+done
 T25=$(for i in $(seq 4); do printf "vr_mock_hand_turn off 25 0 0;wait1;"; done)
 log=$(bash $KIT/run.sh $AGENT -Script "$SSG;vr_mock_turn_velocity 1;$FIRE;vr_reload_ssg_flick_open_speed 3000;$T25 wait30;$REP;vr_mock_hand off -0.15 1.25 -0.40 50 0 0;wait30;vr_reload_ssg_flick_open_speed 650;$T25 wait30;$REP;vr_mock_hand off -0.15 1.25 -0.40 50 0 0;wait30;vr_reload_ssg_flick_close_speed 3000;$T25 wait30;$REP;vr_mock_hand off -0.15 1.25 -0.40 50 0 0;wait30;vr_reload_ssg_flick_close_speed 650;$T25 wait30;$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
 check $(echo "$log" | grep -q "broken open by a flick" && echo "$log" | grep -q "closed by a flick" && [ "$(opens "$log")" = 0110 ] && echo 1 || echo 0) "the flick's speeds: a flick under Flick Open Speed doesn't open it, over it does; the same for Flick Close Speed ($(opens "$log"))"
@@ -379,9 +398,13 @@ DROPOFF="vr_weapon_grip_mode 0;+graboff;vr_mock_button off grip 1;wait5;vr_mock_
 EG="map e1m1;wait60;developer 1;vr_debug_shots 1;vr_weapon_grip_mode 1"
 HANDS="vr_mock_hand off -0.15 1.25 -0.40 50 0 0;vr_mock_hand main 0.25 1.1 -0.3 50 0 0;wait10"
 FE="^spent gun|^bodyshock: (gun|entity)"
-log=$(bash $KIT/run.sh $AGENT -Script "$EG;impulse 186;wait3;$HANDS;impulse 214;wait3;+offhandattack;wait3;-offhandattack;wait30;vr_shock_info;wait2;$DROPOFF;wait60;vr_shock_info;wait2;wait400;toggleconsole;quit" -Filter "$FE" 2>&1)
+# (The crackle's length is the shipped vr_enemygun_spent_crackle, read here: 1 s since dabf05824, was 2.5. The lying
+# gun's arcs are looked at 10 frames after the drop, within any crackle of 0.8 s or more.)
+log=$(bash $KIT/run.sh $AGENT -Script "$EG;vr_enemygun_spent_crackle;impulse 186;wait3;$HANDS;impulse 214;wait3;+offhandattack;wait3;-offhandattack;wait30;vr_shock_info;wait2;$DROPOFF;wait10;vr_shock_info;wait2;wait450;toggleconsole;quit" -Filter "$FE|vr_enemygun_spent_crackle" 2>&1)
 st=$(echo "$log" | grep -o "cues over after [0-9.]* s: [0-9]* wisps" | awk '{print $4, $6}')
-check $(echo "$log" | grep -q "spent gun: enforcer's rifle (hand 0) empty: smoking 5 s, crackling 2.5 s" && echo "$log" | grep -q "bodyshock: gun in hand 0 arcs=[1-9]" && echo "$log" | grep -q "spent gun: lying about" && echo "$log" | grep -q "bodyshock: entity=[0-9]* kind=4 .* arcs=[1-9]" && echo "$st" | awk '{print ($1 >= 4.9 && $1 <= 5.3 && $2 >= 15) ? 1 : 0}') "the enforcer's rifle spent: it crackles in the hand and dropped, and smokes 5 s (after, wisps: ${st:-none})"
+crackle=$(echo "$log" | grep -o '"vr_enemygun_spent_crackle" is "[0-9.]*"' | grep -o '[0-9.]*"$' | tr -d '"')
+lyingarcs=$(echo "$crackle" | awk '{print ($1 >= 0.8) ? 1 : 0}')
+check $(echo "$log" | grep -q "spent gun: enforcer's rifle (hand 0) empty: smoking 5 s, crackling ${crackle:-?} s" && echo "$log" | grep -q "bodyshock: gun in hand 0 arcs=[1-9]" && echo "$log" | grep -q "spent gun: lying about" && { [ "$lyingarcs" = 0 ] || echo "$log" | grep -q "bodyshock: entity=[0-9]* kind=4 .* arcs=[1-9]"; } && echo "$st" | awk '{print ($1 >= 4.9 && $1 <= 5.3 && $2 >= 15) ? 1 : 0}' | grep -q 1 && echo 1 || echo 0) "the enforcer's rifle spent: it crackles in the hand (${crackle:-?} s, Spent Crackle) and dropped, and smokes 5 s (after, wisps: ${st:-none})"
 log=$(bash $KIT/run.sh $AGENT -Script "$EG;vr_enemygun_spent_smoke 2;vr_enemygun_spent_crackle 1;impulse 165;wait3;$HANDS;impulse 214;wait3;+attack;wait3;-attack;wait20;vr_shock_info;wait300;toggleconsole;quit" -Filter "$FE" 2>&1)
 st=$(echo "$log" | grep -o "cues over after [0-9.]* s" | awk '{print $4}')
 check $(echo "$log" | grep -q "spent gun: grunt's burst rifle (hand 1) empty: smoking 2 s, crackling 1 s" && echo "$log" | grep -q "bodyshock: gun in hand 1 arcs=[1-9]" && awk -v t="$st" 'BEGIN { print (t != "" && t >= 1.9 && t <= 2.3) ? 1 : 0 }') "the grunt's burst rifle spent in the main hand: crackling; Spent Smoke 2, Spent Crackle 1: over after 2 s ($st)"
