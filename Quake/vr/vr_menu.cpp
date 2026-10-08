@@ -26,6 +26,7 @@
 #include "vr_mem.hpp"
 #include "vr_menu.hpp"
 #include "vr_menuui.hpp"
+#include "vr_obs.hpp"
 #include "vr_menupaint.hpp"
 #include "vr_motion.hpp"
 #include "vr_motion_review.hpp"
@@ -895,8 +896,12 @@ int campaignsBloodyShown = -1;
         header("Effect"),
         slider("Slow Down", vr_foegrab_slow, 0.f, 1.f, 0.05f, "%.2f")
             .help("Share of a fully held enemy's own movement (and turning) taken off, times its hold."),
+        slider("Follow the Hand", vr_foegrab_follow, 0.f, 1.f, 0.05f, "%.2f")
+            .help("Share of your holding hand's own movement the enemy follows, times its hold: pull your hand back, or "
+                  "walk off holding it, and a grunt comes along, an ogre a little, a shambler hardly."),
         slider("Pull", vr_foegrab_drag, 0.f, 20.f, 0.5f, "%.1f /s")
-            .help("How quickly your hand pulls the spot it holds towards it, times the hold (0: not at all)."),
+            .help("How quickly your hand pulls the spot it holds towards it, times the hold (0: not at all): takes up "
+                  "what Follow the Hand leaves."),
         slider("Pull Speed", vr_foegrab_drag_speed, 0.f, 300.f, 5.f, "%.0f units/s")
             .help("The pull's top speed (32 units are about a metre)."),
         header("Their Shoves"),
@@ -905,6 +910,36 @@ int campaignsBloodyShown = -1;
                   "along with you. Breaks Free: its shove pushes you fully, as ever, and tears it from your hands."),
         slider("Shove Resistance", vr_foegrab_shove_resist, 0.f, 1.f, 0.05f, "%.2f")
             .help("Resisted: share of a held enemy's shove taken off, times its hold."),
+        header("Two-Hand Throw"),
+        toggle("Two-Hand Throw", vr_foegrab_throw)
+            .help("Hold one enemy with both hands and turn it over hard, a judo throw: one shoulder down and the other up, "
+                  "or its top pulled towards you or to a side. It is knocked down that way (it falls, lies, gets up), for "
+                  "sure: grunts, enforcers, zombies, knights, rottweilers, mummies and the infected always; death knights, "
+                  "ogres, fiends, spawns, scorpions and ranged knights only when hurt; never shamblers, vores, bosses, "
+                  "flyers or swimmers. One hand never throws. The training dummy shows how it would go."),
+        slider("Turn to Throw", vr_foegrab_throw_twist, 60.f, 600.f, 10.f, "%.0f deg/s").extend(10.f, 2000.f)
+            .help("How fast your hands must turn the enemy over (about a level axis) to throw it. Log Holds (Debug > "
+                  "Tests > Holding Enemies) prints your hardest turn of each hold."),
+        slider("Hands' Speed", vr_foegrab_throw_speed, 0.2f, 3.f, 0.1f, "%.1f m/s").extend(0.f, 10.f)
+            .help("And how fast your hands must move then (their mean): a slow turn never throws."),
+        slider("Hurt Below", vr_foegrab_throw_hurt, 0.05f, 1.f, 0.05f, "%.2f")
+            .help("The bigger enemies (death knights, ogres, fiends...) are thrown only below this share of their full "
+                  "health, and never above it."),
+        toggle("Throw Away From You", vr_foegrab_throw_away)
+            .help("Off: a turn that would throw the enemy straight away from you does nothing (that's a shove's job). On: "
+                  "it throws too."),
+        cycle("Who Can Be Thrown", "vr_foegrab_throw_by_mass", {{0.f, "By Kind"}, {1.f, "By Mass"}})
+            .help("By Kind: the lists in the console's vr_foegrab_throw_always and vr_foegrab_throw_when_hurt (classnames; "
+                  "\"infected\": Dawn of the Machine's infected); any other kind never. By Mass: the two masses below."),
+        slider("Always (Mass)", vr_foegrab_throw_mass_always, 10.f, 1000.f, 10.f, "%.0f kg").extend(0.f, 10000.f)
+            .help("By Mass: enemies this light or lighter are always thrown (a grunt 80 kg, a mummy 140)."),
+        slider("When Hurt (Mass)", vr_foegrab_throw_mass_hurt, 10.f, 2000.f, 10.f, "%.0f kg").extend(0.f, 20000.f)
+            .help("By Mass: enemies this light or lighter, and heavier than Always, only when hurt; heavier never (an "
+                  "ogre or a fiend 250 kg, a shambler 600). Vores and overlords never."),
+        slider("Throw Push", vr_foegrab_throw_push, 0.f, 600.f, 10.f, "%.0f units/s")
+            .help("How hard the thrown enemy is sent along the throw (times Knockdowns' Push)."),
+        slider("Throw Lift", vr_foegrab_throw_lift, 0.f, 400.f, 10.f, "%.0f units/s")
+            .help("And up."),
     };
 }
 
@@ -1609,6 +1644,27 @@ int campaignsBloodyShown = -1;
         slider("Eyes Up", vr_body_eye_up, 0.f, 0.25f, 0.01f, "%.2f m").extend(-0.1f, 0.5f).help("From the top of the neck to the eyes, up."),
         slider("Crouch Tilt", vr_body_crouch_tilt, 0.f, 80.f, 5.f, "%.0f deg").extend()
             .help("How far the back tilts forward in a full crouch (the hips stay under you)."),
+        header("Death View"),
+        cycle("Death View", vr_death_view, {{0.f, "Off"}, {1.f, "Third Person"}, {2.f, "Immersive"}})
+            .help("When you die (not gibbed) your body falls as a ragdoll (also on VR Settings, Comfort). Off: no body. "
+                  "Third Person: your view stays where your eyes were. Immersive: your view goes into your body's head "
+                  "(Third Person while a menu is open)."),
+        toggle("Immersive: Turn With the Body", vr_death_view_turn)
+            .help("Immersive Death View: your view turns sideways as your body's head does, slowly (Turn Speed). Off: "
+                  "only its place follows the head; you turn yourself."),
+        slider("Immersive: Turn Speed", vr_death_view_turn_speed, 10.f, 180.f, 10.f, "%.0f deg/s")
+            .help("The fastest the Immersive Death View turns with your body's head."),
+        slider("Immersive: Smoothing", vr_death_view_smooth, 0.f, 0.5f, 0.05f, "%.2f s")
+            .help("How long the Immersive Death View takes to follow your body's head: more is gentler, less is closer."),
+        slider("Immersive: Fade", vr_death_view_fade, 0.f, 2.f, 0.1f, "%.1f s")
+            .help("The view fades in from black as it goes into your body's head, and as you respawn. 0: no fade."),
+        slider("Immersive: Out for Menus", vr_death_view_menu_time, 0.f, 1.f, 0.05f, "%.2f s")
+            .help("Opening a menu (or the console) while dead in the Immersive Death View moves the view out to Third "
+                  "Person's place over this long, and back into your body's head as it closes (0: at once). The setting "
+                  "stays Immersive."),
+        slider("Your Body: Killing Blow's Push", vr_death_ragdoll_push, 0.f, 3.f, 0.25f, "%.2fx")
+            .help("Your ragdoll body: the blow that killed you throws it this much of what Quake throws the player (0: "
+                  "only the motion you had), at most about 10 m/s."),
     };
 }
 
@@ -2632,14 +2688,37 @@ void hologramTestMessage()
             .help("Moved along the screen's height (negative: further out past its lower edge)."),
         slider("Button Out", vr_gadget_button_z, -6.f, 6.f, 0.25f, "%.2f cm").extend(-20.f, 20.f)
             .help("Moved out of the screen's face (negative: down towards your arm)."),
+        slider("Button Tilt Out", vr_gadget_button_pitch, -90.f, 90.f, 5.f, "%.0f deg")
+            .help("The side the button is pressed from (the faint disc: no press from behind it) tilted out of the "
+                  "screen's face (negative: towards your arm)."),
+        slider("Button Tilt Across", vr_gadget_button_yaw, -90.f, 90.f, 5.f, "%.0f deg")
+            .help("... and along the screen's width (positive: to its right)."),
+        toggle("Drawn Fingertip", vr_gadget_fingertip_drawn)
+            .help("On: the fingertip that presses the button is your drawn hand's index fingertip, as the hand is posed "
+                  "(point with it). Off: Fingertip Reach ahead of your hand's point."),
         slider("Fingertip Reach", vr_gadget_button_reach, -5.f, 15.f, 0.5f, "%.1f cm").extend(-20.f, 30.f)
-            .help("Where your fingertip is taken to be, ahead of your hand's point."),
+            .help("With Drawn Fingertip off (or no jointed hand): where your fingertip is taken to be, ahead of your "
+                  "hand's point."),
+        slider("Fingertip Forward", vr_gadget_fingertip_x, -6.f, 6.f, 0.25f, "%.2f cm").extend(-20.f, 20.f)
+            .help("The fingertip moved along your hand's forward (negative: back). Show the Button shows it: the drawn "
+                  "fingertip white, joined to the one that presses."),
+        slider("Fingertip Outward", vr_gadget_fingertip_y, -6.f, 6.f, 0.25f, "%.2f cm").extend(-20.f, 20.f)
+            .help("... away from your other hand (the right hand's right; negative: towards it)."),
+        slider("Fingertip Up", vr_gadget_fingertip_z, -6.f, 6.f, 0.25f, "%.2f cm").extend(-20.f, 20.f)
+            .help("... and up from the back of your hand (negative: down)."),
+        slider("Fingertip Pitch", vr_gadget_fingertip_pitch, -45.f, 45.f, 1.f, "%.0f deg").extend(-180.f, 180.f)
+            .help("The fingertip turned round your hand's point: down (negative: up), before the moves above."),
+        slider("Fingertip Yaw", vr_gadget_fingertip_yaw, -45.f, 45.f, 1.f, "%.0f deg").extend(-180.f, 180.f)
+            .help("... inward, towards your other hand (negative: outward)."),
+        slider("Fingertip Roll", vr_gadget_fingertip_roll, -45.f, 45.f, 1.f, "%.0f deg").extend(-180.f, 180.f)
+            .help("... rolled about your hand's forward (positive: its top outward)."),
         slider("Button Cooldown", vr_gadget_button_cooldown, 0.f, 2.f, 0.1f, "%.1f s").extend(0.f, 5.f)
             .help("After a press counts, how long before the next one does (no double toggles from a bounce)."),
         cycle("Show the Button", vr_debug_gadget_button, {{0.f, "Off"}, {1.f, "Its Hit Volume"}, {2.f, "And the Screen Tap"}})
             .help("Draws the button's hit volume (green ready, yellow pressed, red cooling down; the faint disc: no "
-                  "press from behind it) and your fingertip; And the Screen Tap: also bullet time's tap zone over the "
-                  "screen. Presses are printed."),
+                  "press from behind it, the short line the side it is pressed from) and your fingertip (the drawn "
+                  "index fingertip white, joined to the tuned one that presses); And the Screen Tap: also bullet time's "
+                  "tap zone over the screen. Presses are printed."),
         slider("CRT Look", vr_gadget_crt, 0.f, 2.f, 0.1f, "%.1fx").extend()
             .help("Scanlines, a slight flicker, faint static and now and then a glitch (0 off)."),
         slider("Screen Glow", vr_screen_glow, 0.f, 3.f, 0.1f, "%.1fx").extend()
@@ -3534,9 +3613,6 @@ void hologramTestMessage()
             .help("A dying grunt, knight, ogre, enforcer, death knight, rottweiler, scrag, fiend, shambler or gremlin goes limp: his body becomes jointed parts that fall, tumble, are pushed, grabbed "
                   "and thrown (vr_ragdoll). Their settings: Ragdoll Settings."),
         open("Ragdoll Settings", pageIndex(pageRagdolls)),
-        slider("Your Body: Killing Blow's Push", vr_death_ragdoll_push, 0.f, 3.f, 0.25f, "%.2fx")
-            .help("Your own ragdoll body when you die (Death View: VR Settings, Comfort): the blow that killed you throws it "
-                  "this much of what Quake throws the player (0: only the motion you had), at most about 10 m/s."),
     };
 }
 
@@ -4341,8 +4417,9 @@ za::Vector<Item> pageDebugViews()
             .help("Draws the animated positional regions through walls and the back of the model. Off: only visible surfaces."),
         cycle("Show Gadget Button", vr_debug_gadget_button, {{0.f, "Off"}, {1.f, "Its Hit Volume"}, {2.f, "And the Screen Tap"}})
             .help("vr_debug_gadget_button: the wrist gadget's side button's hit volume (green ready, yellow pressed, red "
-                  "cooling down) and your fingertip, its presses printed; And the Screen Tap: also bullet time's tap "
-                  "zone over the screen."),
+                  "cooling down) and your fingertip (the drawn index fingertip white, joined to the tuned one that "
+                  "presses), its presses printed; And the Screen Tap: also bullet time's tap zone over the screen. The "
+                  "settings: HUD and Menus > Wrist Gadget."),
         command("Gear Lights Info", "vr_gear_lights_info")
             .help("vr_gear_lights_info: the gear lights' state, the side button's place and your fingertip's distance to "
                   "it, and the stealth AI's light on you now."),
@@ -4905,6 +4982,14 @@ za::Vector<Item> pageDebugReports()
         command("Update Check: Status", "vr_update_status")
             .help("vr_update_status: this game's version, the latest the feed gave (where from, how long ago, cached or "
                   "asked), the feeds, the cache file's age, and the notice shown."),
+        command("OBS: Status", "vr_obs_status")
+            .help("vr_obs_status: OBS's connection (Graphics > Recording > OBS): found or not and why, the address, whether "
+                  "a password is set (never the password), obs-websocket's version, the recording's state and time, and "
+                  "the menus' row as it reads."),
+        cycle("OBS: Process Check", vr_obs_process_check, {{0.f, "Off (Always Connect)"}, {1.f, "On"}, {2.f, "Act as if Running"}})
+            .help("vr_obs_process_check: On (the default): on this PC the game connects only while OBS's process "
+                  "(obs64.exe) runs, and says when its WebSocket server is off. Off: always tries (a mock server's "
+                  "tests). Act as if Running: the hint's test (nothing listening reads as OBS's server off)."),
         command("Update Notice: Fake 9.9.9", "vr_update_test_version 9.9.9")
             .help("vr_update_test_version 9.9.9: the update notice shows as for a newer release, without asking anyone "
                   "(its page: the feed's, else the releases' latest). Update Notice: Real Version undoes it."),
@@ -5787,8 +5872,14 @@ za::Vector<Item> pageDebugTests()
             .help("vr_foegrab_walk_test 110 1: the live monster nearest you walks straight away from you at 110 units/s "
                   "for a second; how far it got is printed. Held, it should hardly move (A Grunt Ahead first)."),
         cycle("Log Holds", "vr_foegrab_debug", {{0.f, "Off"}, {1.f, "Taken and Let Go"}, {2.f, "Every Frame"}})
-            .help("vr_foegrab_debug: the console logs each hold taken and let go and why (and a grip that found none); "
-                  "Every Frame: each held enemy's movement and each hand's stretch."),
+            .help("vr_foegrab_debug: the console logs each hold taken and let go and why (and a grip that found none), "
+                  "each two-hand throw tried and how it went, and each two-hand hold's hardest turn; Every Frame: each "
+                  "held enemy's movement, each hand's stretch, both hands' turn."),
+        command("Hurt the Held to 30%", "vr_foegrab_hurt 0.3")
+            .help("vr_foegrab_hurt 0.3: the enemy you hold (else the one nearest you) is left with 30% of its full health: "
+                  "a death knight, an ogre or a fiend can then be thrown (Combat > Holding Enemies, Hurt Below)."),
+        command("Heal the Held", "vr_foegrab_hurt 1")
+            .help("vr_foegrab_hurt 1: the enemy you hold (else the one nearest you) at its full health again."),
         header("Enemy Shoves"),
         command("Shove the Nearest Monster", "impulse 219")
             .help("impulse 219: the nearest monster within 200 units shoved as your two-handed shove does (knocked away, "
@@ -5900,6 +5991,9 @@ za::Vector<Item> pageDebugTests()
                   "gun's load point: it goes in."),
         command("Report the Lying Guns", "vr_reload_test 23; impulse 125")
             .help("Each gun lying about: its magazine, whether its magazine is in, whether it is open, its load point."),
+        command("The Lying Gun's Magazine Is Solid", "vr_reload_test 27; impulse 125")
+            .help("The nearest gun lying about with a magazine in: how far its body is from a point inside its magazine "
+                  "(0: the magazine is part of it, Solid Magazines; off, the gun's own body further off)."),
         command("The Held Prop's Shape Against Its Box", "vr_reload_test 25; impulse 125")
             .help("The main hand's prop: how far its shape (as held) and its box are from the off hand's gun's magazine "
                   "and the front of its barrels. The magazine's bump and the super shotgun's hits count by its shape."),
@@ -7401,16 +7495,8 @@ za::Vector<Item> pageMain()
             .help("When you die (not gibbed) your body falls as a ragdoll, thrown by the blow that killed you. Off: no "
                   "body, as in Quake. Third Person: your view stays where your eyes were, your body there to look at. "
                   "Immersive: your view goes into your body's head and follows it as it falls (its place smoothed, its "
-                  "turns only sideways, never pitch or roll; the hands hidden). Back to normal when you respawn."),
-        toggle("Immersive Death: Turn With the Body", vr_death_view_turn)
-            .help("Immersive Death View: your view turns sideways as your body's head does, slowly (Turn Speed). Off: "
-                  "only its place follows the head; you turn yourself."),
-        slider("Immersive Death: Turn Speed", vr_death_view_turn_speed, 10.f, 180.f, 10.f, "%.0f deg/s")
-            .help("The fastest the Immersive Death View turns with your body's head."),
-        slider("Immersive Death: Smoothing", vr_death_view_smooth, 0.f, 0.5f, 0.05f, "%.2f s")
-            .help("How long the Immersive Death View takes to follow your body's head: more is gentler, less is closer."),
-        slider("Immersive Death: Fade", vr_death_view_fade, 0.f, 2.f, 0.1f, "%.1f s")
-            .help("The view fades in from black as it goes into your body's head, and as you respawn. 0: no fade."),
+                  "turns only sideways, never pitch or roll; the hands hidden; Third Person while a menu is open). Back "
+                  "to normal when you respawn. Its fine tuning: Advanced VR Options > Body, Death View."),
 
         header("Teleportation"),
         toggle("Teleport", vr_teleport_enabled)
@@ -7621,7 +7707,7 @@ za::Vector<Item> pageAdvanced()
         open("World", pageIndex(pageGameplay)).help("Monsters, the weapons they drop, weapon drops, rumble and heartbeat."),
         open("Gore", pageIndex(pageGore)),
         header("Body and Weapons"),
-        open("Body", pageIndex(pageBody)).help("The body, its arms and pauldrons, body and player calibration."),
+        open("Body", pageIndex(pageBody)).help("The body, its arms and pauldrons, body and player calibration, the Death View."),
         open("Flashlight", pageIndex(pageFlashlight)),
         open("Weapons", pageIndex(pageWeaponsHub))
             .help("Weapon offsets and weights, hand/gun calibration, fingers, aiming, weight, holsters and immersion."),

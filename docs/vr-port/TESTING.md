@@ -273,6 +273,12 @@ prints it.
     screens dim (their cast light and glow nearly gone, the text dimmer); press again to bring them back. Easy to find
     and press, never pressed by a screen tap? HUD and Menus > Screens > Gear Lights: Button Size, Across/Up/Out, Show the
     Button (its hit volume drawn). Headless: `Misc/quakevr/gadget_tap_test.sh <agent>`.
+  - **Gadget fingertip, tap zone, trails in VR, Death View menus** (ROUND21.md, same title): the side button is pressed
+    by your drawn index fingertip now (Show the Button: the dot on your fingertip?); HUD and Menus > Wrist Gadget:
+    Fingertip Forward/Outward/Up/Pitch/Yaw/Roll, Button Tilt. Combat > Bullet Time > Screen Tap: Tap Zone Width/Height/
+    Across/Up/Out (Show Gadget Button: And the Screen Tap). In bullet time, fire the nailgun and the shotguns from the
+    hip and aimed: a wake behind each nail and pellet now, in both eyes? Die with Immersive (now the default) and open
+    the menu: the view glides out to Third Person, back in as it closes (Advanced > Body, Death View).
 
   - **Bullet time and Sandevistan** (ROUND21.md, "Slow motion: bullet time and Sandevistan"): press the inner button
     on your wrist gadget's lower edge with your other hand's fingertip: the world slows for as long as the TIME meter on
@@ -977,9 +983,9 @@ selected row (with the header above it), its scroll and the page Back goes to. W
 and place in the tree. `menu_vr dump` prints every page reached from VR Settings and its rows (MDPAGE/MDROW lines);
 `python Misc/quakevr/menu_coverage.py before.log after.log` compares two dumps (every setting and action still on a
 page, the tree, pages over 30 rows; ROUND21.md, "Menus reorganized"). Page numbers: 13 Grappling Hook, 23 Weapon
-Offsets, 41 Held Object Offsets, 42 Weapon Weights, 43 Held Object Weights, 44 and on the pages added then, 65 Recording. `vr_mock_laser back|search|console|settings|advanced|levels|maps|relighting|checklist|spectator`
+Offsets, 41 Held Object Offsets, 42 Weapon Weights, 43 Held Object Weights, 44 and on the pages added then, 65 Recording. `vr_mock_laser back|search|console|settings|advanced|levels|maps|relighting|checklist|spectator|obs`
 (or `<x> <y>` in menu coordinates; `off`) puts the main hand's laser on a corner button or a spot, whatever the hand's
-pose; then `vr_mock_button main trigger 1` / `0` clicks. `vr_mock_laser kofi` (`vr_mock_mouse kofi click` on a flat screen) points at the version box's Ko-fi link (ROUND21.md, "The menus' Ko-fi link and corner boxes"); with `vr_menu_link_dryrun 1` (and in any hidden kit run) a press prints `menu link: opening <url> (<n>)` instead of opening the browser. `vr_mock_laser update` / `vr_mock_mouse update [click]` point at the update notice above it (shown with `vr_update_test_version 9.9.9`, or a newer feed: `vr_update_url <feed>; vr_update_check_now`; `Misc/quakevr/update_notice_test.py` runs the whole check against a local server). `vr_mock_button off stickclick 1` / `0` gives the corner
+pose; then `vr_mock_button main trigger 1` / `0` clicks. `vr_mock_laser kofi` (`vr_mock_mouse kofi click` on a flat screen) points at the version box's Ko-fi link (ROUND21.md, "The menus' Ko-fi link and corner boxes"); with `vr_menu_link_dryrun 1` (and in any hidden kit run) a press prints `menu link: opening <url> (<n>)` instead of opening the browser. `vr_mock_laser update` / `vr_mock_mouse update [click]` point at the update notice above it (shown with `vr_update_test_version 9.9.9`, or a newer feed: `vr_update_url <feed>; vr_update_check_now`; `Misc/quakevr/update_notice_test.py` runs the whole check against a local server). The OBS row above the spectator switch (`vr_mock_laser obs`): `Misc/quakevr/obs_test.py` runs it against a mock obs-websocket server (`obs_mock_server.py`; ROUND21.md, "OBS's recording from the menus"). `vr_mock_button off stickclick 1` / `0` gives the corner
 buttons the selection, `vr_mock_stick off 0 -1` (then `0 0`) moves down, `vr_mock_button main primary` presses;
 `vr_mock_stick main 0 -1` scrolls a page. Back to Game: `vr_mock_button main menu 1; wait90; vr_mock_button main menu
 0`, reopened by `togglemenu`. Across a restart: `writeconfig <file>` writes `vr_menu_positions`; exec that line at the
@@ -1027,6 +1033,9 @@ stick) does not take you out of the pool's bottom: the player falls through it (
 `vr_swim_debug 1` prints each stroke. Mock hand poses: pitch -20 points the hand down (Gun Angle 70); yaw 90 (main)
 or -90 (off) turns the palm back towards the body. For the air, nothing prints a drowning hit: add a temporary
 `bprint` after `T_Damage` in `WaterMove` for the run (as for ROUND21.md's table).
+Swimming sounds (ROUND21.md, "Swimming strokes sound as water, not as slaps"): `bash
+Misc/quakevr/swim/swim_sound_test.sh <agent>` (strokes heard per hand, no slap or whoosh under water, a punch still
+counts; `developer 2` prints each `VR water sound`).
 Out of the water by hand (ROUND21.md, "Out of the water by hand; ..."): `vr_campaign_native mg3; vr_climb 1; map map1`, `setpos 64
 1000 -160 0 90 0; noclip`, `+jump` (stays at the surface) and `vr_mock_stick off 0 1` for 120 frames: `vr_water_jump 1` lifts you
 onto the lip (z -104), 0 leaves you in the water at y 1080 (but with `vr_climb 0`: Quake's lift). `developer 1` prints

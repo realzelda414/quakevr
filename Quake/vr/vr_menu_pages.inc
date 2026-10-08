@@ -1114,6 +1114,10 @@ void resetHandMoves()
         slider("Collision Leniency", "vr_reload_collide_leniency", 0.f, 60.f, 1.f, "%.0f cm").extend(0.f, 200.f)
             .help("A shell or magazine in your hand is drawn kept off the gun in the other hand (Held Things Collide): it "
                   "may go this far into the gun's box first, to reach the port under the shotgun or a magazine well."),
+        toggle("Solid Magazines", "vr_reload_mag_collide")
+            .help("A magazine seated in a gun is solid as the gun is: the other hand stops at it, empty or holding "
+                  "something, the other gun meets it, and it pushes things about (a gun lying about too). Grabbing it "
+                  "still holds it and pulls it out. Off: they pass through it."),
         toggle("Load Loose Rounds", "vr_reload_contact")
             .help("A shell or magazine lying about, dropped or thrown goes into the gun it touches at its load point, lying "
                   "the right way: drop shells into the shotgun's port or the open super shotgun's barrels, a magazine "
@@ -1194,6 +1198,9 @@ void resetHandMoves()
         cycle("Anti-aliasing", "vid_fsaa", {{0.f, "Off"}, {2.f, "2x"}, {4.f, "4x"}, {8.f, "8x"}}).help("Multisampling: smoother edges, some GPU time."),
         cycle("Smooth Textures", "vr_texture_smooth", {{0.f, "As gl_texturemode"}, {1.f, "Replacements"}, {2.f, "All"}})
             .help("Smooth filtering for high-resolution replacement textures, or for all textures."),
+        cycle("Anisotropic Filtering", "gl_texture_anisotropy", {{1.f, "Off"}, {2.f, "2x"}, {4.f, "4x"}, {8.f, "8x"}, {16.f, "16x"}})
+            .help("Keeps floors and walls seen at a glancing angle sharp instead of blurry (smooth-filtered textures). "
+                  "Little GPU time; 16x is the sharpest. Capped at what the graphics card supports."),
         toggle("Fence Coverage", "vr_alpha_coverage").help("Fences and grates keep their bars at a distance instead of thinning out and crawling; with Anti-aliasing (MSAA) their edges are smoothed too."),
         toggle("Relit Maps", "vr_relit_maps").help("Maps re-lit with shadows, ambient occlusion and colour, if made (Misc/quakevr/relight_maps.py, or Relighting below). Next map."),
         open("Relighting", pageIndex(pageGraphicsRelighting)).help("Relight the map you are in, with brighter or dimmer lamps, glowing panels, lava, bounced light and ambient occlusion, and see it at once."),

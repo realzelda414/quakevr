@@ -3,6 +3,7 @@
 # (both kept in git history). Reload List refreshes this page; no rebuild needed.
 
 [Firing range: reloading]
+Solid magazines (Reloading > All Guns > Solid Magazines): empty hand and a held prop stop at the NG/SNG/LG magazines; two guns crossed at a magazine; a dropped nailgun may rest on its magazine; magazine still gripped two-handed, pulled, ejected (B/Y), knocked out, loaded
 Super shotgun + handles: grab lying guns by the handle without force grab (Hands > Handle Grab Leniency 5 cm; too easy?); with pouch shells in the off hand: hit the shut SSG -> opens, fast hit under the open barrels -> shuts, shells at the chambers load; flick it shut right after loading, even while still bringing it up (Reloading > Flick Rest Speed 180, try 120 if too eager; Hit After Loading 0.13 s)
 Loose rounds slide in too: drop a shell onto a lying shotgun's port / throw one in; toss a pair into a lying open SSG; drop a grenade/rocket into a lying launcher: each slides in, never just vanishes
 Guns lying on a table: a shell dropped on the shotgun receiver goes in (nothing balances on air); load lying guns by hand and by tossing rounds; the lying shotgun's screen shows e.g. 1/8
@@ -15,8 +16,9 @@ Super nailgun: receiver flush on its face; lava nail magazine smokes when empty;
 Held-prop knock-out: hold a head/crate beside the gun and move normally: the magazine must not pop out by accident; a deliberate fast hit does
 
 [Firing range: combat and dummies]
+Ragdoll skins with retro textures on: kill a grunt, ogre, knight: each corpse as detailed as alive (was 4x coarser on every ragdoll)
+Judo throw (Combat > Holding Enemies > Two-Hand Throw): both hands on a grunt, twist left/right or pull towards you: it falls that way; ogre: not at full health, yes after Debug > Tests > Holding Enemies > Hurt the Held to 30%; shambler never; practise on the dummy (shows thrown / not hurt enough; Log Holds prints your hardest twist: set Twist from it); one-hand hold: walk back, the grunt comes along (your cfg keeps drag 20/300 from testing: reset to try the new defaults); grabbing the dummy no longer crashes
 Slaps: forehand and backhand, swish even on a miss; shoves stay shoves
-Holding enemies (Combat > Holding Enemies): grip a dummy/grunt, drag and twist; try both Shove modes (Resist / Break Free)
 Enemy rifles: fire a grunt/enforcer rifle dry: shakes, buzzes, smokes, crackles (also after dropping)
 Wrist gadget: firm straight tap on the screen = bullet time; melee swings/blocks must never fire it; side button toggles gear lights (Debug > Show Gadget Button)
 Bullet time: distortion trails behind shots (strength 1.25 OK?); 5-15 cm nudges go as far as at full speed; wrist flicks land as at full speed; slow lobs matched to the slowdown still full distance
@@ -26,6 +28,10 @@ Death View: Debug > Cheats > Die Now / Die Now Blown Back, in Third Person and I
 Trailer spawns: Debug > Tests > Ahead of You: Facing = Away
 
 [New this week]
+Swimming: open-hand strokes sound like water (no slap/swish), a real punch underwater still lands; your 10-08 evening values are defaults (swimming, death view tuning, reloading, grab slack 0, nailgun foregrip hotspot): pick up lying guns (slack 0 is stricter: if hard, Handle Grab Leniency 10); Lift Hold 0: a jolt up now shuts the open SSG
+Gadget/trails/death: point at the gadget button: the dot is on your index fingertip (HUD and Menus > Wrist Gadget: fingertip/button offsets; Show Gadget Button); screen-tap zone size/offset (Combat > Bullet Time > Screen Tap); bullet-time trails now follow nails and pellets fired from the hip or aimed, same in both eyes; Death View: only the switch in VR Settings (tuning in Advanced > Body), Immersive is default; open the menu while dead in Immersive: smooth glide out to third person and back
+Anisotropic Filtering row (Graphics > Image): Off/2x/4x/8x/16x; floors sharp at glancing angles
+OBS: in OBS Tools > WebSocket Server Settings enable the server (port 4455; password via vr_obs_password or auth off); the menu shows 'OBS: Not recording' above Spectator camera; trigger starts/stops recording (red light + time); Graphics > Recording > OBS
 Teleporters (renamed from slipgates): Graphics > Teleporters labels; hub campaign board + lectern messages; vrtutorial2 arena exit board; `map vrslipgates` still loads vrteleporters; old vr_slipgate_* settings still work
 MG3 ghosts see-through 0.4 (Debug > Tests > Dawn of the Machine > Ghosts' Opacity)
 Teleporters: in the loop, shoot your own back with each gun (Debug > Teleporters > Into the Loop, Lightning Gun; lightning reaches only from close); nails/rockets now come out of gates; push a crate into the flush gate and jiggle in and out fast: never stuck in the wall (Debug > Teleporters > Stuck in a Teleporter's Wall?)

@@ -31885,6 +31885,84 @@ Debug > Tests > Holding Enemies: Who Is Held? (`vr_foegrab_status`, the drawn ha
 Holds (`vr_foegrab_debug` 1 holds taken and let go and why, a grip that found none and how near; 2 each frame; 3 the
 steps). Saved games keep no holds (the fields cleared on load).
 
+**The training dummy** (vrfiringrange_2026-10-08_22-28-01, "null function" on grabbing it): taking hold spotted
+the held enemy (`VR_Stealth_Spot` -> FoundTarget -> HuntTarget), which set the dummy's think to its `th_run`, which it
+has none of: the next think ran a null function. The touch's wake now skips the dummy and anything without a
+`th_run`. The dummy is held like any enemy, the hand on its model as `vr_dummy_type` has it (an ogre's: hold 0.25), and
+is never moved by the hold (it stands on its spot: `vr_dummy_think` put it back each 0.05 s, a jitter). A new type
+chosen while held is a new entity: the hand lets go. Tested: a grunt dummy and an ogre dummy held, no error.
+
+**The hold moves them now** (vrfiringrange_2026-10-08_22-31-08: "barely moving them even at the highest settings").
+The pull was only a spring from the spot to the hand: walking back holding a grunt, the hand got ahead of it faster than
+the spring brought it, and past `vr_foegrab_break` (his 20 cm) the hand let go after a quarter of a second. A held enemy
+now also follows its hands' own move since the last frame (flat; a pull, the player walking off with it) by
+`vr_foegrab_follow` (1, Combat > Holding Enemies > Follow the Hand) times its hold, at most 480 units/s; the spring
+takes up the rest (`vr_foegrab_drag` 4 -> 10/s, `_drag_speed` 60 -> 200 units/s). A shove's slide's carry is now
+the part the follow leaves (1 - follow). Headless, `vrfiringrange`, held by the main hand, walking back 0.5 s
+(`vr_mock_stick off 0 -1`):
+
+| case | the enemy moved | the hold |
+| --- | --- | --- |
+| grunt, before (defaults) | 4.5 units | let go after 0.60 s (75 cm) |
+| grunt, before (his: drag 20, speed 300, break 20) | 17 units | let go after 0.22 s (42 cm) |
+| grunt, now (either) | 208 units, with the player | held (stretch 0.3 cm) |
+| ogre (hold 0.25), now | 14 units | let go after 0.32 s |
+
+**The two-hand throw** (vrfiringrange_2026-10-08_22-31-08: "a judo throw"; `vr_foegrab_throw 1`, Combat > Holding
+Enemies > Two-Hand Throw). Both hands holding one enemy, turned over hard, knock it down that way: the shove's
+knockdown (`VR_Knockdown_Start`: it falls as a ragdoll, lies, gets up), for sure, never by chance; both hands let go
+(a thump in each). One hand never throws (it holds: slows and pulls). Engine `throwCheck` (vr_foegrab.cpp), QC
+`QC/vr_foegrab_throw.qc`.
+
+- **The turn** (the hands' own velocities, not the player's walk; metres, m/s): two parts added. The hands turning it
+  between them as a wheel, (d x dv) / |d|^2 (d from the off palm to the main one, dv their velocities' difference: one
+  shoulder pushed down, the other pulled up), and both together toppling it about its box's middle, (r x v) / |r|^2 (r
+  to the palms' middle, v their mean velocity: its top pulled towards you or pushed to a side); each length at least
+  10 cm. Its level part only (a twist about the vertical tips nothing over), in degrees/s: at `vr_foegrab_throw_twist`
+  (150) or more, with the hands' mean speed at `vr_foegrab_throw_speed` (1 m/s) or more, after both hands have held
+  0.15 s, it throws. Its direction: the turn's axis x up (where its top goes). Straight away from you (within 45
+  degrees) is a shove's and does nothing, unless `vr_foegrab_throw_away 1`. A turn that didn't throw waits 0.5 s.
+- **Who** (his tiers): `vr_foegrab_throw_always` (grunt, enforcer, zombie, knight, rottweiler, mummy, and the word
+  `infected`: Dawn of the Machine's infected, `.vr_mg3_infected`); `vr_foegrab_throw_when_hurt` (death knight, the
+  ogres: `monster_ogre`, `_marksman`, `_rocket`; fiend, spawn, slime, scorpion, ranged knight): only below
+  `vr_foegrab_throw_hurt` (0.4) of its full health, never above; any other kind never (shambler, vore, bosses...),
+  nor anything flying or swimming. The lists are classnames (console). Or by mass (`vr_foegrab_throw_by_mass 1`:
+  always up to `_mass_always` 140 kg, when hurt up to `_mass_hurt` 300, never heavier; vores and overlords never).
+  Thrown along the turn at `vr_foegrab_throw_push` (220 units/s, times `vr_knockdown_push`) and `_lift` (100) up. A
+  kind with no knockdown set up (its get-up: `.vr_kd_chance_h`), no ragdoll or no room can't be thrown now (a short
+  low buzz in both hands, as for one too strong).
+- **The training dummy** is never knocked down (it stands): over its head "thrown", "hurt it below 40%" or "never
+  thrown", by the kind it stands as (`vr_dummy_type`) and its health bar, and the console prints the turn and speed of
+  every try, for practising the motion.
+- **Tuning:** `vr_foegrab_debug 1` (Debug > Tests > Holding Enemies > Log Holds) prints each try and, when both hands'
+  hold ends, its hardest turn and the hands' speed then; 2 every frame's turn with each palm and velocity. `Who Is
+  Held?` shows the hardest turn so far. `vr_foegrab_hurt <share>` (Hurt the Held to 30%, Heal the Held) sets the held
+  (else the nearest) enemy's health.
+
+Tests (headless, `vrfiringrange`, the monster spawned 44-60 units ahead facing you, `notarget`, both hands gripping
+its chest, then a `vr_mock_play` of the hands' move: 30 cm in 0.15 s, 2 m/s; `scratch/throwtest.py` in the agent's
+worktree):
+
+| case | turn, hands' speed | result |
+| --- | --- | --- |
+| grunt, main hand up and off hand down | 505 deg/s, 2 m/s | thrown to your left (ended 87 units left), both hands let go |
+| grunt, the other way | 511 deg/s | thrown to your right |
+| grunt, both pulled back towards you (and a little down) | 188 deg/s, 2.1 m/s | thrown towards you |
+| grunt, both pushed straight ahead | 171 deg/s | no throw (away from you: a shove's) |
+| grunt, the left twist over 1 s (0.3 m/s) | 77 deg/s at its hardest | no throw |
+| grunt, the left twist with one hand holding | | no throw, held |
+| grunt, `vr_foegrab_throw 0` | | no throw, held |
+| grunt, by mass | 504 deg/s | thrown |
+| knight, left / right | 511 / 505 deg/s | thrown (to the right: ended 27 units right) |
+| ogre at full health (by kind; by mass) | 505 / 511 deg/s | not hurt enough, held |
+| ogre at 30% (`vr_foegrab_hurt 0.3`) | 511 deg/s | thrown to your left |
+| shambler at 10% (hands on its arms; leniency 50 cm to reach) | 200 deg/s | never thrown (its kind) |
+| training dummy as a grunt | 841 deg/s | "thrown" shown, hands let go, it stands |
+| training dummy as an ogre (full health) | 842 deg/s | not hurt enough |
+
+Seen: the knight thrown to the left ended 26 units towards the player and 7 to the right, lying (its ragdoll; the
+grunt's went 87 units left): worth a look in VR whether a knight falls the way it is thrown.
+
 Seen while testing (not changed): a monster spawned by `vr_physics_spawn` (or `impulse 244`) stands 15-16 units lower
 than the floor its first step (SV_movestep) puts it on, in e1m1 and vrfiringrange alike.
 
@@ -32263,3 +32341,180 @@ reload" printed, the gun stayed open): the bit is now held 0.12 s, as the pry's 
 time (Hit After Loading). vr_reload_debug 2 prints the flick's speed and how far the barrel is towards the up at rest.
 reload_test.sh: loaded with the gun hand turning 150 deg/s and flicked 0.15 s later, shut; a hit from below straight
 after the load shuts it (with 0.6 it doesn't).
+
+## OBS's recording from the menus (2026-10-08)
+
+His request: when OBS is open, a row in the headset's menus above the spectator camera's switch that says whether
+OBS is recording and starts or stops it. `Quake/vr/vr_obs.cpp` is a small obs-websocket v5 client (OBS 28+ ships the
+server: Tools > WebSocket Server Settings > Enable WebSocket server, port 4455): TCP (winsock), the WebSocket handshake
+and framing, JSON (json.c), the v5 authentication (base64(sha256(base64(sha256(password + salt)) + challenge)),
+`vr_sha256`). It runs on a thread of its own (a loop that blocks on its socket); the main thread only copies the cvars
+over and the state back under a lock (no allocation a frame).
+
+- When: the thread starts the first time a menu opens with `vr_obs 1`, and asks at once, then every 5 s while a menu is
+  open. On Windows it first looks for OBS's process (obs64.exe, obs32.exe, obs.exe; Toolhelp): none, nothing is tried.
+  A connection stays open while OBS keeps it. A refused password is not tried again on its own (OBS logs each one): a
+  new `vr_obs_password`, a press on the row, `vr_obs_connect` or a menu opened again tries once more. The kit's test
+  runs never reach for OBS on their own (`vr_obs_connect` opts in).
+- The row (`vr_menuui.cpp` `obsBannerLayout`, `obsBannerAt`; drawn as the switch, right edge with it, a light red while
+  recording, dimmed while paused): `OBS: Not recording`, `OBS: Recording 00:12:34` (short: `OBS: REC 00:12:34`),
+  `OBS: Paused ...`, `OBS: Starting...`/`Stopping...`; hints `OBS found: enable its WebSocket server` (OBS's process
+  runs, nothing listens), `OBS: password needed`, `OBS: wrong password` (closed with 4009). Hidden when OBS is not
+  found, `vr_obs 0`, or before the first GetRecordStatus answers. A press: ToggleRecord (a hint's row: ask again
+  now); a second press within 1.5 s does nothing (as the menus' links). The time is OBS's outputDuration, run on
+  locally between GetRecordStatus every 2 s while a menu is open; RecordStateChanged events (Outputs subscription)
+  follow starts and stops. The spectator preview sits above both rows.
+- Cvars: `vr_obs` 1, `vr_obs_host` 127.0.0.1, `vr_obs_port` 4455, `vr_obs_password` "" (all archived: the password is
+  kept in the config in plain text, never printed), `vr_obs_process_check` 1 (0 always try; 2 test aid: act as if OBS
+  ran). Commands: `vr_obs_status`, `vr_obs_toggle` (bindable), `vr_obs_connect`. Graphics > Recording > OBS (the
+  switch with the how-to, the status line, Start or Stop Recording, Connect to OBS Now); Debug > Tools: OBS: Status,
+  OBS: Process Check. `vr_mock_laser obs` points at the row.
+
+Tested: `Misc/quakevr/obs_test.py <agent>` against `Misc/quakevr/obs_mock_server.py` (Hello/Identify with and without
+a password, GetRecordStatus, ToggleRecord, RecordStateChanged; standard library only), 15/15: hidden with nothing
+listening; the hint with the process check faked; Not recording, two presses within 1.5 s one toggle, Recording
+00:00:04, pressed again Not recording, the mock quitting hides it; password needed, wrong password (one 4009, not
+retried in 6 s), the right one identified; the password never in the output. Frames (`--exclusive`, vr_bench 450
+frames each): period p99 4.21 ms off, 4.05 trying a port nothing listens on, 4.03 connected and recording; the main
+thread's worst CPU work 0.47 / 0.30 / 0.29 ms. `obs_test.py --shot`: the eyes with the row (vr_eyeshot 3).
+In VR (his part): OBS's WebSocket server on, the row's text and its press, a recording started and stopped.
+## Gadget fingertip, tap zone, trails in VR, Death View menus (2026-10-08)
+
+Vittorio's notes vrfiringrange_2026-10-08_22-35-47 .. 22-44-48.
+
+- **The side button's fingertip** (vr_gearlights.cpp): it was the hand's tracked point plus `vr_gadget_button_reach`
+  (4 cm) forward, far off the drawn index finger (his screenshot). Now the jointed hand's index fingertip as drawn
+  (`view::drawnIndexTip`: `grasp::fingerPoints`' tip through the rig's placement and the palm's fit, noted at the end of
+  `setupRigHand` in the hand's tracked frame, used the next frame), `vr_gadget_fingertip_drawn` 1 (0, or no jointed
+  hand: the old reach). Tuning: `vr_gadget_fingertip_x/y/z` (cm forward, outward, up; outward mirrored on the off
+  hand), `_pitch/_yaw/_roll` (turned round the hand's point first); the button's face tilt `vr_gadget_button_pitch`
+  (out of the screen) and `_yaw` (along its width): the cut plane and the press side turn with it. Show the Button draws
+  the drawn fingertip (white) joined to the tuned one, and a short line the way the face points. HUD and Menus > Wrist
+  Gadget. Mock (open hand): the fingertip 5.0 cm forward, 1.9 right, 3.6 below the hand's point (the reach: 4, 0, 0).
+- **The screen tap's zone** (vr_bullettime.cpp `tapZone`): the screen moved (`vr_bullettime_tap_x/y/z`, cm) and sized
+  (`vr_bullettime_tap_width/_height`, shares of the screen's, 1), the margin and depth as before; Show Gadget Button:
+  And the Screen Tap draws it and the striking points (blue). `vr_gear_lights_info` prints the zone. A tap 3 cm right
+  of the middle counts with the shipped zone, not with a tenth of it; gadget_tap_test.sh unchanged. The Screen Tap rows
+  are together again (Distortion Trails had been put among them).
+- **Distortion trails in VR**: the end-on fade (sine of the angle the trail is seen at, 0.1 .. 0.35) faded your own
+  shots: in VR they leave the gun a hand's width or two off the eyes and run away from them, so past about 2.5 m the
+  sine is under 0.1, and the near-eye fade (to 40 units) took the rest: a faint hint by the muzzle, nothing behind the
+  pellets. The headless checks fired across the view. Now a trail fades only where its line runs through the eye
+  (within half of its half width: its facing is undefined there) and near the eye within 32 units. Reproduced with the
+  mock hand at the hip firing the nailgun and the shotgun in bullet time, paused (`vr_bullettime_trails_list` now prints
+  the places strong enough to see): nail 3 of 13 -> 12 of 14 (strongest 0.48 -> 0.90), pellets 27 of 80 -> 58 of 72;
+  per eye (vr_eyeshot) trails on vs bend 0: nail 0.44% / 0.31% of the pixels, pellets 0.92% / 0.84%. Test shots across
+  the view unchanged (12 of 18).
+- **Death View**: VR Settings keeps only the switch; Turn With the Body, Turn Speed, Smoothing, Fade, the new Out for
+  Menus and Your Body: Killing Blow's Push are on Advanced > Body, Death View. Immersive is the default (config version
+  106: a config still at 1 takes 2). A menu or the console open while dead in Immersive moves the view out to Third
+  Person's place over `vr_death_view_menu_time` (0.3 s, smoothstep), its turn eased out too; past half way the hands,
+  the gear and the body's head are drawn again; back in as it closes. Mock: inhead 1 -> 0.86 -> 0.30 -> 0 (camera 71
+  units from the head's eyes), closed 0.12 -> 0.65 -> 1 (1 unit).
+
+## Swimming strokes sound as water, not as slaps (2026-10-08)
+
+His note (vrfiringrange_2026-10-08_22-26-37): swimming with the hands played the slap's sound and the swing's swish;
+he wanted a stroke to sound like water moved by the hands, the slaps silent under water, a real punch kept.
+
+- **No slaps under water** (QC vr_melee.qc `VR_Melee_HandUnderwater`: the grip in water, slime or lava):
+  `VR_Melee_Slaps` is false there, so an open hand under water neither slaps nor whooshes, and (as a slap's whoosh
+  did) no longer wakes monsters (`show_hostile`). A closed fist's punch still lands, with its sound and its wake.
+- **No whoosh under water**: `VR_Melee_Whoosh` plays nothing for a hand under water (a punch, a weapon: no air to
+  swish); the swing still counts (the motion event, `show_hostile`). `developer` prints `melee sound: none (...)`.
+- **Each hand's stroke heard** (vr_physics.cpp `strokeFeedback`): once a stroke past its power gate (as before), but
+  now as the hand passes its fastest (below 92% of its peak, or as the stroke ends), each hand on its own (0.25 s
+  apart; before, one sound for both hands, 0.3 s), as loud as the stroke was fast. Near the surface (within 10
+  units), the recorded strokes and a splash, as before; deeper, new synthesised sounds of water swept aside
+  (make_sounds.py `swim_stroke`: muffled churning noise and a few bubbles): `vr/swim_soft1..3` below 2.2 m/s,
+  `vr/swim_hard1..3` above. Volume: `vr_water_sounds`.
+- **Stealth**: swim strokes make no stealth noise (decision: quiet strokes, a swim past monsters stays possible; a
+  slap's or punch's whoosh woke them, an open hand under water now doesn't).
+- Water entry splashes of a hand slapping the surface stay (vrfiringrange's pool: the hands going in and out).
+
+Test: `Misc/quakevr/swim/swim_sound_test.sh <agent>` (10 checks: a dry slap whooshes and wakes; the strokes heard
+once each (14 with the defaults below), no whoosh, no wake; an open hand swept under water silent, no wake, its stroke heard (swim_hard, 0.9); a
+punch under water counts, without whoosh).
+
+## The author's settings of the evening of 2026-10-08 are the defaults
+
+His note (vrfiringrange_2026-10-08_22-20-23): "As usual I've been tweaking lots of values, please make them the new
+defaults". His config of 23:12 against a `resetall; writeconfig` dump (with vr_defaults.cfg's values over it); a value
+not in the list of the morning's promotion (above, "Out of the water by hand; ...") is one he changed since.
+Config version 107 (`vr_cvars.cpp` defaultChanges: a config still holding the old default takes the new one):
+
+- Swimming: `vr_air_supply` 2.5 (was 2), `vr_swim_flat_exp` 1.5 (1), `vr_swim_glide` 0.7 (0.6, vr_defaults.cfg),
+  `vr_swim_max_speed` 400 (500, vr_defaults.cfg), `vr_swim_stroke` 10 (12, vr_defaults.cfg), `vr_swim_stroke_min` 1
+  (0.4), `vr_swim_stroke_pitch` -10 (-8), `vr_water_jump` 0 (1: out of the water by the hands, with climbing on).
+- The immersive death view's tuning: `vr_death_view_fade` 0.2 (0.5), `_smooth` 0.25 (0.15), `_turn` 0 (1),
+  `_turn_speed` 30 (60); the mode itself Immersive since config 106 (the Death View menus' change, above).
+- Reloading: `vr_autopump_delay` 0.25 (0.15), `vr_reload_front_angle` 45 (35), `vr_reload_port_gl_radius` 2.1 (2),
+  `_prox_radius` 2.1 (2), `_rl_radius` 2.5 (2), `vr_reload_ssg_hit_close_angle` 35 (40), `_hit_close_speed` 2.5 (3),
+  `vr_reload_ssg_lift_hold` 0 (0.2: a jolt up now shuts it too), `_lift_speed` 250 (300).
+- `vr_weapon_grab_slack` 0 (5: he found it took weapons with the hand off them). A weapon lying on the floor is now
+  taken off its handle only by the fist on it, and at its handle within `vr_weapon_grab_handle_leniency` (5 cm) alone;
+  the headless shotgun-handle take saw gaps of 2.6-7.7 cm, so a lying gun may need a second try: Handle Grab Leniency
+  10 would give the handle back its 10 cm. weapon_catch_test.sh sets the slack to 5 where it tests the slack.
+- Weapon settings version 39: the nailgun's foregrip (slot 3, `vr_wofs_hs1_*_04`) at 4.95 -2.13 -3.56 (3.35 -2.01
+  -4.13), turned -10.19 / -6.64 / 6.34 (0 0 0), each key where the config still holds the old default.
+
+Left as they are: the foe grab's (`vr_foegrab_break` 20, `_drag` 20, `_drag_speed` 300, `_leniency` 1: settings
+turned up while testing it broken; its own new defaults came with its fix), `vr_forcegrab_mode` 0 (the force grab off: a feature switch, not a tuning), `vr_teleport_enabled` 1 and
+`cl_alwaysrun` 0 (the Comfortable comfort preset's), `vr_timescale_wav` 1 (Log Highlights' second recording),
+`vr_bullettime_tap_speed` 1 (the default before 15:50, when it became 1.2: his config kept the old value, not a new
+tweak), the nailgun's third hotspot (slot 3 `hs3_*`: placed, but its type is none), `gl_texture_anisotropy` 16,
+`vr_spectator_scale` 1.5, the props slots given ids (33, 57-64), and the morning's list (bookkeeping, body, motion
+recorder, menus, desktop window, `vr_foveated`, `vr_comfort_vignette_strength` 0.4995, slider noise).
+Tests: the kit's baseline config (34) and his config with these at their old defaults (105/38) both come out at the
+new values after a map loads (config 107, weapons 39), a value of his own (`vr_swim_stroke` 15) kept;
+weapon_catch_test.sh 6/6; swim_sound_test.sh 10/10; reload_test.sh 100/100 (its jolt check sets Lift Hold 0.2).
+
+## Seated magazines are solid (2026-10-09)
+
+The author's note vrfiringrange_2026-10-08_22-25-59: a prop held in the other hand, and the empty other hand, passed
+through a magazine seated in a gun. A seated magazine (the nailguns', the thunderbolt's cell; drawn as its own model,
+vr_mag_on_<gun>.mdl, in the gun's model space) is now solid with its gun in every system the gun is
+(**vr_reload_mag_collide** 1; Weapons > Reloading, All Guns: "Solid Magazines"; 0 as before):
+- **Box3D** (the props it pushes, both held and lying): its own hull (its model's vertices through the gun's drawn
+  transform: held::magazineVertices / drawnMagazineVertices; 32 vertices at most), one more shape on the held gun's reach
+  body (ReachKey::mag: the body made again when it comes out or goes in; the swept swing sweeps it too) and on a lying
+  gun's prop body (Slot::mag: made again when a magazine is pulled or seated; the gun weighs as before). Kept a world
+  (propHulls, by model and box). Not for a carried gun or the map's spinning pickups (fixtures).
+- **The empty other hand** (vr_hand_collide, vr_view.cpp pushAgainst): the magazine's triangles as a part of the gun: each
+  of the hand's points held out of whichever it is in (or nearer); vr_debug_hand_collide prints "mag real / drawn".
+- **A prop in the other hand** (vr_held.cpp meetFrame): the magazine's box (view::DrawnWeapon::magBox, as drawn in the
+  hand) besides the gun's; the deeper wins. The round leniency (Collision Leniency) is for the gun's box only (the well
+  is taken). vr_debug_carry prints "(a weapon's magazine)". Most of the nailguns' magazines lay inside the gun's own box
+  already; what sticks out of it (below the nailgun's) was passed through.
+- **The other weapon** (vr_selfcollide.cpp): the magazine's capsules fitted as the weapon's, with the weapon's.
+- Unchanged: the grip on it (an empty hand on it is not free: not pushed), the pull and B/Y, the knock-out (the server's
+  tracked hands), contact loading (an empty well has no magazine).
+- Not done: a held gun pushed into a monster or a thing lying about (vr_modelcollide.cpp) tests the gun's own vertices,
+  not its magazine.
+
+Tests: `magcollide_test.sh` (new, 11 checks, each against the setting off): the palm 1 unit into the nailgun's magazine's
+side is drawn 0.65 units off it, pushed back 3.2 (off: in it, not pushed); a held grenade 0.5 of the magazine's length
+under it meets it (off: nothing); the held nailgun's body "12 convex pieces and its magazine"; the nailgun, super
+nailgun and thunderbolt lying: a point in the magazine 0 units from the body (off 1.69, 1.80, 1.76); the hand gripping
+each magazine holds it, drawn 0.002 units off its tracked place. Debug > Tests > Reloading "The Lying Gun's Magazine Is
+Solid" (vr_reload_test 27); vr_mock_hand_to magpalm / magheld. Box3D step, six guns in a heap swept by the held nailgun
+(exclusive): 0.050 ms a frame (worst 0.49) against 0.048 (0.32) off. contact_test 22/22, gunshape_test 22/22,
+reload_test 100/100.
+**For VR:** the empty hand and a held prop against a seated magazine (all three guns), the two guns crossed at the
+magazine, a nailgun lying on the floor (it may now lie on its magazine or tip over it), the magazine still gripped,
+pulled out, knocked out and loaded.
+
+## Ragdolls' skins as sharp as the living monster's (2026-10-09)
+
+His note: a grunt's ragdoll looks much more pixelated than the living grunt. Cause: retro textures (vr_retro 1, his
+setting). A block's size is the skin's in Quake texels (vr_retro.cpp skinSize): a .mdl's own size, but a quarter of the
+texture's for any skeletal (IQM) or MD3 model (painted at four times a Quake skin's density). A ragdoll's skinned copy
+("<model>#rag", vr_ragdoll.cpp VR_SyntheticModel) is skeletal with the .mdl's own 8-bit skin, so its blocks were four
+Quake texels wide: vr_retro_list showed `soldier.mdl skin 256x256` alive and `soldier.mdl#rag skin 64x64`. Every
+ragdoll had it (ogre, knight, dog, enforcer: the same quarter), not the grunt alone; retro lighting's model grid
+(VR_RetroLightSkinScale) took the same quarter. Now modelmeta::quakeSkin (a .mdl, or a model with the Ragdoll trait)
+keeps the .mdl's size for both: the ragdolls list 256x256 (grunt, knight, dog), 512x256 (ogre), 576x384 (enforcer), as
+alive. Eyeshots (vrfiringrange, the grunt from 1.6 m): the body's Laplacian sd 20.3 before, 24.1 after, 25.4 alive.
+Textures, samplers and texture coordinates were already the .mdl's (the same gltexture_t).
+Tests: `ragdoll_test.sh <agent> retro` (new case: the living grunt's and his ragdoll's skin sizes, equal).
+**For VR:** with retro textures on, kill a grunt, an ogre and a knight: the corpse's skin as detailed as alive.
