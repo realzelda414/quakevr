@@ -66,6 +66,10 @@ float() VR_EnemyShove_Check =
     {
         return FALSE;
     }
+    if(self.enemy == world && VR_Stealth_MeterOn())
+    {
+        return FALSE; // (the stealth AI: an idle monster hasn't noticed you, however near; touching it gives you away)
+    }
     if(!cvar_hget(cvarh_vr_enemy_shove))
     {
         self.vr_eshove_near = 0;
@@ -212,6 +216,23 @@ void() VR_EnemyShove_Hit =
     if(parried)
     {
         dist = dist * (1 - min(1, max(0, cvar_hget(cvarh_vr_enemy_shove_parry_reduction))));
+    }
+    // Held by your hands (vr_foegrab.qc): the shove resisted by the hold (it drags the held one along with you), or, with
+    // vr_foegrab_shove 1, a full push that breaks the hold.
+    if(self.vr_foegrab_hold > 0)
+    {
+        if(cvar_hget(cvarh_vr_foegrab_shove) == 1)
+        {
+            self.vr_foegrab_letgo = 1;
+            dprint(sprintf("enemy shove: %s breaks free of the hold (%.2f)\n", self.classname, self.vr_foegrab_hold));
+        }
+        else
+        {
+            float resisted = min(1, max(0, cvar_hget(cvarh_vr_foegrab_shove_resist))) * min(1, self.vr_foegrab_hold);
+            dprint(sprintf("enemy shove: %s is held (%.2f): its push cut by %.0f percent\n", self.classname,
+                self.vr_foegrab_hold, resisted * 100));
+            dist = dist * (1 - resisted);
+        }
     }
     sound(self, CHAN_WEAPON, "vr/shove.wav", parried ? 0.5 : 1, ATTN_NORM);
     VR_EnemyShove_Push(p, to, dist);

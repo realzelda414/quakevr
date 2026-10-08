@@ -376,13 +376,14 @@ Campaign campaigns[] = {
     {"rogue", "Dissolution of Eternity", "start", 2, true, nullptr, 0, 0, {}},
     {"dopa", "Dimension of the Past", "e5start", 3, true, dopaResources, countof(dopaResources), 0, {}},
     {"mg1", "Dimension of the Machine", "start", 4, true, mg1Resources, countof(mg1Resources), 0, {}},
-    {"mg3", "Dawn of the Machine", "start", 5, false, mg3Resources, countof(mg3Resources), 0, {}},
+    {"mg3", "Dawn of the Machine", "start", 5, true, mg3Resources, countof(mg3Resources), 0, {}},
 };
 int activeCampaign = 0;
 bool discoveredCampaigns = false;
 bool developerNative = false;
 bool rebuildingCampaign = false;
 bool nativeCampaignPaths = false;
+double hubSelectTime = -10.0; // (realtime) when a hub's slipgate last ran the selector (VR_CanChangeCampaignMap)
 
 int campaignIndex(const char* name)
 {
@@ -535,12 +536,13 @@ bool campaignMultiplayerRequested()
     return Cvar_VariableValue("coop") || Cvar_VariableValue("deathmatch") || svs.maxclients > 1;
 }
 
-// The ready native campaigns accepted for single player only: Dimension of the Past and Dimension of the Machine
-// (its Horde coop passed two-process tests, not yet a session with two headsets). Their multiplayer stays on the
-// developer path (vr_campaign_native).
+// The ready native campaigns accepted for single player only: Dimension of the Past, Dimension of the Machine
+// (its Horde coop passed two-process tests, not yet a session with two headsets) and Dawn of the Machine (MG3_PLAN.md
+// decision 6: single player first; its co-op and dm1 later). Their multiplayer stays on the developer path
+// (vr_campaign_native).
 [[nodiscard]] bool soloOnly(int index)
 {
-    return index == 3 || index == 4;
+    return index == 3 || index == 4 || index == 5;
 }
 
 int missingLanguage(int index, const char** first = nullptr)
@@ -1122,7 +1124,7 @@ int campaignForMap(const char* map, int current)
 extern "C" int VR_IsVrMap(const char* map)
 {
     return !strcmp(map, "vrstart") || !strcmp(map, "vrstart_old") || !strcmp(map, "vrstart2") || !strcmp(map, "vrtutorial") ||
-           !strcmp(map, "vrfiringrange");
+           !strcmp(map, "vrtutorial2") || !strcmp(map, "vrfiringrange");
 }
 
 // The hub: vrstart, or vrstart_old when vr_hub_map names it (vrstart2, the island's old name, is vrstart).
@@ -1149,7 +1151,9 @@ extern "C" int VR_CanLoadCampaignMap(const char* map)
         const int legacy = static_cast<int>(qvr::vr_activestartpaknameidx.value);
         if(legacy < 0 || legacy >= int(countof(campaigns)))
         { Con_Printf("VR: invalid campaign index %d; choose a campaign first.\n", legacy); return 0; }
-        requested = legacy;
+        // (3 and over: the hub's choice of a campaign with a game folder of its own, which only its slipgate starts:
+        // VR_CanChangeCampaignMap; "start" is then the running campaign's)
+        requested = legacy <= 2 ? legacy : activeCampaign;
     }
     if(campaigns[requested].status != 1 || requested != activeCampaign ||
         (requested >= 3 && !developerNative && (!campaigns[requested].nativeReady || missingLanguage(requested) || (soloOnly(requested) && campaignMultiplayerRequested()))))
@@ -1262,7 +1266,27 @@ extern "C" int VR_CanChangeCampaignMap(const char* map)
     { Cbuf_InsertText(va("vr_campaign_hub %s\n", map)); return 0; }
     int requested = activeCampaign;
     if(!strcmp(map, "start") && activeCampaign <= 2)
-    { requested = static_cast<int>(qvr::vr_activestartpaknameidx.value); }
+    {
+        requested = static_cast<int>(qvr::vr_activestartpaknameidx.value);
+        // The hub's choice of a campaign with a game folder of its own (vrstart's lecterns 3, 4 and 5: Dimension of
+        // the Past, Dimension of the Machine, Dawn of the Machine): its slipgate runs the selector, which rebuilds the
+        // folders and starts the campaign's first map (a changelevel can't). From any other map such a choice is stale:
+        // "start" stays the running campaign's.
+        if(requested >= 3 && requested < int(countof(campaigns)))
+        {
+            if(VR_IsVrMap(sv.name))
+            {
+                // (once in 2 s: a campaign that can't start says why, not every frame its slipgate is touched)
+                if(realtime - hubSelectTime > 2.0)
+                {
+                    hubSelectTime = realtime;
+                    Cbuf_InsertText(va("vr_campaign_select %s\n", campaigns[requested].folder));
+                }
+                return 0;
+            }
+            requested = activeCampaign;
+        }
+    }
     else { requested = campaignForMap(map, activeCampaign); }
     if(requested < 0 || requested >= int(countof(campaigns)) || campaigns[requested].status != 1)
     { Con_Printf("VR: campaign unavailable; choose an installed campaign in Official Campaigns.\n"); return 0; }

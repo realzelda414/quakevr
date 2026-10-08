@@ -5,6 +5,7 @@
 #include "vr_audio.hpp"
 #include "vr_bullettime.hpp"
 #include "vr_bench.hpp"
+#include "vr_edictindex.hpp"
 #include "vr_hitmodel.hpp"
 #include "vr_box3d.hpp"
 #include "vr_hull.hpp"
@@ -14,6 +15,7 @@
 #include "vr_modelkeep.hpp"
 #include "vr_imgprefetch.hpp"
 #include "vr_anchor.hpp"
+#include "vr_cellcord.hpp"
 #include "vr_chainsaw.hpp"
 #include "vr_decals.hpp"
 #include "vr_gore.hpp"
@@ -30,9 +32,11 @@
 #include "vr_lines.hpp"
 #include "vr_limits.hpp"
 #include "vr_mapindex.hpp"
+#include "vr_update.hpp"
 #include "vr_mapinstall.hpp"
 #include "vr_relight.hpp"
 #include "vr_relight_tool.hpp"
+#include "vr_stealth.hpp"
 #include "vr_text3d.hpp"
 #include "vr_tips.hpp"
 #include "vr_timescale.hpp"
@@ -65,6 +69,7 @@
 #include "vr_detail.hpp"
 #include "vr_extmaps.hpp"
 #include "vr_flashlight.hpp"
+#include "vr_gearlights.hpp"
 #include "vr_grasp.hpp"
 #include "vr_modelcollide.hpp"
 #include "vr_selfcollide.hpp"
@@ -217,6 +222,14 @@ void startGameCommands()
             Cvar_SetValueQuick(&vr_setup_pending, 0.f);
             Con_Printf("VR: a first start: VR Calibration (the main menu's first row runs it again)\n");
             Cbuf_InsertText("vr_setup\n");
+            return;
+        }
+        if(vr_tutorial_started.value == 0.f)
+        {
+            // The game started for the first time (the calibration room's way out leads here too: QC changelevel_touch):
+            // the tutorial, on Easy (the map sets vr_tutorial_started as it loads: then the hub is where VR starts).
+            Con_Printf("VR: the first start: the tutorial (vrtutorial2)\n");
+            Cbuf_InsertText("maxplayers 1; deathmatch 0; coop 0; skill 0; map vrtutorial2\n");
             return;
         }
         Cbuf_InsertText(va("maxplayers 1; deathmatch 0; coop 0; map %s\n", VR_HubMap()));
@@ -1401,6 +1414,7 @@ extern "C" void VR_Init()
     registerCvars();
     VR_RegisterPackStatus();
     jobs::registerCommands();
+    edictindex::registerCommands();
     weapons::registerCvars();
     props::registerCvars();
     retro::registerCvars();
@@ -1444,7 +1458,9 @@ extern "C" void VR_Init()
     setup::init();
     motion::init();
     flashlight::init();
+    gearlights::init();
     chainsaw::init();
+    cellcord::init();
     detail::init();
     extmaps::init();
     imgcache::init();
@@ -1511,6 +1527,7 @@ extern "C" void VR_Init()
     profile::init();
     audio::init(); // spatial audio's commands (vr_snd_info, vr_snd_test...); Steam Audio is loaded on first use
     mapindex::registerCommands(); // maps_list, maps_info, maps_stats, maps_fetch
+    update::registerCommands(); // vr_update_status, vr_update_check_now, vr_update_compare (vr_update.cpp)
     mapinstall::registerCommands(); // maps_get, maps_install, maps_installed, maps_uninstall
     mapinstall::start(); // the installed-map list read (vr_mapinstall.cpp): nothing is downloaded here: nothing here waits
     relight::registerCommands(); // vr_relight, vr_relight_cancel, vr_relight_revert... (vr_relight.cpp)
@@ -1524,6 +1541,7 @@ extern "C" void VR_Init()
 extern "C" void VR_StopDownloads()
 {
     mapindex::finish();
+    update::finish(); // the update check (vr_update.cpp)
     mapinstall::finish();
     relight::tool::finish(); // an ericw-tools download (Graphics > Relighting), cancelled (vr_relight_tool.cpp)
 }
@@ -1533,6 +1551,7 @@ extern "C" void VR_Shutdown()
     hull::finishLoads(); // (a map load's builds, if a quit came in the middle of one)
     box3d::finishLoads();
     mapindex::finish(); // the map index fetch, cancelled and joined (vr_mapindex.cpp)
+    update::finish(); // the update check, the same (vr_update.cpp)
     mapinstall::finish(); // a map download or unpacking, cancelled and joined (vr_mapinstall.cpp)
     relight::shutdown(); // a light process still running stopped (vr_relight.cpp)
     imgprefetch::shutdown(); // (the decoding tasks finished)
@@ -1602,6 +1621,7 @@ extern "C" void VR_BeginFrame()
     posing::frame();     // the weapon posing mode's text, likewise
     sightalign::frame(); // Align Sights to My Aim: its countdown, text and state
     bodycal::frame();    // Body Calibration: its steps, text, ghost and preview
+    stealth::debugFrame(); // the monsters' meters drawn over them (vr_stealth_debug_meters)
     setup::frame();      // VR Calibration: its steps and text, the calibration room's value screens
     retro::frame();      // retro textures: a pick's countdown and outline; your overrides saved
     configFrame();       // the config saved as the menu closes, if a setting changed (the preview taken off above)
@@ -1609,7 +1629,8 @@ extern "C" void VR_BeginFrame()
     profile::overlay();  // the profiler's panel (vr_profile_overlay)
     throwing::filterGrips(state->tracking); // the analog grip's release, before it becomes a key
     input::update(state->tracking.input); // releases held keys when VR is off
-    bullettime::frame(); // the gadget's bullet time button (the hands as last placed)
+    bullettime::frame(); // the gadget's screen tap for bullet time (the hands as last placed)
+    gearlights::frame(); // the gadget's side button: the gear lights (likewise)
     flashlight::flicks(); // the held torch turned over by a flick of the wrist (likewise)
 
     // Update the hands now, before the move is built (it carries the aim in the view angles).
@@ -1761,8 +1782,10 @@ extern "C" void VR_HostFrameEnd()
     {
         mapIndexStarted = true;
         qvr::mapindex::start();
+        qvr::update::start(); // the update notice's check (vr_update.cpp): at most once an hour, never in test runs
     }
     qvr::mapindex::poll(); // the map index the fetch thread finished, taken here (vr_mapindex.cpp)
+    qvr::update::poll(); // the update check's answer (vr_update.cpp)
     qvr::mapinstall::poll(); // a map download or unpacking that finished, taken here (vr_mapinstall.cpp)
     qvr::relight::poll(); // the in-game relighting's light process: its progress, its result (vr_relight.cpp)
     qvr::motion::hostFrameEnd();

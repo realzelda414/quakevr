@@ -3,12 +3,15 @@
 #include "vr_hitmodel.hpp"
 #include "vr_hull.hpp"
 #include "vr_progs.hpp"
+#include "vr_edictindex.hpp"
 #include "vr_engine.hpp"
 #include "vr_box3d.hpp"
 #include "vr_climb.hpp"
+#include "vr_foegrab.hpp"
 #include "vr_ropesim.hpp"
 #include "vr_crates.hpp"
 #include "vr_debris.hpp"
+#include "vr_explosiondebris.hpp"
 #include "vr_ledges.hpp"
 #include "vr_limbmodel.hpp"
 #include "vr_cvars.hpp"
@@ -167,6 +170,7 @@ extern "C" void VR_OnProgsLoaded()
     {
         return;
     }
+    VR_EdictIndex_ProgsLoaded();
 
     Bindings b;
 
@@ -247,7 +251,9 @@ void resetServerWorld()
     qvr::box3d::reset();
     qvr::ropesim::reset();
     qvr::climb::reset();
+    qvr::foegrab::reset();
     qvr::debris::reset();
+    qvr::explosiondebris::serverReset(); // (a loaded game's chunks found again at its first frame)
     qvr::crates::reset();
     qvr::props::resetModelCache(); // (the models' names may be others' now)
     qvr::hitmodel::reset();
@@ -279,6 +285,7 @@ extern "C" void VR_OnClearMemory()
 extern "C" void VR_OnSpawnServerBeforeLoad()
 {
     resetServerWorld();
+    VR_EdictIndex_Reset(); // (the edicts cleared)
     qvr::physics::precacheWaterSounds();
     qvr::physsound::precache(); // the props' knocks and scrapes, the climbing grab
     qvr::climb::precache();     // the mantle's grunts
@@ -489,6 +496,7 @@ extern "C" void VR_OnSpawnServerAfterLoad()
     qvr::hull::afterLoad(); // the player's narrower box: the map as brushes (vr_hull_width)
     timed("VR after load: hulls");
     qvr::climb::reset();
+    qvr::foegrab::reset();
     callSpawnServerEntryPoint(sv_bindings.OnSpawnServerAfterLoad);
     timed("VR after load: QuakeC");
     loadingSaveGame = false;
@@ -497,6 +505,7 @@ extern "C" void VR_OnSpawnServerAfterLoad()
 extern "C" void VR_OnBeginLoadGame()
 {
     loadingSaveGame = true;
+    VR_EdictIndex_Reset();
 }
 
 // The save's build: another build's is loaded (the models found again through the save's list, the fields by name),
@@ -763,6 +772,7 @@ void rebindLoadedModels()
 extern "C" void VR_OnLoadGame()
 {
     loadingSaveGame = false;
+    VR_EdictIndex_Reset(); // (the edicts parsed from the save)
 
     // parm17..parm56 were restored with the other globals and still hold the level-start
     // values (QC only rewrites them in SetNewParms/SetChangeParms), so they become the
@@ -779,6 +789,7 @@ extern "C" void VR_OnLoadGame()
 
     qvr::walltorch::restoreAfterLoad(); // the map's wall torches a save made before they were entities lacks
     qvr::climb::reset();                // (holds on the loaded game's entities: none)
+    qvr::foegrab::reset();
 
     callEntryPoint(sv_bindings.OnLoadGame);
     qvr::flashlight::restoreState();

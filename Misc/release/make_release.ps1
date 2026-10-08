@@ -9,6 +9,15 @@ latest.json, and (with -Publish) tags the commit and creates the GitHub release.
   Misc\release\make_release.ps1 -Publish                   # ... then tag v<VERSION>, push the tag, create a DRAFT GitHub release
   Misc\release\make_release.ps1 -Publish -NoDraft          # ... a public release straight away
   Misc\release\make_release.ps1 -Version 1.0.0 -BumpVersion   # first commit VERSION = 1.0.0 ("Version 1.0.0"), then as above
+  Misc\release\make_release.ps1 -Local -RunInstaller      # a LOCAL TEST release: the same build and checks into
+                                                           # out\release\<VERSION>-local, latest.json pointing at a server on
+                                                           # 127.0.0.1; then that server and the built QuakeVR-Setup.exe in a
+                                                           # sandbox (Misc\release\test_local_release.ps1 reruns it)
+
+The support files (the HD texture pack, ericw-tools' source and Windows zips) are hosted once on their own GitHub
+release, listed with their sizes and SHA-256 in Misc\release\support_assets.json: latest.json's "hdtextures" points
+at the hosted pack and the release notes link ericw-tools' source; nothing of them is uploaded again (RELEASING.md,
+"Support files"). -Textures / -EricwSource attach a copy to this release instead; -NoTextures leaves HD textures out.
 
 The version is the repository's VERSION file (docs/vr-port/RELEASING.md, "Versions"). -Version is optional: it must be
 VERSION's, or with -BumpVersion the script first commits VERSION = -Version (that file alone, on a tree without other
@@ -47,10 +56,14 @@ param(
     [switch]$Rebuild,
     # A Quake folder (with id1\pak0.pak) for the smoke launch; default $env:QVR_QUAKE_DIR. Without one the launch is skipped.
     [string]$QuakeDir = $env:QVR_QUAKE_DIR,
-    # The HD texture pack's zip (latest.json's "hdtextures" component), if this release ships one.
+    # An HD texture pack zip uploaded WITH this release as latest.json's "hdtextures" component (an override). Default:
+    # the pack hosted on the support-files release (support_assets.json), not uploaded again.
     [string]$Textures = "",
-    # ericw-tools' source zip (GPL-3: it must sit beside a package that ships light.exe). Default $env:QVR_ERICW_SRC.
-    [string]$EricwSource = $env:QVR_ERICW_SRC,
+    # No "hdtextures" component in latest.json (the installer then downloads its built-in pinned pack).
+    [switch]$NoTextures,
+    # ericw-tools' source zip uploaded WITH this release (an override). Default: the release notes link the hosted one
+    # (support_assets.json; GPL-3: the package ships light.exe).
+    [string]$EricwSource = "",
     # Other files to attach to the release.
     [string[]]$Assets = @(),
     # Download address templates for latest.json ({tag}, {file}), in order. Default: the GitHub release's own assets.
@@ -63,6 +76,15 @@ param(
     [string]$Repo = "vittorioromeo/quakevr",
     # Testing the script itself: build from a tree with uncommitted changes (never with -Publish or -PushTag).
     [switch]$AllowDirty,
+    # A local test release (RELEASING.md, "Test a release locally"): the same build, checks and package, into
+    # out\release\<version>-local; latest.json's addresses are http://127.0.0.1:<LocalPort>/<file> (a local server,
+    # Misc\release\test_local_release.ps1); nothing online (no fetch, no gh, no tag). Never with -Publish or -PushTag.
+    [switch]$Local,
+    # The local server's port, written into latest.json's addresses (-Local).
+    [int]$LocalPort = 8517,
+    # After a -Local build (implies -Local): start the local server and run the built QuakeVR-Setup.exe against it, in a
+    # sandbox folder under %TEMP% (test_local_release.ps1).
+    [switch]$RunInstaller,
     [switch]$SkipSmoke,
     [switch]$SkipInstallerTests
 )
@@ -76,9 +98,19 @@ if (-not $fileVersion) { throw "no version in $versionFile (one line: MAJOR.MINO
 if (-not $Version) { $Version = $fileVersion }
 $tag = "v$Version"
 if ($NoDraft) { $Draft = $false }
+if ($RunInstaller) { $Local = $true }
+if ($Local -and ($Publish -or $PushTag)) { throw "-Local is a local test release: never with -Publish or -PushTag" }
+if ($Local -and -not $UrlBase) { $UrlBase = @("http://127.0.0.1:$LocalPort/{file}") }
 $problems = New-Object System.Collections.Generic.List[string]   # fatal for this mode
 $warnings = New-Object System.Collections.Generic.List[string]
 $online = $Publish -or $PushTag
+if ($Textures -and $NoTextures) { throw "-Textures and -NoTextures together: pick one" }
+# The support-files release (Misc\release\support_assets.json): its tag, URL template, files, sizes and SHA-256.
+$supportPath = Join-Path $PSScriptRoot "support_assets.json"
+$support = Get-Content -Raw -LiteralPath $supportPath | ConvertFrom-Json
+function SupportFile([string]$key) { $support.files.$key }
+function SupportUrl([string]$key) { $support.url.Replace("{tag}", $support.tag).Replace("{file}", (SupportFile $key).file) }
+$hostedTextures = -not $Textures -and -not $NoTextures
 
 function Say([string]$text) { Write-Host $text }
 function Step([string]$text) { Write-Host ""; Write-Host "==> $text" -ForegroundColor Cyan }
@@ -166,7 +198,8 @@ else {
     if ($upstream.Code -ne 0 -or -not $upstream.Text) { Problem "branch $branch has no upstream (git push -u <remote> $branch)" -OnlineOnly }
     else {
         $remote = (GitRun @("config", "branch.$branch.remote")).Text
-        if ((GitRun @("fetch", "--quiet", $remote)).Code -ne 0) { Warn "git fetch $remote failed: the pushed check uses the last fetched state" }
+        if ($Local) { Say "-Local: no git fetch (the pushed check uses the last fetched state)" }
+        elseif ((GitRun @("fetch", "--quiet", $remote)).Code -ne 0) { Warn "git fetch $remote failed: the pushed check uses the last fetched state" }
         if ((GitRun @("merge-base", "--is-ancestor", "HEAD", $upstream.Text)).Code -ne 0) { Problem "HEAD ($short) is not on $($upstream.Text): push $branch first" -OnlineOnly }
         else { Say "HEAD is on $($upstream.Text)" }
         $remoteUrl = (GitRun @("remote", "get-url", $remote)).Text
@@ -182,7 +215,7 @@ if ($tagLocal.Code -eq 0) {
     else { Problem "tag $tag already exists on another commit ($($tagLocal.Text.Substring(0, 8)))" }
 }
 $tagRemote = ""
-if ($remote) {
+if ($remote -and -not $Local) {
     $ls = GitRun @("ls-remote", "--tags", $remote, "refs/tags/$tag", "refs/tags/$tag^{}")
     if ($ls.Code -eq 0 -and $ls.Text) {
         $tagRemote = @(@($ls.Out | Where-Object { $_ -match '\^\{\}$' }) + @($ls.Out))[0] -replace '\s.*$', ''   # (the peeled commit first)
@@ -192,7 +225,7 @@ if ($remote) {
 
 # Tools.
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { Problem "gh (GitHub CLI) not found" -OnlineOnly }
-elseif ($DryRun) { Say "gh found (not called: -DryRun)" }
+elseif ($DryRun -or $Local) { Say "gh found (not called: $(if ($Local) { '-Local' } else { '-DryRun' }))" }
 else {
     if ((Run "gh" @("auth", "status")).Code -ne 0) { Problem "gh is not logged in (gh auth login)" -OnlineOnly }
     elseif ((Run "gh" @("release", "view", $tag, "--repo", $Repo, "--json", "tagName")).Code -eq 0) { Problem "GitHub release $tag already exists in $Repo (edit or delete it on GitHub)" -OnlineOnly }
@@ -222,19 +255,45 @@ if (-not $Fteqcc -or -not (Test-Path -LiteralPath $Fteqcc)) { Problem "fteqcc64.
 
 # Optional inputs.
 if ($Textures -and -not (Test-Path -LiteralPath $Textures -PathType Leaf)) { Problem "-Textures: no file $Textures" }
-if (-not $Textures) { Warn "no -Textures: latest.json has no hdtextures component (the installer then offers none)" }
+if ($hostedTextures) { Say "HD textures: hosted $((SupportFile 'hdtextures').file) ($(Size (SupportFile 'hdtextures').size), $($support.tag)): latest.json points at it, nothing uploaded" }
+elseif ($NoTextures) { Say "HD textures: none (-NoTextures): latest.json has no hdtextures component" }
 foreach ($a in $Assets) { if (-not (Test-Path -LiteralPath $a -PathType Leaf)) { Problem "-Assets: no file $a" } }
 $ericwTools = if ($env:QVR_ERICW_TOOLS) { $env:QVR_ERICW_TOOLS } else { "C:\OHWorkspace\ericw-tools-2.0.0-alpha11-win64" }
 $shipsEricw = Test-Path (Join-Path $ericwTools "light.exe")
 if (-not $shipsEricw) { Warn "ericw-tools not found in $ericwTools (QVR_ERICW_TOOLS): the package will have no light.exe" }
-elseif (-not $EricwSource) { Problem "the package ships ericw-tools' light.exe (GPL-3): its source zip must be attached (-EricwSource ericw-tools-2.0.0-alpha11-src.zip; INSTALLER.md, 'Release checklist')" -OnlineOnly }
+elseif (-not $EricwSource) { Say "ericw-tools' source (GPL-3, light.exe ships): hosted, linked from the release notes: $(SupportUrl 'ericw_source')" }
 elseif (-not (Test-Path -LiteralPath $EricwSource -PathType Leaf)) { Problem "-EricwSource: no file $EricwSource" }
+# The hosted files this release relies on, checked against GitHub (sizes and digests from the API, then a HEAD request
+# per URL; nothing downloaded). Not with -DryRun or -Local (nothing online).
+$hostedKeys = @(@($(if ($hostedTextures) { "hdtextures" })) + @($(if ($shipsEricw -and -not $EricwSource) { "ericw_source" })) | Where-Object { $_ })
+if ($hostedKeys.Count -and -not $DryRun -and -not $Local) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    try {
+        $rel = Invoke-RestMethod -UseBasicParsing -TimeoutSec 30 -Headers @{ Accept = "application/vnd.github+json" } `
+            -Uri "https://api.github.com/repos/$($support.repo)/releases/tags/$($support.tag)"
+        foreach ($k in $hostedKeys) {
+            $e = SupportFile $k
+            $a = @($rel.assets | Where-Object { $_.name -eq $e.file }) | Select-Object -First 1
+            if (-not $a) { Problem "support release $($support.tag) has no $($e.file)" -OnlineOnly; continue }
+            $digest = if ($a.PSObject.Properties["digest"] -and $a.digest) { "$($a.digest)" } else { "" }
+            if ([long]$a.size -ne [long]$e.size -or ($digest -and $digest -ne "sha256:$($e.sha256)")) {
+                Problem "$($e.file) on $($support.tag) is $($a.size) bytes, $digest; support_assets.json says $($e.size), sha256:$($e.sha256)" -OnlineOnly
+                continue
+            }
+            $u = SupportUrl $k
+            try {
+                $r = Invoke-WebRequest -UseBasicParsing -Method Head -TimeoutSec 30 -Uri $u
+                Say "hosted ${k}: $u answers ($($r.StatusCode)); $($a.size) bytes, $(if ($digest) { 'digest matches' } else { 'no digest from GitHub' })"
+            } catch { Problem "hosted ${k}: $u does not answer ($($_.Exception.Message))" -OnlineOnly }
+        }
+    } catch { Problem "could not read the support release $($support.tag) from GitHub's API ($($_.Exception.Message))" -OnlineOnly }
+}
 $quakeOk = $QuakeDir -and (Test-Path (Join-Path $QuakeDir "id1\pak0.pak"))
 if ($SkipSmoke) { Warn "-SkipSmoke: no launch of the packaged game" }
 elseif (-not $quakeOk) { Warn "no Quake folder with id1\pak0.pak (-QuakeDir or QVR_QUAKE_DIR): the packaged game's smoke launch is skipped" }
 
 $outBase = Join-Path $root "out\release"
-$outDir = Join-Path $outBase $Version
+$outDir = Join-Path $outBase "$Version$(if ($Local) { '-local' })"
 
 if ($problems.Count) { throw "$($problems.Count) problem(s) above: nothing was built or published" }
 
@@ -246,7 +305,10 @@ if ($DryRun) {
     Say "installer      dotnet publish QuakeVR.Installer -c Release -r win-x64 single-file, /p:Version=$Version"
     Say "checks         statics, QC precedence, FGD, installer self-tests, latest.json, packaged installer (install harness), smoke launch$(if (-not $quakeOk -or $SkipSmoke) { ' (skipped)' })"
     Say "assets         QuakeVR.zip, QuakeVR-Setup.exe, latest.json, SHA256SUMS.txt$(if ($Textures) { ', ' + (Split-Path -Leaf $Textures) })$(if ($EricwSource) { ', ' + (Split-Path -Leaf $EricwSource) })$(foreach ($a in $Assets) { ', ' + (Split-Path -Leaf $a) })"
+    Say "hdtextures     $(if ($hostedTextures) { "hosted: $(SupportUrl 'hdtextures') (not uploaded; checked online when building, not with -DryRun)" } elseif ($Textures) { 'uploaded with this release (-Textures)' } else { 'none (-NoTextures)' })"
+    if ($shipsEricw) { Say "ericw source   $(if ($EricwSource) { 'uploaded with this release (-EricwSource)' } else { "linked from the notes: $(SupportUrl 'ericw_source')" })" }
     Say "tag            $tag on $short$(if ($online) { ", pushed to $remote" } else { ' (only with -Publish or -PushTag)' })"
+    if ($Local) { Say "local test     latest.json -> $($UrlBase -join ', ')$(if ($RunInstaller) { '; then the server and QuakeVR-Setup.exe in a sandbox' })" }
     Say "release        $(if ($Publish) { "gh release create $tag --repo $Repo$(if ($Draft) { ' --draft' })$(if ($prerelease) { ' --prerelease' })" } else { 'none (-Publish creates it)' })"
     $list = & (Join-Path $root "Windows\package-quakevr.ps1") -DryRun
     Say "package        $(@($list).Count) files (Windows\package-quakevr.ps1 -DryRun lists them)"
@@ -316,6 +378,14 @@ if (-not $setupVersion.StartsWith($Version)) { throw "QuakeVR-Setup.exe's versio
 Say "$setup ($(Size (Get-Item $setup).Length), version $setupVersion)"
 # The rest of the solution (qvr-setup, the self-tests) in Release, for the checks below (warnings are errors).
 Invoke-Logged "dotnet" @("build", "QuakeVR.Installer.sln", "-c", "Release", "-p:Version=$Version", "-nologo") (Join-Path $logs "installer_build.log") $installerDir | Out-Null
+if ($Local) {
+    # This build's qvr-setup beside the release: test_local_release.ps1 serves the assets with it ("qvr-setup serve").
+    $cliBin = Join-Path $installerDir "src\QuakeVR.Installer.Cli\bin\Release\net9.0-windows"
+    $tools = Join-Path $outDir "tools\qvr-setup"
+    New-Item -ItemType Directory -Force $tools | Out-Null
+    Copy-Item (Join-Path $cliBin "*") $tools -Recurse -Force
+    Say "qvr-setup (the local server): $tools"
+}
 
 if ($SkipInstallerTests) { Warn "-SkipInstallerTests: the installer's self-tests were not run" }
 else {
@@ -328,7 +398,9 @@ else {
 # ------------------------------------------------------------------------------------------------------------------
 Step "Release assets and latest.json (Misc\quakevr\make_release.py)"
 $mrArgs = @("Misc\quakevr\make_release.py", "--package", $packageDir, "--setup", $setup, "--tag", $tag, "--out", $assetsDir)
+$mrArgs += @("--support-assets", $supportPath)
 if ($Textures) { $mrArgs += @("--textures", (Resolve-Path $Textures).Path) }
+elseif ($NoTextures) { $mrArgs += "--no-textures" }
 if ($EricwSource) { $mrArgs += @("--asset", (Resolve-Path $EricwSource).Path) }
 foreach ($a in $Assets) { $mrArgs += @("--asset", (Resolve-Path $a).Path) }
 foreach ($u in $UrlBase) { $mrArgs += @("--url-base", $u) }
@@ -355,10 +427,19 @@ Say "$($entries.Count) files, exactly the allowlist; no id files; PDBs: $($pdbs 
 
 Step "Checks: latest.json as the installer reads it"
 $feedLog = Join-Path $logs "feed_check.log"
-Invoke-Logged "dotnet" @("run", "--project", "src\QuakeVR.Installer.Cli", "-c", "Release", "--no-build", "--", "feed", "--file", (Join-Path $assetsDir "latest.json"), "--assets", $assetsDir) $feedLog $installerDir | Out-Null
+$feedArgs = @("run", "--project", "src\QuakeVR.Installer.Cli", "-c", "Release", "--no-build", "--", "feed", "--file", (Join-Path $assetsDir "latest.json"), "--assets", $assetsDir)
+if ($hostedTextures) { $feedArgs += @("--hosted", "hdtextures") }   # (on the support-files release, not in assets\)
+Invoke-Logged "dotnet" $feedArgs $feedLog $installerDir | Out-Null
 Get-Content $feedLog | ForEach-Object { Say "  $_" }
 $feed = Get-Content -Raw (Join-Path $assetsDir "latest.json") | ConvertFrom-Json
 if ($feed.version -ne $versionText) { throw "latest.json's version is '$($feed.version)', expected '$versionText'" }
+if ($hostedTextures) {
+    $hd = $feed.components.hdtextures; $e = SupportFile "hdtextures"
+    if (-not $hd -or $hd.file -ne $e.file -or [long]$hd.size -ne [long]$e.size -or $hd.sha256 -ne $e.sha256 -or $hd.urls[0] -ne (SupportUrl "hdtextures")) {
+        throw "latest.json's hdtextures is not the hosted $($e.file) of support_assets.json"
+    }
+    Say "  hdtextures: the hosted $($hd.file) ($(Size $hd.size)), $(@($hd.urls).Count) url(s), first $($hd.urls[0])"
+}
 
 if ($SkipInstallerTests) { Warn "-SkipInstallerTests: the packaged installer was not run" }
 else {
@@ -442,7 +523,9 @@ else {
 }
 $table = "## Files`n`nBuild: Quake VR $versionText, commit $commit.`n`n| File | Size | SHA-256 |`n|---|---|---|`n" +
     (($files | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | ForEach-Object { "| ``$($_.Name)`` | $(Size $_.Length) | ``$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())`` |" }) -join "`n") +
-    "`n`nThe installer and the game are not code-signed: Windows SmartScreen may say ""Windows protected your PC"" (More info > Run anyway). Check a download with ``Get-FileHash <file>`` against the table."
+    "`n`n" + $(if ($hostedTextures) { "HD texture pack (the installer's optional HD textures; not attached here): [``$((SupportFile 'hdtextures').file)``]($(SupportUrl 'hdtextures')), $(Size (SupportFile 'hdtextures').size), SHA-256 ``$((SupportFile 'hdtextures').sha256)``.`n`n" } else { "" }) +
+    $(if ($shipsEricw) { "Source of ericw-tools' light.exe (GPL-3; QuakeVR.zip ships light.exe): $(if ($EricwSource) { "https://github.com/$Repo/releases/download/$tag/$(Split-Path -Leaf $EricwSource)" } else { SupportUrl 'ericw_source' })`n`n" } else { "" }) +
+    "The installer and the game are not code-signed: Windows SmartScreen may say ""Windows protected your PC"" (More info > Run anyway). Check a download with ``Get-FileHash <file>`` against the table."
 [System.IO.File]::WriteAllText($notesPath, ($body.TrimEnd() + "`n`n" + $table + "`n"), (New-Object System.Text.UTF8Encoding $false))
 Say $notesPath
 
@@ -475,7 +558,6 @@ if ($Publish) {
 
 # ------------------------------------------------------------------------------------------------------------------
 $quoted = ($ghArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_ + '"' } else { $_ } }) -join " "
-$siteFeed = "https://vittorioromeo.com/quakevr/latest.json"
 $lines = @(
     "Quake VR: Unleashed $Version ($tag, commit $short): $(if ($Publish) { if ($Draft) { 'DRAFT release created' } else { 'release published' } } else { 'built, nothing published' })",
     "",
@@ -487,23 +569,37 @@ $lines = @(
     "What to do:"
 )
 $n = 0
-if (-not $Publish) {
+if ($Local) {
+    $lines[0] = "Quake VR: Unleashed $Version LOCAL TEST release (commit $short): built, nothing published; its latest.json points at $($UrlBase -join ', ')"
+    $lines += @(
+        "  1. Test it: powershell -ExecutionPolicy Bypass -File Misc\release\test_local_release.ps1$(if ($Version -ne $fileVersion) { " -Version $Version" })",
+        "       (starts the local server on 127.0.0.1:$LocalPort in its own window, then QuakeVR-Setup.exe --feed http://127.0.0.1:$LocalPort/latest.json",
+        "        --sandbox %TEMP%\QuakeVR-test-$Version-<time>: the install, shortcuts and downloads stay in that folder; no Apps & Features entry)",
+        "  2. Never upload these assets: latest.json names 127.0.0.1. For the real release, run without -Local."
+    )
+    if ($hostedTextures) { $lines += "  Note: latest.json's hdtextures is the hosted $((SupportFile 'hdtextures').file) on GitHub (a local server does not have it): ticking HD textures downloads the real $(Size (SupportFile 'hdtextures').size). -Textures <zip> serves a copy locally; -NoTextures leaves it out." }
+}
+elseif (-not $Publish) {
     $lines += @(
         "  $((++$n)). Publish: run again with -Publish (tags $tag, pushes only the tag to $(if ($remote) { $remote } else { '<the upstream remote>' }), creates a draft release), or by hand:",
         "       git tag -a $tag -m ""$title"" $commit; git push $(if ($remote) { $remote } else { 'origin' }) refs/tags/$tag",
         "       $($quoted -replace '^', 'gh ')"
     )
 }
-if (-not $Publish -or $Draft) {
+if (-not $Local -and (-not $Publish -or $Draft)) {
     $lines += "  $((++$n)). Check the draft on https://github.com/$Repo/releases, then publish it (button, or: gh release edit $tag --repo $Repo --draft=false$(if (-not $prerelease) { ' --latest' })). Until it is published (and not a prerelease) https://github.com/$Repo/releases/latest/download/latest.json still serves the previous release."
 }
-$lines += @(
-    "  $((++$n)). Upload $assetsDir\latest.json to $siteFeed (the installer's second feed; same file as the release's asset).",
-    "  $((++$n)). Check: qvr-setup feed --url https://github.com/$Repo/releases/latest/download/latest.json   and   --url $siteFeed",
+if (-not $Local) { $lines += @(
+    "  $((++$n)). Check: qvr-setup feed --url https://github.com/$Repo/releases/latest/download/latest.json   (the installer's only feed)",
     "             (dotnet run --project Installer\src\QuakeVR.Installer.Cli -- feed --url <...>: the version and the package's size)."
-)
+) }
 if ($warnings.Count) { $lines += @("", "Warnings:") + @($warnings | ForEach-Object { "  - $_" }) }
 $publishTxt = Join-Path $outDir "PUBLISH.txt"
 [System.IO.File]::WriteAllText($publishTxt, (($lines -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding $false))
 Step "Done ($publishTxt)"
 $lines | ForEach-Object { Say $_ }
+
+if ($RunInstaller) {
+    Step "Local test: the server and the installer (test_local_release.ps1)"
+    & (Join-Path $PSScriptRoot "test_local_release.ps1") -Release $outDir
+}

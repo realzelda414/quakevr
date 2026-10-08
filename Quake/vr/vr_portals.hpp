@@ -20,7 +20,8 @@
 // Each eye uses the same rigid turn and shift as movement and traces, at any distance: screen-space portal sampling
 // therefore shows the target a shot through that pixel reaches. Drawing the eye, the side's faces (the liquid
 // shaders, LiquidPortal) show that image by their pixels, whatever their shape, under a little of the slipgate's own
-// shimmer. Views do not recurse; teleport surfaces inside a destination view are omitted. The server sends what is round
+// shimmer. Within a view, gates seen in it show their own views (vr_portals_recursion, up to three more gates deep, each
+// gate deeper drawn at fewer pixels); with it 0, teleport surfaces inside a destination view are omitted. The server sends what is round
 // the destinations of the gates it can see (their PVS added to its own), so the monsters and items there are seen too.
 // Each eye, the flat camera and the spectator camera prepare their own view with the same rigid transform.
 // The single entrance-plane star layer has Size and Opacity controls; these never change the physical aperture.
@@ -46,7 +47,8 @@
 // portal_exit, portal_turn: the beams in two pieces). QuakeC's teleport_touch leaves players to it (portal_handles):
 // for every recognised slipgate, including while the frame or sill blocks him. Triggers without recognised faces
 // retain Quake's teleport. VR_Portal_Crossed does the rest of what
-// the teleport did (its targets, what the hands carry). Monsters teleport as in Quake.
+// the teleport did (its targets, what the hands carry). Monsters walk through paired gates so too (vr_portals_monsters:
+// VR_PortalMonsterCross), else teleport as in Quake; ragdolls are carried whole as the pelvis crosses (box3d).
 
 #pragma once
 
@@ -74,6 +76,10 @@ Reach reach(const glm::vec3& root, const glm::vec3& point);
 Reach reachAlong(const glm::vec3& root, const glm::vec3& hand, const glm::vec3& point);
 // The closest visible one-gate image of a point, for gravity-glove aiming.
 glm::vec3 pullImage(const glm::vec3& from, const glm::vec3& point, int* gate = nullptr);
+// The same from the client (its effects: the force grab's beam to what it aims at through a gate): where `point` is
+// seen from `from`, through a gate (its image behind the gate's surface) or not, under the server's VM (a listen
+// server's; a remote one's client: `point`).
+glm::vec3 pullImageSeen(const glm::vec3& from, const glm::vec3& point);
 // Search centres for a conservative force-grab broad phase: the hand itself and its
 // active source-facing one-hop images in destination rooms. pullImage still decides visibility.
 void pullSearchOrigins(const glm::vec3& from, za::Vector<glm::vec3>& out, float range = -1.f);
@@ -82,27 +88,54 @@ void pullSearchOrigins(const glm::vec3& from, za::Vector<glm::vec3>& out, float 
 int aiImage(edict_s* observer, edict_s* target, const glm::vec3& from, const glm::vec3& point,
     int gate, glm::vec3& image);
 glm::vec3 aiMap(int gate, const glm::vec3& value, bool direction);
+// The stealth AI's gates (QC vr_stealth.qc; aiImage's numbering). aiGateCount: the sides (0: walking through off, or
+// vr_portals_ai 0). aiGateFlags: 1 its trigger active, 2 paired (its exit a real aperture), 4 a monster walks through
+// it (vr_portals_monsters). aiGateFace: the side whose own face it is (an exit: its pair's), 0 none. aiGateVec: its
+// face's middle (0), its normal (1, towards its room), p on its plane held to its aperture (2), p carried through (3).
+int aiGateCount();
+int aiGateFlags(int gate);
+int aiGateFace(int gate);
+glm::vec3 aiGateVec(int gate, int what, const glm::vec3& p);
 
-// Before each scene view: the gates (found anew for a new map) and the side looked through by this camera.
-void update(const float* origin = nullptr, const float* angles = nullptr);
+// Views within views (vr_portals_recursion): a camera's depth is how many gates it looks through (0: the eye's own,
+// the flat or the spectator camera; 1: a view through a gate; 2: a gate seen in that view; ...). maxDepth(): the
+// deepest view drawn, 1 (no views within views) .. 4.
+[[nodiscard]] int maxDepth();
 
-// Candidate views ranked for this camera; limit is 1..8, default 4. No recursive portal views.
-int viewLimit();
-int viewCount();
-int layer(); // next array layer to receive the current rendered view
-void selectView(int view);
+// Before each scene view (depth 0): the gates (found anew for a new map) and the sides looked through by this camera,
+// ranked. For a view's own views (depth over 0, r_refdef the view's camera: carryCamera), those seen through the gate
+// the view is in, beyond its exit, within its box on the screen.
+void update(const float* origin = nullptr, const float* angles = nullptr, int depth = 0);
+
+// Candidate views ranked for the camera of a depth; limit is 1..8: vr_portals_maxviews (default 4) for the eye's,
+// vr_portals_recursion_views within a view through a gate, 1 deeper.
+int viewLimit(int depth = 0);
+int viewCount(int depth = 0);
+int layer(int depth); // the array layer the view of this depth (1..) about to be drawn goes to
+void selectView(int view, int depth = 0);
+// r_refdef moved through the gate the view of `depth` looks through (as VR_PortalView does as it is drawn): its
+// camera, whose views are ranked and drawn before it.
+void carryCamera(int depth);
+// The view of `depth` is drawn at 1/scaleAt of its pixels (r_refdef.scale): 1 for the first gate's,
+// vr_portals_recursion_scale times smaller each gate deeper.
+[[nodiscard]] int scaleAt(int depth);
 
 // For an eye about to be drawn (vr_stereo.cpp's eye loop; its view set: stereo::eye()): whether a view through the
 // gate is wanted for it (the gate is on its screen).
 [[nodiscard]] bool wantedForView();
 
-// Brackets the drawing of the view through the gate for an eye; `texture` is its scene's colour (composite), read by
-// that eye's teleport faces.
-void beginView();
-void endView(unsigned texture);
+// Brackets the drawing of the view of `depth` (1..) through the gate selected for it; `texture` is the array its
+// scene's colour (composite) went to, read by the teleport faces of the camera seeing it.
+void beginView(int depth);
+void endView(unsigned texture, int depth);
+// Whether another view may be drawn for a camera of `depth`: views within views, at most vr_portals_recursion_max for
+// an eye's camera, drawn depth first (the gate it looks at most first: its views within views before the next gate's);
+// the eye's own views always.
+[[nodiscard]] bool moreViews(int depth);
 
-// Whether the view being drawn is one through a gate.
+// Whether the view being drawn is one through a gate, and how many gates deep (0: none).
 [[nodiscard]] bool viewing();
+[[nodiscard]] int viewDepth();
 
 // vr_portals_shot (Debug > Slipgates): read the next view through a gate back from its own targets and report what it
 // shows - its whole image and the gate's box on the eye's screen, in colour and in depth (depth over 0 in the box:
@@ -126,8 +159,14 @@ struct LightGate
 };
 // One traversal only, through active apertures reached from the light's front side.
 int lightGates(const glm::vec3& light, float radius, LightGate* out, int capacity);
-// A rigid body's bounds crossing a fitting aperture. Either room can be its owner.
-bool splitBounds(const glm::vec3& lo, const glm::vec3& hi, LightGate& gate, float margin = 0.f);
+// A rigid body's bounds crossing a fitting aperture. Either room can be its owner. An exit with no gate of its own (a
+// destination in the open: its aperture is only where things come out) splits only what moves out of it (`velocity`,
+// units a second; none: nothing): else a prop resting where a gate leads was cut there.
+bool splitBounds(const glm::vec3& lo, const glm::vec3& hi, LightGate& gate, float margin = 0.f, const glm::vec3* velocity = nullptr);
+// A point gone from `from` to `to` (world units, a step) in through a gate: its plane crossed from the front over the
+// aperture, the gate active (as VR_PortalToss takes what flies). Its mapping in `gate`. (A ragdoll's pelvis: the whole
+// ragdoll is carried, box3d.)
+bool crossedGate(const glm::vec3& from, const glm::vec3& to, LightGate& gate);
 
 // An eye ahead of the body through a gate (the head leaning or walking in before the torso, which is what the gate
 // carries; or still behind once the body is through): the line from `body` (the body's axis at the eye's height) to

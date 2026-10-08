@@ -9,6 +9,7 @@
 #include "vr_body.hpp"
 #include "vr_box3d.hpp"
 #include "vr_bullettime.hpp"
+#include "vr_gearlights.hpp"
 #include "vr_cvars.hpp"
 #include "vr_engine.hpp"
 #include "vr_gfx.hpp"
@@ -147,6 +148,15 @@ glm::vec3 mockHandPos[HAND_COUNT + 1];
 bool mockHandSet[HAND_COUNT + 1]{};
 glm::quat mockHandRot[HAND_COUNT];
 bool mockHandRotSet[HAND_COUNT]{};
+
+// vr_mock_hand_glide: vr_mock_hand_to's move glided over that many seconds (realtime), the hand reporting the glide's own
+// velocity (a tap or a swing at a known speed: the wrist gadget's screen tap tests).
+struct HandGlide
+{
+    glm::vec3 from{0.f}, to{0.f};
+    double start = -1.0, length = 0.0; // start < 0: none
+};
+HandGlide handGlide[HAND_COUNT];
 glm::quat mockHeadOrientation{1.f, 0.f, 0.f, 0.f}; // vr_mock_look, vr_mock_hand head, vr_mock_play
 
 void mockHand_f()
@@ -437,10 +447,10 @@ void mockLook_f()
 // kept out of the floor lands short of a point under it; run it again (or a few frames on) to follow a weapon.
 // "vr_mock_hand_to <main|off> spot <index> [<height cm>]": at its hotspot `index` (a grip's point, a blade's zone's middle:
 // view::groundHotspotPoint), `height` cm over it (vr_weapon_grab_hotspots tests). "vr_mock_hand_to <main|off> button":
-// its fingertip on the wrist gadget's bullet time button (vr_bullettime.cpp), or `units` off its face ("button
-// <units>"). "vr_mock_hand_to <main|off> wrist <cm>": its
-// middle (palm) `cm` from the bullet time tap zone's middle, on the line from there to where it is (steps make a tap:
-// vr_bullettime_tap). "vr_mock_hand_to <main|off> carried": at
+// its fingertip on the wrist gadget's side button (the gear lights: vr_gearlights.cpp), or `units` off its face ("button
+// <units>"). "vr_mock_hand_to <main|off> screen <cm> [<side cm>]": its middle (palm) `cm` over the gadget screen's middle
+// along its normal, `side cm` along its right ("screenbutt": the butt of the gun it holds instead): steps down the normal
+// make a tap (vr_bullettime_tap), steps along the right a swing across it. "vr_mock_hand_to <main|off> carried": at
 // the handle of the weapon the other hand carries (taking it back). "vr_mock_hand_to <main|off> held <fraction> [<cm>]": in the
 // weapon the other hand holds or carries, `fraction` of the way from its handle to its tip, `cm` over it
 // "vr_mock_hand_to <main|off> heldspot <index>": at hotspot `index` of the weapon the other hand holds, as drawn
@@ -591,7 +601,19 @@ void moveHandTo(int hand, const glm::vec3& target)
         mockHandPos[hand] = standingPose().hands[hand].position;
         mockHandSet[hand] = true;
     }
-    mockHandPos[hand] += glm::vec3{glm::dot(d, right), glm::dot(d, up), -glm::dot(d, fwd)};
+    const glm::vec3 to = mockHandPos[hand] + glm::vec3{glm::dot(d, right), glm::dot(d, up), -glm::dot(d, fwd)};
+    if(vr_mock_hand_glide.value > 0.f && hand < HAND_COUNT)
+    {
+        handGlide[hand] = {mockHandPos[hand], to, realtime, static_cast<double>(vr_mock_hand_glide.value)};
+    }
+    else
+    {
+        if(hand < HAND_COUNT)
+        {
+            handGlide[hand].start = -1.0;
+        }
+        mockHandPos[hand] = to;
+    }
     Con_Printf("vr_mock_hand_to: %s hand at %.3f %.3f %.3f (tracking)\n", hand == HAND_MAIN ? "main" : "off",
         mockHandPos[hand].x, mockHandPos[hand].y, mockHandPos[hand].z);
 }
@@ -604,7 +626,8 @@ void mockHandTo_f()
     const bool carried = Cmd_Argc() == 3 && !q_strcasecmp(Cmd_Argv(2), "carried");
     const bool inHeld = Cmd_Argc() >= 4 && !q_strcasecmp(Cmd_Argv(2), "held");
     const bool button = (Cmd_Argc() == 3 || Cmd_Argc() == 4) && !q_strcasecmp(Cmd_Argv(2), "button");
-    const bool wrist = Cmd_Argc() == 4 && !q_strcasecmp(Cmd_Argv(2), "wrist");
+    const bool screenButt = (Cmd_Argc() == 4 || Cmd_Argc() == 5) && !q_strcasecmp(Cmd_Argv(2), "screenbutt");
+    const bool wrist = screenButt || ((Cmd_Argc() == 4 || Cmd_Argc() == 5) && !q_strcasecmp(Cmd_Argv(2), "screen"));
     const bool heldSpot = Cmd_Argc() == 4 && !q_strcasecmp(Cmd_Argv(2), "heldspot");
     const bool ragdollPart = Cmd_Argc() >= 4 && !q_strcasecmp(Cmd_Argv(2), "ragdoll");
     const bool by = Cmd_Argc() == 6 && !q_strcasecmp(Cmd_Argv(2), "by");
@@ -803,7 +826,7 @@ void mockHandTo_f()
                    "       vr_mock_hand_to <main|off> carried\n"
                    "       vr_mock_hand_to <main|off> held <fraction> [<cm>]\n"
                    "       vr_mock_hand_to <main|off> button [<units off its face>]\n"
-                   "       vr_mock_hand_to <main|off> wrist <cm>\n"
+                   "       vr_mock_hand_to <main|off> screen|screenbutt <cm> [<side cm>]\n"
                    "       vr_mock_hand_to <main|off> heldspot <hotspot index>\n"
                    "       vr_mock_hand_to <main|off> mag <along -1..1> [<units off its side>]\n"
                    "       vr_mock_hand_to <main|off> ragdoll <part> [<units over it>]\n"
@@ -829,18 +852,15 @@ void mockHandTo_f()
         Con_Printf("vr_mock_hand_to: the other hand's weapon's hotspot %d (type %d): %.1f %.1f %.1f\n",
             Q_atoi(Cmd_Argv(3)), h.type, target.x, target.y, target.z);
     }
-    if(button && !bullettime::buttonHandTarget(hand, target))
+    if(button && !gearlights::buttonHandTarget(hand, Cmd_Argc() == 4 ? Q_atof(Cmd_Argv(3)) : 0.f, target))
     {
         Con_Printf("vr_mock_hand_to: no gadget shown\n");
         return;
     }
-    if(glm::vec3 at, face; button && Cmd_Argc() == 4 && bullettime::button(at, face))
+    if(wrist && !bullettime::tapHandTarget(hand, Q_atof(Cmd_Argv(3)), Cmd_Argc() == 5 ? Q_atof(Cmd_Argv(4)) : 0.f,
+                    screenButt, target))
     {
-        target += face * Q_atof(Cmd_Argv(3)); // off the button's face (Button Size tests)
-    }
-    if(wrist && !bullettime::tapHandTarget(hand, Q_atof(Cmd_Argv(3)), target))
-    {
-        Con_Printf("vr_mock_hand_to: no gadget shown\n");
+        Con_Printf("vr_mock_hand_to: no gadget shown%s\n", screenButt ? ", or no gun in that hand" : "");
         return;
     }
     if(!carried && !weapon && !spot && !inHeld && !button && !wrist && !heldSpot)
@@ -874,6 +894,312 @@ void mockHandTo_f()
         return;
     }
     moveHandTo(hand, target);
+}
+
+// vr_mock_hand_aim <main|off> <x> <y> <z> | monster | off: keeps the hand turned (every frame, until "off") so that
+// what it holds aims (hands::State::aimRot, from its muzzle) at that world point, or at the middle of the live monster
+// nearest the player: scripted shooting (vrtutorial2's playthrough, Misc/quakevr/maps/vrtutorial2_playtest.py).
+struct MockAim
+{
+    bool on{false};
+    bool monster{false};
+    glm::vec3 point{0.f};
+};
+MockAim mockAim[HAND_COUNT];
+
+void mockHandAim_f()
+{
+    const int hand = Cmd_Argc() >= 3 ? mockHand(Cmd_Argv(1)) : -1;
+    if(hand < 0 || hand >= HAND_COUNT || (Cmd_Argc() != 3 && Cmd_Argc() != 5))
+    {
+        Con_Printf("vr_mock_hand_aim <main|off> <x> <y> <z> | monster | off\n");
+        return;
+    }
+    MockAim& a = mockAim[hand];
+    a.on = q_strcasecmp(Cmd_Argv(2), "off") != 0;
+    a.monster = Cmd_Argc() == 3 && !q_strcasecmp(Cmd_Argv(2), "monster");
+    if(Cmd_Argc() == 5)
+    {
+        a.point = {Q_atof(Cmd_Argv(2)), Q_atof(Cmd_Argv(3)), Q_atof(Cmd_Argv(4))};
+    }
+}
+
+// The middle of the live monster nearest the player (false: none).
+bool nearestMonster(glm::vec3& out)
+{
+    if(!sv.active)
+    {
+        return false;
+    }
+    qcvm_t* oldVm = nullptr;
+    PR_PushQCVM(&sv.qcvm, &oldVm);
+    const edict_t* player = EDICT_NUM(1);
+    const glm::vec3 from{player->v.origin[0], player->v.origin[1], player->v.origin[2]};
+    float best = 1e30f;
+    for(int i = svs.maxclients + 1; i < qcvm->num_edicts; i++)
+    {
+        const edict_t* e = EDICT_NUM(i);
+        if(e->free || !(static_cast<int>(e->v.flags) & FL_MONSTER) || e->v.health <= 0.f || e->v.takedamage == 0.f)
+        {
+            continue;
+        }
+        const glm::vec3 at{(e->v.absmin[0] + e->v.absmax[0]) * 0.5f, (e->v.absmin[1] + e->v.absmax[1]) * 0.5f,
+            (e->v.absmin[2] + e->v.absmax[2]) * 0.5f};
+        if(glm::distance(at, from) < best)
+        {
+            best = glm::distance(at, from);
+            out = at;
+        }
+    }
+    PR_PopQCVM(oldVm);
+    return best < 1e29f;
+}
+
+// A frame of vr_mock_hand_aim: the hand's orientation turned (most of the way) from its aim last frame to the target.
+void aimFrame()
+{
+    const hands::State& st = hands::current();
+    if(!st.valid)
+    {
+        return;
+    }
+    for(int h = 0; h < HAND_COUNT; h++)
+    {
+        MockAim& a = mockAim[h];
+        glm::vec3 target = a.point;
+        if(!a.on || (a.monster && !nearestMonster(target)))
+        {
+            continue;
+        }
+        const glm::vec3 cur = hands::forward(st.aimRot[h]);
+        const glm::vec3 from = glm::length(st.muzzle[h]) > 0.f ? st.muzzle[h] : st.pos[h];
+        const glm::vec3 want = glm::normalize(target - from);
+        const glm::vec3 axis = glm::cross(cur, want);
+        const float s = glm::length(axis);
+        const float angle = glm::atan(s, glm::dot(cur, want));
+        if(s < 1e-6f || angle < 1e-4f)
+        {
+            continue;
+        }
+        glm::vec3 fwd, right, up;
+        hands::angleVectors(glm::vec3{0.f, hands::playSpaceYaw(), 0.f}, fwd, right, up);
+        const glm::vec3 w = axis / s;
+        const glm::vec3 t{glm::dot(w, right), glm::dot(w, up), -glm::dot(w, fwd)};
+        if(!mockHandRotSet[h])
+        {
+            mockHandRot[h] = standingPose().hands[h].orientation;
+            mockHandRotSet[h] = true;
+        }
+        mockHandRot[h] = glm::normalize(glm::angleAxis(angle * 0.8f, t) * mockHandRot[h]);
+    }
+}
+
+// vr_mock_walk_to <x> <y> [<radius>] | off: an autopilot for scripted walks (vrtutorial2_playtest.py): every frame the
+// head turns to face the point (vr_movement_mode 1: the stick moves you where the head looks) and the moving stick is
+// pushed forward, until the player's origin is within `radius` (16) of it ("vr_mock_walk_to: arrived at x y z") or has
+// come no nearer for 2 seconds ("vr_mock_walk_to: stuck at x y z"); then the stick lets go. The head keeps its pitch.
+struct MockWalk
+{
+    bool on{false};
+    bool monster{false}; // "monster": towards the nearest live monster
+    char cls[64]{};      // "nearest <classname>": towards the nearest entity of that classname
+    glm::vec2 target{0.f};
+    float radius{16.f};
+    float best{1e30f};
+    double bestTime{0.0};
+};
+MockWalk mockWalk;
+
+void mockWalkTo_f()
+{
+    if(Cmd_Argc() == 2 && !q_strcasecmp(Cmd_Argv(1), "off"))
+    {
+        mockWalk.on = false;
+        mockInput.hands[HAND_OFF].stick = {0.f, 0.f};
+        return;
+    }
+    if(Cmd_Argc() != 3 && Cmd_Argc() != 4)
+    {
+        Con_Printf("vr_mock_walk_to <x> <y> [<radius>] | monster <radius> | nearest <classname> <radius> | off\n");
+        return;
+    }
+    mockWalk.on = true;
+    mockWalk.monster = !q_strcasecmp(Cmd_Argv(1), "monster");
+    mockWalk.cls[0] = 0;
+    if(Cmd_Argc() == 4 && !q_strcasecmp(Cmd_Argv(1), "nearest"))
+    {
+        q_strlcpy(mockWalk.cls, Cmd_Argv(2), sizeof(mockWalk.cls));
+        mockWalk.target = {0.f, 0.f};
+        mockWalk.radius = static_cast<float>(Q_atof(Cmd_Argv(3)));
+        mockWalk.best = 1e30f;
+        mockWalk.bestTime = realtime;
+        return;
+    }
+    mockWalk.target = {Q_atof(Cmd_Argv(1)), Q_atof(Cmd_Argv(2))};
+    mockWalk.radius = Cmd_Argc() == 4 ? static_cast<float>(Q_atof(Cmd_Argv(3))) : 16.f;
+    if(mockWalk.monster)
+    {
+        mockWalk.radius = static_cast<float>(Q_atof(Cmd_Argv(2)));
+    }
+    mockWalk.best = 1e30f;
+    mockWalk.bestTime = realtime;
+}
+
+// vr_mock_turn_to <yaw>: turns the player (the turning stick pushed, smooth turning) until he faces `yaw` (world
+// degrees, within 2), the head straight ahead: "vr_mock_turn_to: facing <yaw>". The plays (vr_mock_play) are in the
+// play space's axes: turned so, a punch or a throw goes that way.
+struct MockTurn
+{
+    bool on{false};
+    bool monster{false}; // "monster": facing the nearest live monster, every frame, until "off"
+    float yaw{0.f};
+};
+MockTurn mockTurn;
+
+void mockTurnTo_f()
+{
+    if(Cmd_Argc() != 2)
+    {
+        Con_Printf("vr_mock_turn_to <yaw> | monster | off\n");
+        return;
+    }
+    mockTurn.on = q_strcasecmp(Cmd_Argv(1), "off") != 0;
+    mockTurn.monster = !q_strcasecmp(Cmd_Argv(1), "monster");
+    mockTurn.yaw = static_cast<float>(Q_atof(Cmd_Argv(1)));
+    if(!mockTurn.on)
+    {
+        mockInput.hands[HAND_MAIN].stick = {0.f, 0.f};
+    }
+    if(glm::vec3 m; mockTurn.monster)
+    {
+        if(nearestMonster(m))
+        {
+            Con_Printf("vr_mock_turn_to: the nearest monster at %.0f %.0f %.0f\n", m.x, m.y, m.z);
+        }
+        else
+        {
+            Con_Printf("vr_mock_turn_to: no monster\n");
+        }
+    }
+    mockHeadOrientation = glm::quat{1.f, 0.f, 0.f, 0.f};
+}
+
+void turnFrame()
+{
+    if(!mockTurn.on)
+    {
+        return;
+    }
+    if(glm::vec3 m; mockTurn.monster)
+    {
+        if(!nearestMonster(m))
+        {
+            mockInput.hands[HAND_MAIN].stick = {0.f, 0.f};
+            return;
+        }
+        qcvm_t* oldVm = nullptr; // (the server's player: where it is now)
+        PR_PushQCVM(&sv.qcvm, &oldVm);
+        const edict_t* player = EDICT_NUM(1);
+        const float px = player->v.origin[0], py = player->v.origin[1];
+        PR_PopQCVM(oldVm);
+        mockTurn.yaw = glm::degrees(glm::atan(m.y - py, m.x - px));
+    }
+    float diff = mockTurn.yaw - hands::playSpaceYaw();
+    diff -= 360.f * glm::floor((diff + 180.f) / 360.f);
+    if(mockTurn.monster && glm::abs(diff) < 2.f)
+    {
+        mockInput.hands[HAND_MAIN].stick = {0.f, 0.f};
+        return;
+    }
+    if(glm::abs(diff) < 2.f)
+    {
+        mockTurn.on = false;
+        mockInput.hands[HAND_MAIN].stick = {0.f, 0.f};
+        Con_Printf("vr_mock_turn_to: facing %.0f\n", hands::playSpaceYaw());
+        return;
+    }
+    // (at least 0.4: under the stick's dead zone it would not turn at all)
+    mockInput.hands[HAND_MAIN].stick = {-glm::sign(diff) * glm::clamp(glm::abs(diff) / 25.f, 0.4f, 1.f), 0.f};
+}
+
+void walkFrame()
+{
+    turnFrame();
+    if(!mockWalk.on || !sv.active)
+    {
+        return;
+    }
+    qcvm_t* oldVm = nullptr;
+    PR_PushQCVM(&sv.qcvm, &oldVm);
+    const edict_t* player = EDICT_NUM(1);
+    const glm::vec3 at{player->v.origin[0], player->v.origin[1], player->v.origin[2]};
+    PR_PopQCVM(oldVm);
+    if(glm::vec3 m; mockWalk.monster)
+    {
+        if(!nearestMonster(m))
+        {
+            mockInput.hands[HAND_OFF].stick = {0.f, 0.f};
+            return;
+        }
+        mockWalk.target = {m.x, m.y};
+    }
+    if(mockWalk.cls[0])
+    {
+        // the nearest entity of that classname (its box's middle)
+        float best = 1e30f;
+        PR_PushQCVM(&sv.qcvm, &oldVm);
+        for(int i = svs.maxclients + 1; i < qcvm->num_edicts; i++)
+        {
+            const edict_t* e = EDICT_NUM(i);
+            if(e->free || strcmp(PR_GetString(e->v.classname), mockWalk.cls) != 0)
+            {
+                continue;
+            }
+            const glm::vec2 mid{(e->v.absmin[0] + e->v.absmax[0]) * 0.5f, (e->v.absmin[1] + e->v.absmax[1]) * 0.5f};
+            if(glm::distance(mid, glm::vec2{at.x, at.y}) < best)
+            {
+                best = glm::distance(mid, glm::vec2{at.x, at.y});
+                mockWalk.target = mid;
+            }
+        }
+        PR_PopQCVM(oldVm);
+        if(best > 1e29f)
+        {
+            mockWalk.on = false;
+            mockInput.hands[HAND_OFF].stick = {0.f, 0.f};
+            Con_Printf("vr_mock_walk_to: no %s\n", mockWalk.cls);
+            return;
+        }
+    }
+    const glm::vec2 d = mockWalk.target - glm::vec2{at.x, at.y};
+    const float dist = glm::length(d);
+    const char* done = nullptr;
+    if(dist <= mockWalk.radius)
+    {
+        done = "arrived";
+    }
+    else if(dist < mockWalk.best - 1.f)
+    {
+        mockWalk.best = dist;
+        mockWalk.bestTime = realtime;
+    }
+    else if(realtime - mockWalk.bestTime > 2.0)
+    {
+        done = "stuck";
+    }
+    if(done)
+    {
+        mockWalk.on = false;
+        mockInput.hands[HAND_OFF].stick = {0.f, 0.f};
+        Con_Printf("vr_mock_walk_to: %s at %.0f %.0f %.0f\n", done, at.x, at.y, at.z);
+        return;
+    }
+    const float yaw = glm::degrees(glm::atan(d.y, d.x)) - hands::playSpaceYaw();
+    const glm::vec3 headFwd = mockHeadOrientation * glm::vec3{0.f, 0.f, -1.f};
+    const float pitch = glm::asin(glm::clamp(headFwd.y, -1.f, 1.f));
+    mockHeadOrientation = glm::angleAxis(glm::radians(yaw), glm::vec3{0.f, 1.f, 0.f}) *
+                          glm::angleAxis(pitch, glm::vec3{1.f, 0.f, 0.f});
+    mockInput.hands[HAND_OFF].stick = {0.f, glm::clamp(dist / 64.f, 0.35f, 1.f)}; // (slowing down: little overshoot)
 }
 
 // vr_mock_camera <x> <y> <z> <pitch> <yaw>: the eyes drawn from there (tracking space, metres; pitch down positive)
@@ -1033,12 +1359,23 @@ public:
         glm::vec3 playVel[HAND_COUNT + 1], playAngVel[HAND_COUNT + 1];
         bool played[HAND_COUNT + 1]{};
         playFrame(realtime, playVel, playAngVel, played);
+        aimFrame();
+        walkFrame();
 
         tracking = standingPose();
         tracking.input = mockInput;
         tracking.time = realtime;
         for(int h = 0; h < HAND_COUNT; h++)
         {
+            if(HandGlide& g = handGlide[h]; g.start >= 0.0)
+            {
+                const double t = za::clamp((realtime - g.start) / za::max(g.length, 1e-3), 0.0, 1.0);
+                mockHandPos[h] = glm::mix(g.from, g.to, static_cast<float>(t));
+                if(t >= 1.0)
+                {
+                    g.start = -1.0;
+                }
+            }
             if(mockHandSet[h])
             {
                 tracking.hands[h].position = mockHandPos[h];
@@ -1113,6 +1450,10 @@ public:
             hand.linearVelocity = handMotion[h].update(hand.position, realtime);
             const glm::vec3 turning = handTurn[h].update(hand.orientation, realtime);
             hand.angularVelocity = vr_mock_turn_velocity.value ? turning : glm::vec3{0.f};
+            if(const HandGlide& g = handGlide[h]; g.start >= 0.0)
+            {
+                hand.linearVelocity = (g.to - g.from) / static_cast<float>(za::max(g.length, 1e-3)); // the glide's own
+            }
             if(played[h])
             {
                 hand.linearVelocity = playVel[h]; // vr_mock_play: the motion's own
@@ -1331,6 +1672,9 @@ void registerMockCommands()
     Cmd_AddCommand("vr_mock_hand", mockHand_f);
     Cmd_AddCommand("vr_mock_hand_turn", mockHandTurn_f);
     Cmd_AddCommand("vr_mock_hand_to", mockHandTo_f);
+    Cmd_AddCommand("vr_mock_hand_aim", mockHandAim_f);
+    Cmd_AddCommand("vr_mock_walk_to", mockWalkTo_f);
+    Cmd_AddCommand("vr_mock_turn_to", mockTurnTo_f);
     Cmd_AddCommand("vr_mock_look", mockLook_f);
     Cmd_AddCommand("vr_mock_camera", mockCamera_f);
     Cmd_AddCommand("vr_mock_fingers", mockFingers_f);

@@ -1523,7 +1523,13 @@ void(float xHand) W_FistMelee =
 
     org = trace_endpos - v_forward*4;
 
-    if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
+    if(VRGetMeleeHitSoundPlayed(xHand) == FALSE && vr_melee_slap)
+    {
+        // A slap (vr_melee_slap; only on what takes damage: VR_Melee_SlapLands): skin on skin, no knock.
+        VR_SoundVaried(self, VRGetGunChannel(xHand), VR_Melee_HitSound(""), 1.0, ATTN_NORM);
+        playedsound = TRUE;
+    }
+    else if(VRGetMeleeHitSoundPlayed(xHand) == FALSE)
     {
         // (A held rock or brick knocks as it does; a fist on an explosive box, a metal knock: VR_Melee_HitSoundOn.)
         VR_SoundVaried(self, VRGetGunChannel(xHand), VR_Debris_Is(held) ? VR_Debris_Sound(held) :
@@ -1539,7 +1545,10 @@ void(float xHand) W_FistMelee =
     {
         VRMeleeHapticByHand(xHand);
         trace_ent.axhitme = 1;
-        VR_HitBloodSplash(trace_ent, org, xdmg);
+        if(!vr_melee_slap)
+        {
+            VR_HitBloodSplash(trace_ent, org, xdmg); // (a slap draws no blood)
+        }
         T_Damage_VRMelee (trace_ent, self, self, xdmg);
     }
     else
@@ -2062,6 +2071,9 @@ void(float xHand, float shotcount, vector dir, vector spread) FireBullets =
     vr_tracer_from = muzzle;
     FireBulletsImpl(shotcount, dir, spread, src, 2048 + vlen(muzzle - src), TRUE);
     VR_ClearHitKind();
+    // QVR: the shot's line passing near a monster alerts it (vr_stealth.qc)
+    traceline(src, src + dir * 2048, FALSE, self);
+    VR_Stealth_Graze(muzzle, trace_endpos, self, trace_ent);
 }
 
 void(float shotcount, vector dir, vector spread) EnemyFireBullets =
@@ -2288,6 +2300,7 @@ entity(float xHand) W_FireRocket =
     setsize(missile, '0 0 0', '0 0 0');
     setorigin(missile, VRGetMuzzlePos(xHand));
     VR_ShotPlace(missile, xHand); // behind what the muzzle is inside (VR_ShotPlace)
+    VR_Stealth_GrazeMissile(missile); // QVR: its line passing near a monster alerts it (vr_stealth.qc)
 
     // HIPNOTIC
     //MED 11/09/96
@@ -2344,6 +2357,8 @@ void(vector p1, vector p2, entity from, float damage) LightningDamage =
 {
     entity        e1, e2;
     vector        f;
+
+    VR_Stealth_Graze(p1, p2, from, world); // QVR: the beam passing near a monster alerts it (vr_stealth.qc)
 
     f = p2 - p1;
     normalize(f);
@@ -2782,6 +2797,7 @@ void(float xHand) W_FireGrenade =
     setsize(missile, '0 0 0', '0 0 0');
     setorigin(missile, VRGetMuzzlePos(xHand));
     VR_ShotPlace(missile, xHand); // behind what the muzzle is inside (VR_ShotPlace)
+    VR_Stealth_GrazeMissile(missile); // QVR: its line passing near a monster alerts it (vr_stealth.qc)
     VR_Grenade_Make(missile, GrenadeExplode, 2.5, TRUE); // QVR: catchable too with vr_grenade_catch 2
 
     weaponfired(self, xHand); // VR: its drawn kick and muzzle flash (vr_weaponfx.cpp)
@@ -2801,7 +2817,7 @@ void() ProximityExplode =
 };
 
 //MED 10/31/96
-float NumProximityGrenades;
+// (float NumProximityGrenades: vr_grenade.qc, before this: a pouch's proximity grenade let go of armed is one too)
 /*
 ================
 ProximityGrenadeExplode
@@ -2966,6 +2982,7 @@ void(float xHand) W_FireProximityGrenade =
     setmodel(missile, "progs/proxbomb.mdl");
     setorigin(missile, VRGetMuzzlePos(xHand));
     VR_ShotPlace(missile, xHand); // behind what the muzzle is inside (VR_ShotPlace)
+    VR_Stealth_GrazeMissile(missile); // QVR: its line passing near a monster alerts it (vr_stealth.qc)
     setsize(missile, '-1 -1 -1', '1 1 1');
 
     weaponfired(self, xHand); // VR: its drawn kick and muzzle flash (vr_weaponfx.cpp)
@@ -3004,6 +3021,7 @@ entity(vector org, vector dir) launch_spike =
 
     newmis.velocity = dir * 1750;
     VR_ShotPush_Launch(newmis, QVR_SHOTPUSH_NAIL); // VR: pushes the prop it hits or flies through
+    VR_Stealth_GrazeMissile(newmis); // QVR: its line passing near a monster alerts it (vr_stealth.qc)
     return newmis;
 };
 
@@ -3307,7 +3325,9 @@ void(float xHand, float xWeapon, float xWeaponFlags, float xAttackFinished,
         return;
     }
 
-    float emptyHammer = xWeapon == WID_MJOLNIR && !W_CheckNoAmmo(xHand);
+    // So is the Super Axe without its cells (they are only its burst's: vr_mg3_weapons.qc): held by the whole hand, the
+    // trigger closed round its haft, silent (the author's note, vrfiringrange_2026-10-08_14-14-01); untracked, it swings.
+    float emptyHammer = (xWeapon == WID_MJOLNIR || xWeapon == WID_SUPERAXE) && !W_CheckNoAmmo(xHand);
     if(emptyHammer && VRHandsTracked(self) && self.ishuman)
     {
         return;
@@ -3338,6 +3358,7 @@ void(float xHand, float xWeapon, float xWeaponFlags, float xAttackFinished,
     if(!justClosing)
     {
         self.show_hostile = time + 1;
+        VR_Stealth_Shot(self, xWeapon); // QVR: heard by its loudness (vr_stealth.qc)
     }
 
     // ZOID--
@@ -4296,10 +4317,10 @@ void() VR_GrenShot_TestShoot =
     VR_Test_Fire(kind, at);
 };
 
-// QVR: impulse 252 with vr_test_held_pick 9-12 (tests): the nearest rock, a hand grenade from the pouch, the nearest box
-// of shells, the nearest brick put into the empty off hand (the two-handed re-grip tests: ROUND21.md, "Every prop in
-// both hands").
-void(float xPick) VR_Test_HeldProp =
+// QVR: impulse 252 with vr_test_held_pick 9-13 (tests): the nearest rock, a hand grenade from the pouch, the nearest box
+// of shells, the nearest brick, the nearest crate or barrel (13) put into the empty off hand (the two-handed re-grip tests: ROUND21.md, "Every prop in
+// both hands"); the main hand with vr_test_held_hand 1.
+void(float xPick, float xHand) VR_Test_HeldProp =
 {
     if(xPick == 10)
     {
@@ -4307,8 +4328,31 @@ void(float xPick) VR_Test_HeldProp =
         {
             self.ammo_rockets = 1;
         }
-        VR_HandGrenade_Take(cVR_OffHand);
-        dprint("test: a hand grenade in the off hand\n");
+        VR_HandGrenade_Take(xHand);
+        dprint(xHand == cVR_MainHand ? "test: a hand grenade in the main hand\n" : "test: a hand grenade in the off hand\n");
+        return;
+    }
+    if(xPick == 13)
+    {
+        // The nearest crate or barrel (prop_2h_test.sh's REPEAT: thrown, taken again), between the hands.
+        entity crateNear = world;
+        float crateDist = 512;
+        for(entity crateE = nextent(world); crateE; crateE = nextent(crateE))
+        {
+            if(VR_Crate_Is(crateE) && crateE.carry_player == world && vlen(crateE.origin - self.origin) < crateDist)
+            {
+                crateNear = crateE;
+                crateDist = vlen(crateE.origin - self.origin);
+            }
+        }
+        if(crateNear == world)
+        {
+            dprint("test: no crate or barrel\n");
+            return;
+        }
+        setorigin(crateNear, (VRGetHandPos(cVR_OffHand) + VRGetHandPos(cVR_MainHand)) * 0.5 - (crateNear.mins + crateNear.maxs) * 0.5);
+        VR_Carry_Start(self, cVR_OffHand, crateNear);
+        dprint(sprintf("test: %s (health %.0f) in the off hand\n", crateNear.model, crateNear.health));
         return;
     }
     string heldClass = xPick == 9 ? "vr_rock" : (xPick == 11 ? "item_shells" : "vr_brick");
@@ -4327,9 +4371,9 @@ void(float xPick) VR_Test_HeldProp =
         dprint(sprintf("test: no %s\n", heldClass));
         return;
     }
-    setorigin(heldNear, VRGetHandPos(cVR_OffHand));
-    VR_Carry_Start(self, cVR_OffHand, heldNear);
-    dprint(sprintf("test: %s (%s) in the off hand\n", heldNear.model, heldClass));
+    setorigin(heldNear, VRGetHandPos(xHand));
+    VR_Carry_Start(self, xHand, heldNear);
+    dprint(sprintf("test: %s (%s) in the %s hand\n", heldNear.model, heldClass, xHand == cVR_MainHand ? "main" : "off"));
 };
 
 // impulse 211: a hand grenade from the pouch into the empty off hand (a rocket for it if you have none), let go of
@@ -4632,6 +4676,12 @@ void() ImpulseCommands =
         VR_Cheat_TogglePowerup(radsuit_finished, rad_time, IID_SUIT, "Biosuit");
     if(self.impulse == 194)
         VR_Cheat_HealthArmor();
+    if(self.impulse == 195)
+        VR_Cheat_Die(0);
+    if(self.impulse == 196)
+        VR_Cheat_Die(1);
+    if(self.impulse == 197)
+        VR_Cheat_Die(2);
     if(self.impulse == 243 && !deathmatch && !coop) // QVR: a backpack of your ammo ahead (physics tests)
     {
         vector playerOrigin = self.origin;
@@ -4974,11 +5024,12 @@ void() ImpulseCommands =
         }
     }
     // QVR: a gib or a head in the empty off hand, each in turn (fitted hands tests, round 21).
-    if(self.impulse == 252 && !deathmatch && !coop && VRIsHandEmpty(self, cVR_OffHand) && cvar("vr_test_held_pick") >= 9)
+    float testHeldHand = cvar("vr_test_held_hand") ? cVR_MainHand : cVR_OffHand;
+    if(self.impulse == 252 && !deathmatch && !coop && VRIsHandEmpty(self, testHeldHand) && cvar("vr_test_held_pick") >= 9)
     {
-        VR_Test_HeldProp(floor(cvar("vr_test_held_pick")));
+        VR_Test_HeldProp(floor(cvar("vr_test_held_pick")), testHeldHand);
     }
-    else if(self.impulse == 252 && !deathmatch && !coop && VRIsHandEmpty(self, cVR_OffHand))
+    else if(self.impulse == 252 && !deathmatch && !coop && VRIsHandEmpty(self, testHeldHand))
     {
         if(cvar("vr_test_held_pick") >= 0)
         {
@@ -5005,9 +5056,9 @@ void() ImpulseCommands =
         {
             VR_Gib_MakeDestroyable(testGib, (testModel == "progs/gib1.mdl" || testModel == "progs/gib2.mdl" || testModel == "progs/gib3.mdl") ? 1 : 1.5); // (a head 1.5)
         }
-        setorigin(testGib, VRGetHandPos(cVR_OffHand));
-        VR_Carry_Start(self, cVR_OffHand, testGib);
-        dprint("test: "); dprint(testModel); dprint(" in the off hand\n");
+        setorigin(testGib, VRGetHandPos(testHeldHand));
+        VR_Carry_Start(self, testHeldHand, testGib);
+        dprint("test: "); dprint(testModel); dprint(testHeldHand == cVR_MainHand ? " in the main hand\n" : " in the off hand\n");
     }
     // QVR: prints the held weapons' hotspots (weaponhotspot, weaponhotspotinfo; round 21).
     if(self.impulse == 253)

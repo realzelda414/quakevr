@@ -4,8 +4,11 @@
 #include "vr_axestick.hpp"
 #include "vr_box3d.hpp"
 #include "vr_hitmodel.hpp"
+#include "vr_hull.hpp"
 #include "vr_climb.hpp"
+#include "vr_foegrab.hpp"
 #include "vr_cvars.hpp"
+#include "vr_explosiondebris.hpp"
 #include "vr_ledges.hpp"
 #include "vr_move.hpp"
 #include "vr_motion.hpp"
@@ -279,6 +282,49 @@ BroadcastRoom broadcastRoom{};
     }
 }
 
+// A whole temp entity QuakeC wrote at `at`: an explosion's (TE_EXPLOSION, TE_EXPLOSION2, TE_TAREXPLOSION) launches its
+// chunks at the frame's end (vr_explosiondebris.cpp), where the client draws it.
+void noteExplosion(int at)
+{
+    const byte type = sv.datagram.data[at + 1];
+    if(type != TE_EXPLOSION && type != TE_EXPLOSION2 && type != TE_TAREXPLOSION)
+    {
+        return;
+    }
+    const byte* p = sv.datagram.data + at + 2;
+    const auto i16 = [](const byte* q) { return static_cast<int16_t>(q[0] | (q[1] << 8)); };
+    const auto i32 = [](const byte* q) { return static_cast<int32_t>(static_cast<uint32_t>(q[0]) | (static_cast<uint32_t>(q[1]) << 8) | (static_cast<uint32_t>(q[2]) << 16) | (static_cast<uint32_t>(q[3]) << 24)); };
+    glm::vec3 org{0.f};
+    for(int k = 0; k < 3; k++)
+    {
+        // As MSG_ReadCoord reads it (common.c), in the server's protocol.
+        if(sv.protocolflags & PRFL_FLOATCOORD)
+        {
+            const int32_t bits = i32(p);
+            float f;
+            memcpy(&f, &bits, sizeof(f));
+            org[k] = f;
+            p += 4;
+        }
+        else if(sv.protocolflags & PRFL_INT32COORD)
+        {
+            org[k] = static_cast<float>(i32(p)) * (1.f / 16.f);
+            p += 4;
+        }
+        else if(sv.protocolflags & PRFL_24BITCOORD)
+        {
+            org[k] = static_cast<float>(i16(p)) + static_cast<float>(p[2]) * (1.f / 255.f);
+            p += 3;
+        }
+        else
+        {
+            org[k] = static_cast<float>(i16(p)) * (1.f / 8.f);
+            p += 2;
+        }
+    }
+    qvr::explosiondebris::noteBroadcast(org);
+}
+
 void broadcastMark(int at)
 {
     BroadcastRoom& b = broadcastRoom;
@@ -390,6 +436,7 @@ extern "C" void VR_BroadcastWritten(sizebuf_t* dest)
         const int len = tempEntityLength(b.msgAt);
         if(len > 0 && b.qcEnd - b.msgAt == len)
         {
+            noteExplosion(b.msgAt); // (an explosion's chunks: vr_explosiondebris.cpp)
             broadcastMark(b.qcEnd); // a whole temp entity: the next message begins here
         }
         else if((len > 0 && b.qcEnd - b.msgAt > len) || (len == 0 && b.qcEnd - b.msgAt >= 2))
@@ -617,8 +664,11 @@ extern "C" void VR_ReadMoveExtras(client_t* client)
     // Bits 21 and 22 (QVR_VRBITS0_OFFHAND_PRIMARY, _MAINHAND_PRIMARY): the hand's A/X held (the grapple's unreel).
     const int primary = ((move.buttons & QVR_BUTTON_OFFHANDPRIMARY) ? (1 << 21) : 0) |
                         ((move.buttons & QVR_BUTTON_MAINHANDPRIMARY) ? (1 << 22) : 0);
-    setFieldFloat(ent, f.vrbits0,
-        static_cast<float>(withPreviousBits(bits.received, bits.previousFrame) | tracked | busy | secondary | primary));
+    // Bit 23 (QVR_VRBITS0_CROUCHED): the player has his crouched box (vr_crouch_hull: vr_hull.cpp).
+    hull::updateCrouch(ent, move.headPos);
+    const int crouched = hull::isCrouched(ent) ? (1 << 23) : 0;
+    setFieldFloat(ent, f.vrbits0, static_cast<float>(
+        withPreviousBits(bits.received, bits.previousFrame) | tracked | busy | secondary | primary | crouched));
     setFieldVec(ent, f.teleport_target, move.teleportTarget);
     setFieldFloat(ent, f.offhand_hotspot, move.hotspots[0]);
     setFieldFloat(ent, f.sawcord, move.sawCord);
@@ -659,6 +709,7 @@ extern "C" int VR_ActiveWeaponStat(edict_t* ent)
 extern "C" void VR_CalcStats(client_t* client, int* statsi, float* statsf)
 {
     climb::calcStats(client->edict, statsi); // any progs
+    foegrab::calcStats(client->edict, statsi);
     if(!bindings().isVrProgs)
     {
         return;
@@ -698,6 +749,7 @@ extern "C" void VR_CalcStats(client_t* client, int* statsi, float* statsf)
     statsi[STAT_QVR_RELOADMODE] = vr_holster_mode.value == 0.f ? static_cast<int>(vr_reload_mode.value) : 0;
     stat(STAT_QVR_POUCHKIND, f.vr_pouch_kind);
     stat(STAT_QVR_POUCHCOUNT, f.vr_pouch_count);
+    statsf[STAT_QVR_STEALTH] = fieldFloatOr(ent, f.stl_hud, -1.f);
 
     const int holsterWeapon[numHolsters] = {f.holsterweapon0, f.holsterweapon1,
         f.holsterweapon2, f.holsterweapon3, f.holsterweapon4, f.holsterweapon5};
@@ -831,7 +883,10 @@ extern "C" void VR_WriteEntityUpdate(sizebuf_t* msg, edict_t* ent, int bits)
     }
     if(bits & U_QVR_WEAPONUID)
     {
-        MSG_WriteLong(msg, weaponUid(weaponInst(ent, f.weaponinst)));
+        edict_t* const inst = weaponInst(ent, f.weaponinst);
+        MSG_WriteLong(msg, weaponUid(inst));
+        // Its clip: the rounds in it, shown on its ammo screen as a held gun's (vr_view.cpp setupWorldWeapons).
+        MSG_WriteByte(msg, CLAMP(0, static_cast<int>(inst ? fieldFloatOr(inst, f.wi_clip, 0.f) : 0.f), 255));
     }
     if(bits & U_QVR_SSGOPEN)
     {
@@ -856,8 +911,11 @@ extern "C" void VR_ServerFrameEnd()
     sweepWeaponInsts(); // the weapons' records nothing has any more: freed, their ids gone
     tips::serverFrame(); // the map tips whose entity is gone (before its slot is reused)
 
+    qvr::foegrab::serverFrame(); // held enemies slowed and dragged (before their poses are kept)
     qvr::hitmodel::serverFrame(); // precise hits: the client's lerp of the monsters' poses and steps, kept
     qvr::axestick::serverFrame(); // thrown axes stuck in things go with them (after the poses above)
+    qvr::foegrab::afterPoses(); // the held spots placed (after the poses above); a hand pulled too far lets go
+    qvr::explosiondebris::serverFrame(); // the explosions' chunks: new ones launched, the ended gone, the fades
     progs::loadNoticeFrame(); // a loaded save's warning (another build's), once the player is in
 
     if(!vrProtocol())
@@ -956,6 +1014,7 @@ void rebaseHands(edict_t* player)
         hand.tracked += delta;
         hand.throwPos += delta;
     }
+    move.lampLens += delta; // (the stealth AI's view of his flashlight: vr_stealth.cpp)
     move.muzzlePos[0] += delta;
     move.muzzlePos[1] += delta;
     move.loadPort[0] += delta;
@@ -1107,7 +1166,7 @@ void sendEject(edict_t* player, int hand, int kind, int count, int flags, float 
 void sendShock(edict_t* player, int kind, const float org[3], float radius, float duration)
 {
     sizebuf_t* msg = nullptr;
-    if(kind == shock::KindSelf || kind == shock::KindSelfHit)
+    if(shock::toOneClient(kind))
     {
         msg = clientMessage(player);
     }
@@ -1176,6 +1235,7 @@ void init()
     Cmd_AddCommand("vr_dumpplayer", dumpPlayer_f);
     Cmd_AddCommand("vr_net_stats", netStats_f);
     climb::init();
+    foegrab::init();
     ledges::init();
 }
 

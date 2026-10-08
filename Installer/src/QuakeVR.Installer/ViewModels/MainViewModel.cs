@@ -69,6 +69,10 @@ public sealed class StartupOptions
     public bool FromTemp { get; set; }
     /// <summary>The Apps &amp; Features entry goes into this made-up registry root (a JSON file) instead of HKCU (tests).</summary>
     public string? RegistryFile { get; set; }
+    /// <summary>--sandbox &lt;dir&gt;: a test install kept in that folder (<see cref="Core.Packaging.Sandbox"/>): the
+    /// install, shortcuts, downloads and the installer's settings go there, no Apps &amp; Features entry, the VC++ runtime
+    /// only checked.</summary>
+    public Sandbox? Sandbox { get; set; }
 
     /// <summary>The arguments an uninstall passes on to its copy in %TEMP%.</summary>
     public List<string> UninstallArguments(string target)
@@ -111,7 +115,20 @@ public sealed class StartupOptions
                 case "--quiet": o.Quiet = true; break;
                 case "--from-temp": o.FromTemp = true; break;
                 case "--registry-file": o.RegistryFile = Next(); break;
+                case "--sandbox": if (Next() is { } sb) { o.Sandbox = new Sandbox(sb); } break;
             }
+        }
+        // QVR_SETUP_FEED, like --feed (a local test release's server); --feed wins.
+        if (o.Feeds.Count == 0)
+        {
+            o.Feeds.AddRange(InstallerSettings.FeedsFromEnvironment());
+        }
+        if (o.Sandbox is { } sandbox)
+        {
+            o.Target ??= sandbox.Target;
+            o.ShortcutsDir ??= sandbox.ShortcutsDir;
+            o.Downloads ??= sandbox.Downloads;
+            o.VcRedistDryRun = true;
         }
         o.Package = o.Package is { } pk ? PathUtil.TryNormalize(pk) ?? pk : null;
         o.Textures = o.Textures is { } tx ? PathUtil.TryNormalize(tx) ?? tx : null;
@@ -154,6 +171,14 @@ public sealed class MainViewModel : ObservableObject
     CancellationTokenSource? _cts;
     InstallRecord? _record;
     InstallRecord? _existing;
+    InstallDetection _found = new();
+    bool _reinstall;
+    bool _showReinstall;
+    bool _resetSettings;
+    bool _removeSaves;
+    int _settingsFiles;
+    int _savesFiles;
+    InstallMode _runMode;
     ReleaseFeed? _feed;
     long? _coreSize;
     Task _details = Task.CompletedTask;
@@ -169,7 +194,10 @@ public sealed class MainViewModel : ObservableObject
             _settings.FeedUrls = options.Feeds;
         }
         DefaultInstallDir = Path.Combine(probe.GetFolder(KnownFolder.LocalAppData) ?? @"C:\QuakeVR", "Programs", "QuakeVR");
-        _installDir = (options.Target is { } t ? PathUtil.TryNormalize(t) : null) ?? DefaultInstallDir;
+        // An existing install: the folder given, this Setup's own install (its copy in <QVR>\setup), the Apps & Features
+        // entry, the default folder (InstallDetection; Browse picks another).
+        _found = InstallDetection.Find(RegistryFor(options), options.Target, Environment.ProcessPath, DefaultInstallDir);
+        _installDir = (options.Target is { } t ? PathUtil.TryNormalize(t) : null) ?? _found.Picked?.Dir ?? DefaultInstallDir;
         Steps = [new(1, "Welcome"), new(2, AiStatement.Title), new(3, "Your PC"), new(4, "Options"), new(5, "Install"), new(6, "Play"), new(7, "Thanks")];
         StatementChoices = [.. Enumerable.Range(0, AiStatement.Claims.Count).Select(i => new StatementChoice(Statement, i))];
         Statement.Changed += () =>
@@ -196,6 +224,13 @@ public sealed class MainViewModel : ObservableObject
         OpenFolderCommand = new RelayCommand(() => OpenUrl(InstallDir));
         CopySteamOptionsCommand = new RelayCommand(() => Clipboard.SetText(SteamLaunchOptions));
         UninstallCommand = new RelayCommand(() => _ = UninstallAsync(), () => _existing is not null && !Installing);
+        ToggleReinstallCommand = new RelayCommand(() => ShowReinstall = !ShowReinstall);
+        ReinstallCommand = new RelayCommand(() =>
+        {
+            Reinstall = true;
+            GoTo(Page.Statement);
+        }, () => _existing is not null && !Installing);
+        BrowseExistingCommand = new RelayCommand(BrowseExisting, () => !Installing);
         OpenUrlCommand = new RelayCommand(p => OpenUrl(p as string ?? ""));
         OpenKofiCommand = new RelayCommand(() => OpenUrl(KofiUrl));
         OpenDiscordCommand = new RelayCommand(() => OpenUrl(DiscordUrl));
@@ -226,6 +261,16 @@ public sealed class MainViewModel : ObservableObject
 
     public ObservableCollection<StepItem> Steps { get; }
     public string InstallerVersion => $"Installer {typeof(MainViewModel).Assembly.GetName().Version?.ToString(3)}";
+
+    /// <summary>A test run says so on every page: another feed than the release hosts' (--feed, QVR_SETUP_FEED,
+    /// installer-settings.json), a sandbox. Null for a real install.</summary>
+    public string? TestBanner =>
+        string.Join("   ·   ", new[]
+        {
+            _settings.HasDefaultFeeds ? null : $"TEST FEED: {string.Join(", ", _settings.FeedUrls)}",
+            _options.Sandbox is { } sb ? $"SANDBOX: {sb.Root}" : null,
+        }.OfType<string>()) is { Length: > 0 } text ? text : null;
+    public bool ShowTestBanner => TestBanner is not null;
     public string DefaultInstallDir { get; }
 
     public Page Page
@@ -252,9 +297,9 @@ public sealed class MainViewModel : ObservableObject
 
     public string NextText => Page switch
     {
-        Page.Welcome => _existing is null ? "Get started" : "Update",
+        Page.Welcome => _existing is null ? "Get started" : !QuickUpdate ? "Update…" : OfferedMode == InstallMode.Repair ? "Repair" : "Update",
         Page.Statement => "Continue",
-        Page.Options => _existing is null ? "Install" : "Update",
+        Page.Options => Reinstall ? "Install again" : _existing is null ? "Install" : "Update",
         Page.Done => "Next",
         Page.Support => "Finish",
         _ => "Next",
@@ -262,7 +307,8 @@ public sealed class MainViewModel : ObservableObject
 
     public string FooterHint => Page switch
     {
-        Page.Welcome => $"Nothing is changed until you press {(_existing is null ? "Install" : "Update")}.",
+        Page.Welcome => _existing is null ? "Nothing is changed until you press Install." :
+                        $"Nothing is changed until you press {(OfferedMode == InstallMode.Repair ? "Repair" : "Update")}. Your settings, saves and maps are kept.",
         Page.Statement => Statement.AllYes ? "Your answers are not saved or sent anywhere." : "Continue needs YES to all four.",
         Page.Detect => "Your Quake files are only read, never changed.",
         Page.Options => "Free and open source. No telemetry: nothing is sent about you.",
@@ -290,9 +336,16 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ShowCreditsCommand { get; }
     public ICommand RetryFeedCommand { get; }
     public ICommand PickPackageAndInstallCommand { get; }
+    public ICommand ToggleReinstallCommand { get; }
+    public ICommand ReinstallCommand { get; }
+    public ICommand BrowseExistingCommand { get; }
 
     public void GoTo(Page page)
     {
+        if (page == Page.Welcome)
+        {
+            Reinstall = false; // back on the Update screen: its own button updates
+        }
         Page = page;
         for (var i = 0; i < Steps.Count; ++i)
         {
@@ -305,6 +358,8 @@ public sealed class MainViewModel : ObservableObject
 
     bool CanNext() => Page switch
     {
+        // The Update screen: Update/Repair needs the package (local, or the release list read).
+        Page.Welcome => _existing is null || !QuickUpdate || PackageReady,
         Page.Statement => Statement.AllYes,
         Page.Detect => !Detecting && SelectedQuake is { Playable: true },
         Page.Options => InstallDirError is null && SelectedQuake is not null && PackageReady,
@@ -317,7 +372,14 @@ public sealed class MainViewModel : ObservableObject
         switch (Page)
         {
             case Page.Welcome:
-                GoTo(Page.Statement);
+                if (_existing is not null && QuickUpdate)
+                {
+                    _ = UpdateAsync(); // the Update screen's one button: straight to the update (or repair)
+                }
+                else
+                {
+                    GoTo(Page.Statement);
+                }
                 break;
             case Page.Statement:
                 if (!Statement.AllYes)
@@ -347,7 +409,8 @@ public sealed class MainViewModel : ObservableObject
     {
         if (Page > Page.Welcome)
         {
-            GoTo(Page == Page.Install ? Page.Options : Page == Page.Support ? Page.Done : Page - 1);
+            // (An update from the Update screen goes back there.)
+            GoTo(Page == Page.Install ? (_runMode == InstallMode.Install ? Page.Options : Page.Welcome) : Page == Page.Support ? Page.Done : Page - 1);
         }
     }
 
@@ -365,9 +428,84 @@ public sealed class MainViewModel : ObservableObject
 
     // ---- Welcome: an existing install ----------------------------------------------------------------------------
 
+    // The Update screen: "Quake VR: Unleashed 0.9.0 is installed", Update to the newer package (or Repair with the same
+    // or an older one) with the one primary button, Install again from scratch (two choices, a backup first), Remove.
+
     public bool HasExisting => _existing is not null;
-    public string ExistingText => _existing is null ? "" :
-        $"Quake VR: Unleashed {_existing.Version} is installed in {InstallDir}. Update it (your settings, saves and relit maps are kept), or remove it.";
+    /// <summary>The package's version: the local package's, else the release list's (null until it is known).</summary>
+    string? TargetVersion => HasLocalPackage ? _packageVersion : FeedAvailable ? _feed?.Version : null;
+    /// <summary>Update (a newer package, or another build) or Repair (the same or an older one); null while the package's
+    /// version is not known.</summary>
+    public InstallMode? OfferedMode => _existing is { } e && TargetVersion is { } v ? MaintenancePlanner.ModeFor(e.Version, v) : null;
+    /// <summary>The install's Quake folder is still there: Update goes straight to the install (no wizard pages).</summary>
+    public bool QuickUpdate => _existing is { } e && File.Exists(Path.Combine(e.QuakeDir, "id1", "pak0.pak"));
+
+    public string ExistingTitle => _existing is { } e ? $"{ProductName} {ReleaseVersion.Parse(e.Version).Short} is installed" : "";
+
+    public string ExistingText
+    {
+        get
+        {
+            if (_existing is not { } e)
+            {
+                return "";
+            }
+            var to = ReleaseVersion.Parse(TargetVersion).Short;
+            return OfferedMode switch
+            {
+                InstallMode.Update when ReleaseVersion.Compare(e.Version, TargetVersion) == VersionOrder.Other =>
+                    $"Another build of {to} is available ({TargetVersion}): Update replaces only the program files that differ.",
+                InstallMode.Update => $"Update to {to}: only the program files that changed are replaced.",
+                InstallMode.Repair when ReleaseVersion.Compare(e.Version, TargetVersion) == VersionOrder.Older =>
+                    $"The package ({to}) is older than the install: Repair checks the files and restores what it can, without going back a version.",
+                InstallMode.Repair => "This is the latest version. Repair checks every program file and restores any that are missing or damaged.",
+                _ when FeedUnavailable => "The latest version couldn't be found online right now. Try again later, or pick a package (QuakeVR.zip) to update from.",
+                _ => "Looking for the latest version…",
+            };
+        }
+    }
+
+    public string ExistingDetail => _existing is not { } e ? "" :
+        $"In {InstallDir}. Your settings, saves, screenshots, voice notes, installed maps and relit maps are kept." +
+        (QuickUpdate ? "" : $" Its Quake folder ({e.QuakeDir}) is no longer there: Update asks where Quake is.");
+
+    /// <summary>The update could not find a release online: offer a local package and Try again.</summary>
+    public bool ExistingNeedsPackage => HasExisting && FeedUnavailable;
+
+    /// <summary>Other installs found (and entries that point nowhere), for the Update screen.</summary>
+    public string? OtherInstallsText
+    {
+        get
+        {
+            var lines = _found.Found.Where(f => !PathUtil.SamePath(f.Dir, InstallDir)).Select(f => $"Also installed: {ReleaseVersion.Parse(f.Record.Version).Short} in {f.Dir}.")
+                .Concat(_found.Notes).ToList();
+            return lines.Count > 0 ? string.Join("\n", lines) : null;
+        }
+    }
+
+    public bool HasOtherInstalls => OtherInstallsText is not null;
+
+    /// <summary>"Install again from scratch" is open on the Update screen.</summary>
+    public bool ShowReinstall { get => _showReinstall; private set => Set(ref _showReinstall, value); }
+    /// <summary>The wizard runs as "Install again from scratch" (the Update screen's secondary choice).</summary>
+    public bool Reinstall
+    {
+        get => _reinstall;
+        private set
+        {
+            if (Set(ref _reinstall, value))
+            {
+                Raise(nameof(NextText), nameof(InstallTitle));
+            }
+        }
+    }
+
+    public bool ResetSettings { get => _resetSettings; set => Set(ref _resetSettings, value); }
+    public bool RemoveSaves { get => _removeSaves; set => Set(ref _removeSaves, value); }
+    public string ReinstallSettingsText => $"Reset settings: configs, retro overrides, body calibration ({_settingsFiles} file{(_settingsFiles == 1 ? "" : "s")})";
+    public string ReinstallSavesText => $"Remove saves and the Map Library's installed maps ({_savesFiles} file{(_savesFiles == 1 ? "" : "s")})";
+    public string BackupText => $"Whatever is reset or removed is moved first into a dated backup folder, {Path.Combine(InstallDir, UserData.BackupsFolder)}: " +
+                                "nothing of yours is deleted. Screenshots, voice notes, relit maps and checklist ticks always stay.";
 
     void LoadExisting()
     {
@@ -379,13 +517,182 @@ public sealed class MainViewModel : ObservableObject
         {
             _existing = null;
         }
-        Raise(nameof(HasExisting), nameof(ExistingText), nameof(NextText), nameof(FooterHint));
+        _settingsFiles = _savesFiles = 0;
+        if (_existing is not null)
+        {
+            try
+            {
+                var mine = UserData.Find(InstallDir, _existing);
+                _settingsFiles = mine.Count(f => f.Kind == UserDataKind.Settings);
+                _savesFiles = mine.Count(f => f.Kind is UserDataKind.Saves or UserDataKind.Maps);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Counts only.
+            }
+        }
+        RaiseExisting();
+    }
+
+    void RaiseExisting()
+    {
+        Raise(nameof(HasExisting), nameof(ExistingTitle), nameof(ExistingText), nameof(ExistingDetail), nameof(OfferedMode), nameof(QuickUpdate),
+            nameof(ExistingNeedsPackage), nameof(OtherInstallsText), nameof(HasOtherInstalls), nameof(ReinstallSettingsText), nameof(ReinstallSavesText),
+            nameof(BackupText), nameof(NextText), nameof(FooterHint), nameof(InstallTitle));
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>Use another install (one moved by hand, or a second one): a folder with install.json.</summary>
+    void BrowseExisting()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = $"Where is {ProductName} installed?" };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+        if (!File.Exists(Path.Combine(dialog.FolderName, InstallRecord.FileName)))
+        {
+            MessageBox.Show($"No {ProductName} install was found in {dialog.FolderName} (it has no {InstallRecord.FileName}).", ProductName,
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        InstallDir = PathUtil.TryNormalize(dialog.FolderName) ?? dialog.FolderName;
+    }
+
+    /// <summary>The Install page's title: what the run does.</summary>
+    public string InstallTitle => _runMode switch
+    {
+        InstallMode.Update => $"Updating {ProductName}",
+        InstallMode.Repair => $"Repairing {ProductName}",
+        _ => Reinstall ? $"Installing {ProductName} again" : $"Installing {ProductName}",
+    };
+
+    /// <summary>The Update screen's Update (or Repair): the package (local, or downloaded and checked), then only the
+    /// program files that differ; the HD textures only when the pack changed (a repair: or a texture is damaged); the
+    /// relight only when its inputs changed; the shortcuts as chosen at install. The statement was answered at install.</summary>
+    async Task UpdateAsync()
+    {
+        if (_existing is not { } existing)
+        {
+            return;
+        }
+        var quake = existing.QuakeDir;
+        var dir = InstallDir;
+        var expected = OfferedMode ?? InstallMode.Update;
+        _runMode = expected;
+        Raise(nameof(InstallTitle));
+        GoTo(Page.Install);
+        Log.Clear();
+        InstallError = null;
+        Progress = 0;
+        Installing = true;
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        using var http = Downloader.CreateClient();
+        try
+        {
+            UiSounds.Play(Sfx.InstallStart);
+            var hdTarget = _settings.Component(_feed, Components.HdTextures);
+            StatusText = "Checking the installed files";
+            var (hdAction, hdText) = await Task.Run(() => MaintenancePlanner.HdTextures(dir, existing, hdTarget?.File, verify: expected == InstallMode.Repair), ct);
+            AddLog(LogLevel.Info, hdText);
+            var getHd = hdAction is HdTexturesAction.Replace or HdTexturesAction.Restore && hdTarget is not null;
+            var needDownload = _options.Package is null || (getHd && _options.Textures is null);
+            var installStart = needDownload ? 50.0 : 0.0;
+            var package = _options.Package
+                          ?? await DownloadAsync(http, ProductName, f => f.Package, 0, getHd ? 15 : 50, ct)
+                          ?? throw new InstallException("No Quake VR package to install: the release list names none.");
+            var manifest = InspectPackage(package).Manifest ?? throw new InstallException($"{package} is not a {ProductName} package.");
+            var mode = MaintenancePlanner.ModeFor(existing.Version, manifest.Version);
+            _runMode = mode;
+            Raise(nameof(InstallTitle));
+            string? textures = null;
+            if (getHd)
+            {
+                if (_options.Textures is { } local)
+                {
+                    textures = local;
+                }
+                else if (_options.Offline)
+                {
+                    AddLog(LogLevel.Warning, "HD textures: kept as they are (nothing is downloaded in offline mode).");
+                }
+                else
+                {
+                    try
+                    {
+                        textures = await DownloadFileAsync(http, "HD textures", hdTarget!.BuiltIn ? "HD textures" : $"HD textures {_feed?.Version}", hdTarget.File, 15, 50, ct);
+                    }
+                    catch (Exception e) when (e is InstallException or HttpRequestException)
+                    {
+                        AddLog(LogLevel.Warning, $"HD textures kept as they are: {e.Message.TrimEnd('.')}.");
+                    }
+                }
+            }
+            var owned = ExpansionDetector.Detect([quake, dir], [])
+                .Where(e => e.Folder is "hipnotic" or "rogue" && e.State == ExpansionState.Ready).Select(e => e.Folder).ToList();
+            var plan = new InstallPlan
+            {
+                Mode = mode,
+                PackagePath = package,
+                TargetDir = dir,
+                QuakeDir = quake,
+                QuakeStore = existing.QuakeStore,
+                RelightOnFirstRun = existing.Choices.RelightOnFirstRun,
+                HdTexturesZip = textures,
+                HdTexturesSha256 = textures is not null && textures != _options.Textures ? hdTarget!.File.Sha256 : null,
+                OwnedPacks = owned,
+                SetupFiles = OwnSetupFiles(),
+                Registry = RegistryFor(_options),
+                Shortcuts = new ShortcutOptions
+                {
+                    Desktop = existing.Choices.DesktopShortcut,
+                    StartMenu = existing.Choices.StartMenuShortcuts,
+                    Flat = existing.Choices.FlatShortcut,
+                    Log = existing.Choices.LogShortcut,
+                    DesktopDir = _options.ShortcutsDir is { } sd ? Path.Combine(sd, "Desktop") : _probe.GetFolder(KnownFolder.Desktop),
+                    StartMenuDir = _options.ShortcutsDir is { } sm ? Path.Combine(sm, "Programs") : _probe.GetFolder(KnownFolder.StartMenuPrograms),
+                },
+            };
+            var progress = new Progress<InstallProgress>(p =>
+            {
+                Progress = installStart + (100 - installStart) * p.Fraction;
+                StatusText = p.Status;
+                if (p.Log is not null)
+                {
+                    AddLog(p.Level, p.Log);
+                }
+            });
+            Record = await new InstallEngine().InstallAsync(plan, progress, ct);
+            await EnsureVcRuntimeAsync(http, ct);
+            LoadExisting();
+            BuildDoneNotes();
+            GoTo(Page.Done);
+            UiSounds.Play(Sfx.InstallDone);
+        }
+        catch (OperationCanceledException)
+        {
+            InstallError = "Cancelled. Nothing was changed.";
+            AddLog(LogLevel.Warning, InstallError);
+        }
+        catch (Exception e) when (e is InstallException or IOException or UnauthorizedAccessException or InvalidDataException or HttpRequestException)
+        {
+            InstallError = e.Message;
+            AddLog(LogLevel.Error, e.Message);
+            UiSounds.Play(Sfx.Error);
+        }
+        finally
+        {
+            Installing = false;
+            Raise(nameof(ShowNext));
+            CommandManager.InvalidateRequerySuggested();
+        }
     }
 
     /// <summary>The Apps &amp; Features entry's registry: a made-up root (--registry-file), the real HKCU for a real install,
     /// none for test installs (--shortcuts-dir) and the screenshot harness.</summary>
     public static IRegistryWriter? RegistryFor(StartupOptions o) =>
-        o.RegistryFile is { } f ? new JsonFileRegistry(f) : o.Screenshots is null && o.ShortcutsDir is null ? new WindowsRegistryWriter() : null;
+        o.RegistryFile is { } f ? new JsonFileRegistry(f) : o.Screenshots is null && o.ShortcutsDir is null && o.Sandbox is null ? new WindowsRegistryWriter() : null;
 
     /// <summary>This Setup's own files, for its copy in the install (SetupCopy).</summary>
     // IL3000 (the single-file publish's analyser): an empty Location is exactly the test here, "am I a single file?".
@@ -703,12 +1010,19 @@ public sealed class MainViewModel : ObservableObject
 
     public string TexturesSizeText =>
         _options.Textures is { } t && File.Exists(t) ? PathUtil.FormatSize(new FileInfo(t).Length) :
-        _feed?.Components.GetValueOrDefault("hdtextures") is { } f ? $"{PathUtil.FormatSize(f.Size)} download" :
-        FeedUnavailableForTextures ? "download unavailable" : "about 0.6 GB download";
+        TexturesDownloadUnavailable ? "download unavailable" :
+        _settings.Component(_feed, Components.HdTextures) is { } c ? $"{PathUtil.FormatSize(c.File.Size)} download" :
+        "about 0.6 GB download";
 
-    /// <summary>The HD textures would be downloaded, and the download cannot be reached: they are skipped unless the
-    /// player picks the texture pack's zip.</summary>
-    public bool FeedUnavailableForTextures => _options.Textures is null && _feedState == FeedState.Unavailable;
+    /// <summary>The HD textures would be downloaded, and there is nothing to download them from (offline mode, or no
+    /// release list and no built-in pack): they are skipped unless the player picks the texture pack's zip. Without a
+    /// release list the installer's built-in pack is downloaded (<see cref="BuiltInComponents"/>).</summary>
+    public bool TexturesDownloadUnavailable => _options.Textures is null &&
+        (_options.Offline || (_feedState == FeedState.Unavailable && _settings.Component(_feed, Components.HdTextures) is null));
+
+    public string TexturesUnavailableText => _options.Offline
+        ? "Nothing is downloaded in offline mode: they are skipped (run Setup again later), or"
+        : "Their download isn't available right now: they are skipped (run Setup again later), or";
 
     // ---- Where the package comes from: a local one, or the online release ----
 
@@ -735,7 +1049,7 @@ public sealed class MainViewModel : ObservableObject
 
     public string PackageSourceText =>
         _options.Package is { } p ? $"{Path.GetFileName(p.TrimEnd('\\', '/'))}{(_packageVersion is { } v ? $" · version {v}" : "")}{(_coreSize is { } cs ? $" · {PathUtil.FormatSize(cs)}" : "")} · no internet needed. {p}" :
-        FeedAvailable && _feed is { } feed ? $"{ProductName} {feed.Version}{(feed.Package is { } fp ? $", {PathUtil.FormatSize(fp.Size)}" : "")}, from GitHub (mirror: vittorioromeo.com), checked against its published SHA-256." :
+        FeedAvailable && _feed is { } feed ? $"{ProductName} {feed.Version}{(feed.Package is { } fp ? $", {PathUtil.FormatSize(fp.Size)}" : "")}, from GitHub, checked against its published SHA-256." :
         FeedUnavailable ? "No release could be found online: none may be published yet, or this PC is offline. If you have a " +
                           $"{ProductName} package (QuakeVR.zip, or its unzipped folder with manifest.json), pick it and the installer uses it without any internet." :
         "One moment…";
@@ -772,8 +1086,8 @@ public sealed class MainViewModel : ObservableObject
         _feedState = state;
         _feedError = error;
         Raise(nameof(FeedChecking), nameof(FeedAvailable), nameof(FeedUnavailable), nameof(PackageReady), nameof(PackageSourceTitle),
-            nameof(PackageSourceText), nameof(FeedErrorDetail), nameof(TexturesSizeText), nameof(FeedUnavailableForTextures), nameof(CanPickPackageAfterError));
-        CommandManager.InvalidateRequerySuggested();
+            nameof(PackageSourceText), nameof(FeedErrorDetail), nameof(TexturesSizeText), nameof(TexturesDownloadUnavailable), nameof(CanPickPackageAfterError));
+        RaiseExisting();
     }
 
     /// <summary>A package's manifest, or why it is not a package.</summary>
@@ -791,7 +1105,7 @@ public sealed class MainViewModel : ObservableObject
         Raise(nameof(CoreSizeText), nameof(PackageSourceText), nameof(PackageSourceTitle), nameof(TexturesSizeText), nameof(DiskText),
             nameof(HasLocalPackage), nameof(FeedChecking), nameof(FeedAvailable), nameof(FeedUnavailable), nameof(PackageReady),
             nameof(CanPickPackageAfterError));
-        CommandManager.InvalidateRequerySuggested();
+        RaiseExisting();
     }
 
     /// <summary>Picks a package (a zip, or a folder's manifest.json). True when one was accepted.</summary>
@@ -898,6 +1212,8 @@ public sealed class MainViewModel : ObservableObject
         {
             return;
         }
+        _runMode = InstallMode.Install;
+        Raise(nameof(InstallTitle));
         GoTo(Page.Install);
         Log.Clear();
         InstallError = null;
@@ -909,7 +1225,20 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             UiSounds.Play(Sfx.InstallStart);
-            var texturesOnline = HdTextures && _options.Textures is null && !FeedUnavailableForTextures;
+            // Over an existing install through the wizard (its Quake folder moved): an update, keeping what is unchanged;
+            // "Install again from scratch": a full install, after the chosen files went into the backup.
+            var mode = _existing is null || Reinstall ? InstallMode.Install : InstallMode.Update;
+            var keepHd = false;
+            if (mode == InstallMode.Update && HdTextures && _options.Textures is null)
+            {
+                var (hdAction, hdText) = MaintenancePlanner.HdTextures(InstallDir, _existing!, _settings.Component(_feed, Components.HdTextures)?.File, verify: false);
+                keepHd = hdAction is HdTexturesAction.Keep or HdTexturesAction.KeepUnknown;
+                if (keepHd)
+                {
+                    AddLog(LogLevel.Info, hdText);
+                }
+            }
+            var texturesOnline = HdTextures && !keepHd && _options.Textures is null && !TexturesDownloadUnavailable;
             var needDownload = _options.Package is null || texturesOnline;
             var installStart = needDownload ? 50.0 : 0.0;
             var package = _options.Package;
@@ -919,18 +1248,19 @@ public sealed class MainViewModel : ObservableObject
                           ?? throw new InstallException("No Quake VR package to install: the release list names none.");
             }
             string? textures = null;
-            if (HdTextures)
+            if (HdTextures && !keepHd)
             {
                 textures = _options.Textures;
                 if (textures is null && !texturesOnline)
                 {
-                    AddLog(LogLevel.Warning, "HD textures skipped: their download isn't available right now. Run Setup again later to add them, or pick the texture pack's zip on the Options page.");
+                    AddLog(LogLevel.Warning, $"HD textures skipped: {(_options.Offline ? "nothing is downloaded in offline mode" : "their download isn't available right now")}. " +
+                                             "Run Setup again later to add them, or pick the texture pack's zip on the Options page.");
                 }
                 else if (textures is null)
                 {
                     try
                     {
-                        textures = await DownloadAsync(http, "HD textures", f => f.Components.GetValueOrDefault("hdtextures"), 15, 50, ct);
+                        textures = await DownloadTexturesAsync(http, 15, 50, ct);
                     }
                     catch (Exception e) when (e is InstallException or HttpRequestException)
                     {
@@ -945,9 +1275,33 @@ public sealed class MainViewModel : ObservableObject
                 _ => "",
             }).Where(s => s.Length > 0).ToList();
             // See-through water: VisPatch's data with the relight (never fatal: without it the water stays opaque).
-            var visPatch = Relight ? await GetVisPatchAsync(http, owned, ct) : [];
+            // (An update keeps the VisPatch data installed before: it is pinned, the same files.)
+            var visPatch = Relight && !(mode == InstallMode.Update && _existing!.Choices.VisPatch) ? await GetVisPatchAsync(http, owned, ct) : [];
+            var progress = new Progress<InstallProgress>(p =>
+            {
+                Progress = installStart + (100 - installStart) * p.Fraction;
+                StatusText = p.Status;
+                if (p.Log is not null)
+                {
+                    AddLog(p.Level, p.Log);
+                }
+            });
+            // Install again from scratch: the player's chosen files go into a checked, dated backup before anything else.
+            Backup? backup = null;
+            if (mode == InstallMode.Install && Reinstall && _existing is not null)
+            {
+                var choice = new ReinstallOptions { ResetSettings = ResetSettings, RemoveSaves = RemoveSaves };
+                var dir = InstallDir;
+                backup = await Task.Run(() => Reinstaller.Prepare(dir, choice, DateTimeOffset.Now, progress), ct);
+                if (backup is null)
+                {
+                    AddLog(LogLevel.Info, "Installing again: nothing of yours to reset or remove.");
+                }
+            }
             var plan = new InstallPlan
             {
+                Mode = mode,
+                Backup = backup,
                 PackagePath = package,
                 TargetDir = InstallDir,
                 QuakeDir = quake,
@@ -968,15 +1322,6 @@ public sealed class MainViewModel : ObservableObject
                     StartMenuDir = _options.ShortcutsDir is { } sm ? Path.Combine(sm, "Programs") : _probe.GetFolder(KnownFolder.StartMenuPrograms),
                 },
             };
-            var progress = new Progress<InstallProgress>(p =>
-            {
-                Progress = installStart + (100 - installStart) * p.Fraction;
-                StatusText = p.Status;
-                if (p.Log is not null)
-                {
-                    AddLog(p.Level, p.Log);
-                }
-            });
             Record = await new InstallEngine().InstallAsync(plan, progress, ct);
             await EnsureVcRuntimeAsync(http, ct);
             LoadExisting();
@@ -1044,6 +1389,38 @@ public sealed class MainViewModel : ObservableObject
 
     async Task<string?> DownloadAsync(HttpClient http, string what, Func<ReleaseFeed, FeedFile?> pick, double from, double to, CancellationToken ct)
     {
+        var feed = await GetFeedAsync(http, what, ct);
+        return pick(feed) is { } file ? await DownloadFileAsync(http, what, $"{what} {feed.Version}", file, from, to, ct) : null;
+    }
+
+    /// <summary>The HD textures: the release list's hdtextures when it names them (the list wins), else the installer's
+    /// built-in pack (also when the list cannot be read). The SHA-256 is checked either way.</summary>
+    async Task<string?> DownloadTexturesAsync(HttpClient http, double from, double to, CancellationToken ct)
+    {
+        const string what = "HD textures";
+        ReleaseFeed? feed = null;
+        try
+        {
+            feed = await GetFeedAsync(http, what, ct);
+        }
+        catch (InstallException) when (!_options.Offline)
+        {
+            // No release list: the built-in pack below.
+        }
+        if (_settings.Component(feed, Components.HdTextures) is not { } c)
+        {
+            throw new InstallException("their download isn't available right now. Run Setup again later to add them");
+        }
+        if (c.BuiltIn)
+        {
+            AddLog(LogLevel.Info, $"HD textures: the installer's built-in pack ({c.File.File}), as the release list names none.");
+        }
+        return await DownloadFileAsync(http, what, c.BuiltIn ? what : $"{what} {feed!.Version}", c.File, from, to, ct);
+    }
+
+    /// <summary>The release list (read once): throws an InstallException that says why when it cannot be read.</summary>
+    async Task<ReleaseFeed> GetFeedAsync(HttpClient http, string what, CancellationToken ct)
+    {
         StatusText = "Checking for the latest release";
         if (_feed is null && _options.Offline)
         {
@@ -1065,13 +1442,15 @@ public sealed class MainViewModel : ObservableObject
                       $"Pick a local {ProductName} package (QuakeVR.zip) to install without the internet, or try again later.");
             }
         }
-        if (pick(_feed) is not { } file)
-        {
-            return null;
-        }
+        return _feed;
+    }
+
+    /// <summary>One file into the downloads folder, resumed, from its mirrors in order, checked (size, SHA-256).</summary>
+    async Task<string> DownloadFileAsync(HttpClient http, string what, string label, FeedFile file, double from, double to, CancellationToken ct)
+    {
         var dir = _options.Downloads ?? Path.Combine(_probe.GetFolder(KnownFolder.LocalAppData) ?? Path.GetTempPath(), "QuakeVR-Installer", "downloads");
         var dest = Path.Combine(dir, Path.GetFileName(file.File));
-        AddLog(LogLevel.Info, $"Downloading {what} {_feed.Version} ({PathUtil.FormatSize(file.Size)}).");
+        AddLog(LogLevel.Info, $"Downloading {label} ({PathUtil.FormatSize(file.Size)}).");
         var progress = new Progress<DownloadProgress>(p =>
         {
             var total = p.Total ?? file.Size;
@@ -1136,7 +1515,7 @@ public sealed class MainViewModel : ObservableObject
 
     public ObservableCollection<CheckItem> DoneNotes { get; } = [];
 
-    public string SteamLaunchOptions => SelectedQuake?.Install.BaseDir is { } q ? LaunchCommand.Arguments(q, InstallDir, LaunchVariant.Vr) : "";
+    public string SteamLaunchOptions => (SelectedQuake?.Install.BaseDir ?? Record?.QuakeDir) is { Length: > 0 } q ? LaunchCommand.Arguments(q, InstallDir, LaunchVariant.Vr) : "";
     public string SteamExePath => Path.Combine(InstallDir, LaunchCommand.Exe);
 
     public void BuildDoneNotes()
@@ -1146,9 +1525,13 @@ public sealed class MainViewModel : ObservableObject
             "The game takes you to the calibration room once: your height and body, then the main settings on its wall buttons."));
         if (Record?.RelightPending == true)
         {
-            DoneNotes.Add(new CheckItem(CheckStatus.Info, "Relit maps",
-                "At its first start (Play below, a shortcut or Steam) the game relights every map with the HD textures (about a minute; the wrist gadget shows its progress). " +
-                "Later: Graphics > Relighting."));
+            // The installer relights nothing itself: the game does, once, and skips what it relit before (an update).
+            var before = FirstStartRelight.RelitCopies(InstallDir);
+            DoneNotes.Add(new CheckItem(CheckStatus.Info, "Relit maps", before > 0
+                ? $"The {before} maps relit before are kept. At its next start (Play below, a shortcut or Steam) the game relights only the maps that are new or changed since, " +
+                  "and skips the rest (the wrist gadget shows its progress). Later: Graphics > Relighting."
+                : "At its first start (Play below, a shortcut or Steam) the game relights every map with the HD textures (a few minutes, about two on a fast PC; the wrist gadget shows its progress). " +
+                  "Later: Graphics > Relighting."));
         }
         if (VcResult is { } vc && vc.Outcome != VcRedistOutcome.AlreadyInstalled)
         {
@@ -1175,18 +1558,24 @@ public sealed class MainViewModel : ObservableObject
 
     void Launch(LaunchVariant variant)
     {
-        if (Record is null || SelectedQuake?.Install.BaseDir is not { } quake)
+        // (After an update from the Update screen no Quake was detected: the install's own.)
+        if (Record is null || (SelectedQuake?.Install.BaseDir ?? Record.QuakeDir) is not { Length: > 0 } quake)
         {
             return;
         }
         // (The relight at the first start needs no argument: the game starts it from the installer's marker,
         // FirstStartRelight, however it is started.)
-        Process.Start(new ProcessStartInfo(Path.Combine(InstallDir, LaunchCommand.Exe), LaunchCommand.Arguments(quake, InstallDir, variant))
+        StartGame(new ProcessStartInfo(Path.Combine(InstallDir, LaunchCommand.Exe), LaunchCommand.Arguments(quake, InstallDir, variant))
         {
             WorkingDirectory = InstallDir,
             UseShellExecute = false,
         });
+        // The game has the sound now: the installer's fades out and stays muted (the speaker button shows it).
+        UiSounds.MuteForGame();
     }
+
+    /// <summary>Starts the game (the screenshot harness records the start instead).</summary>
+    internal Action<ProcessStartInfo> StartGame { get; set; } = info => Process.Start(info);
 
     static void OpenUrl(string target)
     {
@@ -1227,7 +1616,7 @@ public sealed class MainViewModel : ObservableObject
         GoTo(Page.Install);
         Installing = false;
         Log.Clear();
-        AddLog(LogLevel.Info, "Could not read the release list (github.com: 404; vittorioromeo.com: 404).");
+        AddLog(LogLevel.Info, "Could not read the release list (github.com: 404).");
         InstallError = message;
         AddLog(LogLevel.Error, message);
         Raise(nameof(ShowNext));

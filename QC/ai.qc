@@ -313,10 +313,14 @@ float (entity client) visible =
     else                                   { res = point_visible(spot1, spot2); }
     if(res && VR_Crate_HidesFrom(self, client, spot1)) { res = FALSE; }
     // Through a gate: not across a water surface either (point_visible's rule: one end in a liquid, the other not).
-    if(!res && track && VR_AI_PortalEligible() && client.classname == "player" &&
+    // Ranged monsters through every gate; under the stealth rules every monster through paired ones (vr_stealth_gates:
+    // a melee one walks through to him, VR_Stealth_ChaseGate).
+    float ranged = !res && track && VR_AI_PortalEligible();
+    if(!res && track && (ranged || VR_Stealth_GateSight()) && client.classname == "player" &&
        (pointcontents(spot1) <= CONTENT_WATER) == (pointcontents(spot2) <= CONTENT_WATER))
     {
         self.vr_ai_gate = portal_ai_sight(self, client, spot1, spot2, 0);
+        if(!ranged && !(portal_ai_gateinfo(self.vr_ai_gate, 1) & 2)) { self.vr_ai_gate = 0; }
         res = self.vr_ai_gate > 0;
     }
     return res;
@@ -565,6 +569,8 @@ void() FoundTarget =
     if(self.aggro_target != string_null)
         MG3_AggroWake(); // QVR: Dawn of the Machine's aggro groups (vr_mg3_triggers.qc)
 
+    VR_Stealth_Hostile(); // QVR: Alert no more; the monsters near it told (vr_stealth.qc)
+
     self.show_hostile = time + 1;        // wake up other monsters
 
     SightSound();
@@ -592,6 +598,8 @@ float() FindTarget =
 {
     entity client;
     float  r;
+
+    VR_Stealth_Tick(); // QVR: the stealth AI's meter drains, beams, torches and bodies seen (vr_stealth.qc)
 
 // if the first spawnflag bit is set, the monster will only wake up on
 // really seeing the player, not another monster getting angry
@@ -673,7 +681,7 @@ float() FindTarget =
    else
     {
         client = checkclient();
-        if(!client && VR_AI_PortalEligible()) { client = portal_ai_client(self); }
+        if(!client && (VR_AI_PortalEligible() || VR_Stealth_GateSight())) { client = portal_ai_client(self); }
       if(!client)
             return FALSE;    // current check entity isn't in PVS
     }
@@ -690,6 +698,13 @@ float() FindTarget =
 
    if(client.items & IT_INVISIBILITY) // (VR_ItemUtil_EntHasItem, directly: every sight check)
       return FALSE;
+
+    // QVR: the stealth AI: a player is seen by the suspicion meter (light, distance, facing, movement, crouching), not
+    // at once (vr_stealth.qc; another monster's sighting, the relay above, stays Quake's).
+    if(client.classname == "player" && !self.charmed && VR_Stealth_MeterOn())
+    {
+        return VR_Stealth_See(client);
+    }
 
     if(!visible(client)) { return FALSE; }
     r = range (client);
@@ -809,6 +824,9 @@ void(float dist) ai_walk =
    if(FindTarget ())
       return;
 
+    if(VR_Stealth_Walk(dist)) // QVR: Alert: walking to what it noticed, or back to its post (vr_stealth.qc)
+        return;
+
 //MED 11/02/96
    if(self.huntingcharmer)
       {
@@ -817,7 +835,7 @@ void(float dist) ai_walk =
       self.nextthink = time + ((self.nextthink - time)/2);
       }
    else
-      movetogoal (dist);
+      VR_AI_MoveToGoal (dist); // QVR: round the props in its way (vr_ai_props.qc)
 };
 
 
@@ -835,6 +853,9 @@ void() ai_stand =
 
    if(FindTarget ())
       return;
+
+    if(VR_Stealth_Stand()) // QVR: Alert: turning to look, searching (vr_stealth.qc)
+        return;
 
     if(time > self.pausetime)
     {
@@ -1169,6 +1190,8 @@ void(float dist) ai_run =
         self.attack_state = AS_STRAIGHT; // A pending remote attack lost its route before the animation began.
     if(enemy_vis)
         self.search_time = time + 5;
+    if(VR_Stealth_Lose(enemy_vis)) // QVR: lost him a while: Alert, to where it saw him last (vr_stealth.qc)
+        return;
 
 // look for other coop players
 //MED 10/17/96 added charmed stuff
@@ -1180,6 +1203,13 @@ void(float dist) ai_run =
     enemy_infront = infront(self.enemy);
     enemy_range = range(self.enemy);
     enemy_yaw = vectoyaw(VR_AI_Origin(self.enemy) - self.origin);
+
+    // QVR: a melee monster seeing him only through a paired slipgate (the stealth rules) runs to it and through
+    if(self.vr_ai_gate > 0 && enemy_vis && !VR_AI_PortalEligible())
+    {
+        VR_Stealth_ChaseGate(dist);
+        return;
+    }
 
 //MED
    if(self.th_turn)
@@ -1239,7 +1269,7 @@ void(float dist) ai_run =
       if(!axis)
          {
          self.endtime = time + 3;
-         movetogoal (dist);      // done in C code...
+         VR_AI_MoveToGoal (dist); // QVR: movetogoal, round the props in its way (vr_ai_props.qc)
          }
 //      else
 //         ChangeYaw();
@@ -1247,6 +1277,6 @@ void(float dist) ai_run =
    else
       {
       // head straight in
-      movetogoal (dist);      // done in C code...
+      VR_AI_MoveToGoal (dist); // QVR: movetogoal, round the props in its way (vr_ai_props.qc)
       }
 };

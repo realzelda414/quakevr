@@ -37,9 +37,18 @@
 // attached magazine's shape as drawn (.magbox*: a box, held or carried), which the grips and hits test. However the gun
 // is held (by its handle in either hand, or carried anywhere on it), its magazine works the same. Out, it keeps its count: a round as the shells are (taken again, force grabbed, refunded at
 // the pouch, lost to the caps).
+//
+// Front-loaded launchers (vr_reload_front; the author's note vrfiringrange_2026-10-07_22-18-57): the grenade launcher,
+// the proximity launcher and the rocket launcher (VR_Reload_IsFront) take a round at a time at the muzzle, up to their
+// magazine (4): the pouch gives a grenade, a proximity grenade or a rocket for the launcher in the other hand (in the
+// launcher's other ammo mode, the mission pack's multi-grenade or multi-rocket: its ammo), a round of its own
+// (.vr_ammo_front: the launcher it fits; make_rounds.py's models). Butt first: its butt (VR_Reload_RoundRef) at the
+// muzzle's load point, lying within vr_reload_front_angle degrees of the barrel, nose out (a proximity grenade, a ball,
+// any way round); held the wrong way round, a dull tap. It slides in as a shell does (vr_collectfx.cpp, back along the
+// barrel). Loose (thrown, dropped, lying on a table and the launcher brought to it) as the shells by contact. Lying
+// about, a shot or a blast sets it off (VR_GrenShot: the launcher's grenade's blast); dropped or thrown it doesn't.
 
-.float vr_ammo_aid;      // a round: the ammo it is (AID_*)
-.float vr_ammo_count;    // and how many (a taped pair: 2)
+// (.vr_ammo_aid, .vr_ammo_count, .vr_ammo_front, .vr_ammo_born: vr_fields.qc)
 .float vr_ammo_wid;      // a magazine: the gun it fits (WID_*; 0 a shell)
 .float vr_ammo_fresh;    // a magazine just pulled out of its gun (or dropped, knocked out; the super shotgun's live shells
                          // thrown out): it goes in again only once it has left the well
@@ -57,13 +66,14 @@
 // it is for (WID_*; 0 shells): the last gun held whose ammo the pouch has (any shotgun: shells; a nailgun, a super nailgun,
 // a thunderbolt: its magazine), kept while the hands hold nothing of the kind (empty, a melee weapon). And for the
 // clients (STAT_QVR_POUCHKIND, STAT_QVR_POUCHCOUNT): what it shows (1 shells, 2 nailgun magazines, 3 super nailgun
-// magazines, 4 cells; 0 none) and how many of that ammo are left.
+// magazines, 4 cells, 5 rockets, 6 grenades, 7 proximity grenades; 0 none; 8 more: skin 1, the lava nails, plasma, the
+// multi-rockets) and how many of that ammo are left.
 .float vr_pouch_aid;
 .float vr_pouch_wid;
+.float vr_pouch_front;   // (a launcher's round: the launcher; 0 none)
 .float vr_pouch_kind;
 .float vr_pouch_count;
-.float vr_ammo_born;     // when it was last in a hand or flying (its time lying about runs from here)
-.float vr_ammo_smoke;    // a spent thunderbolt cell: when it stops smoking (vr_reload_battery_smoke_time; 0 not smoking)
+.float vr_ammo_smoke;    // a spent thunderbolt cell (or lava nails' magazine): when it stops smoking (vr_reload_battery_smoke_time; 0 not smoking)
 .float vr_ammo_puffs;    // and the wisps it has given off, since (for the log)
 .float vr_ammo_smoke_from;
 .float vr_ammo_tink;     // its last knock's sound
@@ -76,11 +86,13 @@
 .float vr_ssg_sec;       // and its B/Y
 .float vr_ssg_held;      // both hands on the hand's super shotgun (the two-handed hold, until the other hand lets go)
 .float vr_ssg_loaded;    // when a shell last went into a super shotgun of the player's (its hand drawing back is no hit)
+.float vr_ssg_fired;     // when a super shotgun of the player's last fired (the log: how soon after it it broke open)
 
 string VR_RELOAD_SHELL = "progs/vr_shell_live.mdl";
 string VR_RELOAD_PAIR = "progs/vr_shell_pair.mdl";
 string VR_RELOAD_CLASS = "vr_ammo_shell";
 string VR_RELOAD_MAGCLASS = "vr_ammo_mag";
+// (VR_RELOAD_FRONTCLASS, VR_RELOAD_ROCKET, VR_RELOAD_GRENADE, VR_RELOAD_PROX: vr_grenade.qc, before this)
 
 void() VR_Reload_Precache =
 {
@@ -89,6 +101,10 @@ void() VR_Reload_Precache =
     precache_model("progs/vr_mag_nail.mdl"); // the magazines (make_mags.py)
     precache_model("progs/vr_mag_snail.mdl");
     precache_model("progs/vr_mag_light.mdl");
+    precache_model(VR_RELOAD_ROCKET); // the launchers' rounds (make_rounds.py)
+    precache_model(VR_RELOAD_GRENADE);
+    precache_model(VR_RELOAD_MULTI);
+    precache_model(VR_RELOAD_PROX);
     precache_sound("vr/reload_mag_in.wav");  // a magazine seated
     precache_sound("vr/reload_mag_out.wav"); // and released
     precache_sound("vr/reload_pouch.wav");    // a round taken from the pouch, or put back
@@ -122,10 +138,17 @@ float(float xWeapon) VR_Reload_UsesMag =
     return xWeapon == WID_NAILGUN || xWeapon == WID_SUPER_NAILGUN || xWeapon == WID_LIGHTNING;
 };
 
+// Whether `xWeapon` is a launcher loaded at the muzzle (vr_reload_front).
+float(float xWeapon) VR_Reload_IsFront =
+{
+    return (xWeapon == WID_GRENADE_LAUNCHER || xWeapon == WID_PROXIMITY_GUN || xWeapon == WID_ROCKET_LAUNCHER) &&
+           cvar_hget(cvarh_vr_reload_front);
+};
+
 // Whether `xWeapon` loads by hand (immersive reloading): no holster, button or flick reload for it.
 float(float xWeapon) VR_Reload_ManualFor =
 {
-    return VR_Reload_Immersive() && (xWeapon == WID_SHOTGUN || VR_Reload_UsesMag(xWeapon) ||
+    return VR_Reload_Immersive() && (xWeapon == WID_SHOTGUN || VR_Reload_UsesMag(xWeapon) || VR_Reload_IsFront(xWeapon) ||
         (xWeapon == WID_SUPER_SHOTGUN && cvar_hget(cvarh_vr_reload_ssg_break)));
 };
 
@@ -153,6 +176,7 @@ void(float xHand, float xCount) VR_Reload_SsgFired =
     float f = VRGetEntWeaponFlags(self, xHand);
     float spent = min(2, VR_Reload_SsgSpentOf(f) + xCount);
     VRSetEntWeaponFlags(self, xHand, (f - (f & QVR_WPNFLAG_SSG_SPENT)) | (spent * QVR_WPNFLAG_SSG_SPENT_ONE));
+    self.vr_ssg_fired = time;
 };
 
 // The magazine's model for guns `xWeapon`.
@@ -299,22 +323,33 @@ void(entity p) VR_Reload_AmmoChanged =
 
 float(entity e) VR_Reload_IsRound =
 {
-    return e.classname == VR_RELOAD_CLASS || e.classname == VR_RELOAD_MAGCLASS;
+    return e.classname == VR_RELOAD_CLASS || e.classname == VR_RELOAD_MAGCLASS || e.classname == VR_RELOAD_FRONTCLASS;
 };
 
-// Every round lying about or held (shells, then magazines): the next after `xFrom` (world: the first), world at the end.
+// Every round lying about or held (shells, then magazines, then the launchers'): the next after `xFrom` (world: the
+// first), world at the end.
 entity(entity xFrom) VR_Reload_NextRound =
 {
+    entity e = world;
     if(xFrom == world || xFrom.classname == VR_RELOAD_CLASS)
     {
-        entity e = find(xFrom, classname, VR_RELOAD_CLASS);
+        e = find(xFrom, classname, VR_RELOAD_CLASS);
         if(e)
         {
             return e;
         }
-        return find(world, classname, VR_RELOAD_MAGCLASS);
+        xFrom = world;
     }
-    return find(xFrom, classname, VR_RELOAD_MAGCLASS);
+    if(xFrom == world || xFrom.classname == VR_RELOAD_MAGCLASS)
+    {
+        e = find(xFrom, classname, VR_RELOAD_MAGCLASS);
+        if(e)
+        {
+            return e;
+        }
+        xFrom = world;
+    }
+    return find(xFrom, classname, VR_RELOAD_FRONTCLASS);
 };
 
 // "a shell", "2 shells", "a magazine of 24": for the log.
@@ -323,6 +358,18 @@ string(entity r) VR_Reload_Desc =
     if(r.vr_ammo_wid)
     {
         return sprintf("a magazine of %g", r.vr_ammo_count);
+    }
+    if(r.vr_ammo_front == WID_ROCKET_LAUNCHER)
+    {
+        return r.vr_ammo_aid == AID_MULTI_ROCKETS ? "a multi-rocket" : "a rocket";
+    }
+    if(r.vr_ammo_front == WID_GRENADE_LAUNCHER)
+    {
+        return r.vr_ammo_aid == AID_MULTI_ROCKETS ? "a multi-grenade" : "a grenade";
+    }
+    if(r.vr_ammo_front == WID_PROXIMITY_GUN)
+    {
+        return "a proximity grenade";
     }
     return r.vr_ammo_count >= 2 ? "2 shells" : "a shell";
 };
@@ -334,9 +381,17 @@ float(entity p, float xHand) VR_Reload_AtPouch =
            (xHand == cVR_MainHand ? p.mainhand_hotspot : p.offhand_hotspot) == QVR_HS_AMMO_POUCH;
 };
 
-// A round's look: a single shell, the taped pair, or its gun's magazine.
+// A round's look: a single shell, the taped pair, its gun's magazine, or a launcher's round (its own model, drawn at Size
+// 1: the projectiles' models keep their sizes).
 void(entity r) VR_Reload_SetModel =
 {
+    if(r.vr_ammo_front)
+    {
+        setmodel(r, r.vr_ammo_front == WID_ROCKET_LAUNCHER ? VR_RELOAD_ROCKET :
+            VR_HandGrenade_Model(r.vr_ammo_front == WID_PROXIMITY_GUN, r.vr_ammo_aid == AID_MULTI_ROCKETS));
+        setsize(r, drawnbounds(r, 0), drawnbounds(r, 1));
+        return;
+    }
     if(r.vr_ammo_wid)
     {
         setmodel(r, VR_Reload_MagModel(r.vr_ammo_wid));
@@ -354,10 +409,22 @@ void(entity r) VR_Reload_SetModel =
     setsize(r, lo * 1.25, hi * 1.25); // (its prop slot's Size: as the spent shells are drawn)
 };
 
+// Whether `r` is a spent magazine (taken out empty): it never goes back into the pouch, nor is taken as a pickup (the
+// author's note vrfiringrange_2026-10-08_00-01-10: let go of at the pouch, it falls).
+float(entity r) VR_Reload_IsSpentMag =
+{
+    return r.vr_ammo_wid && r.vr_ammo_count <= 0;
+};
+
 // Back into the reserve of `p` (a hand let go of it at the pouch, or took it as a pickup): TRUE if it fit (and it is
-// gone), FALSE if the reserve is full (it stays). A magazine gives its rounds back (an empty one is put away).
+// gone), FALSE if the reserve is full or it is a spent magazine (it stays). A magazine gives its rounds back.
 float(entity p, entity r, float xHand) VR_Reload_Refund =
 {
+    if(VR_Reload_IsSpentMag(r))
+    {
+        VR_Reload_Log(sprintf("%s is spent: not back in the pouch, it falls (hand %g)", VR_Reload_Desc(r), xHand));
+        return FALSE;
+    }
     if(VR_AmmoUtil_GetAmmoCountByAmmoId(p, r.vr_ammo_aid) + r.vr_ammo_count > VR_MaxAmmo(p, r.vr_ammo_aid))
     {
         VR_Reload_Haptic(p, xHand, 0.12, 30, 0.8);
@@ -394,7 +461,7 @@ void() VR_Reload_RoundUse =
 // 0.12 s.
 void(float xSpeed) VR_Reload_Impact =
 {
-    if(self.vr_ammo_wid || xSpeed < 0.6 || time < self.vr_ammo_tink + 0.12)
+    if(self.vr_ammo_wid || self.vr_ammo_front || xSpeed < 0.6 || time < self.vr_ammo_tink + 0.12)
     {
         return;
     }
@@ -432,12 +499,21 @@ void(entity p, float xHand, entity r, string xHow) VR_Reload_CellSparks =
     VR_Reload_Log(sprintf("the cell's contact sparks (%s): %g", xHow, n));
 };
 
-// A spent thunderbolt cell (taken out empty) smokes for vr_reload_battery_smoke_time (the author's note
-// vrfiringrange_2026-10-07_22-14-33), held or lying about: a wisp off its top every tenth of a second, thinning out.
+// What a spent magazine that smokes is called in the log: a thunderbolt cell, or a magazine of lava nails (the author's
+// note vrfiringrange_2026-10-08_00-00-42: they smoke as the cells do).
+string(entity r) VR_Reload_SmokerName =
+{
+    return r.vr_ammo_wid == WID_LIGHTNING ? "cell" : "lava nail magazine";
+};
+
+// A spent thunderbolt cell or magazine of lava nails (taken out empty) smokes for vr_reload_battery_smoke_time (the
+// author's notes vrfiringrange_2026-10-07_22-14-33, 2026-10-08_00-00-42), held or lying about: a wisp off its top every
+// tenth of a second, thinning out.
 void(entity r) VR_Reload_CellSpent =
 {
     float t = cvar_hget(cvarh_vr_reload_battery_smoke_time);
-    if(r.vr_ammo_wid != WID_LIGHTNING || r.vr_ammo_count > 0 || t <= 0)
+    if(!(r.vr_ammo_wid == WID_LIGHTNING || (r.vr_ammo_wid && r.vr_ammo_aid == AID_LAVA_NAILS)) || r.vr_ammo_count > 0 ||
+       t <= 0)
     {
         return;
     }
@@ -445,7 +521,7 @@ void(entity r) VR_Reload_CellSpent =
     r.vr_ammo_puffs = 0;
     r.vr_ammo_smoke_from = time;
     r.nextthink = time + 0.05;
-    VR_Reload_Log(sprintf("a spent cell smoking for %g s", t));
+    VR_Reload_Log(sprintf("a spent %s smoking for %g s", VR_Reload_SmokerName(r), t));
 };
 
 void(entity r) VR_Reload_CellSmoke =
@@ -457,8 +533,8 @@ void(entity r) VR_Reload_CellSmoke =
     float t = max(0.1, cvar_hget(cvarh_vr_reload_battery_smoke_time));
     if(time >= r.vr_ammo_smoke)
     {
-        VR_Reload_Log(sprintf("the spent cell stopped smoking after %.1f s: %g wisps%s", time - r.vr_ammo_smoke_from,
-            r.vr_ammo_puffs, r.carry_player != world ? " (held)" : ""));
+        VR_Reload_Log(sprintf("the spent %s stopped smoking after %.1f s: %g wisps%s", VR_Reload_SmokerName(r),
+            time - r.vr_ammo_smoke_from, r.vr_ammo_puffs, r.carry_player != world ? " (held)" : ""));
         r.vr_ammo_smoke = 0;
         return;
     }
@@ -474,6 +550,10 @@ void(entity r) VR_Reload_CellSmoke =
 void() VR_Reload_RoundThink =
 {
     VR_Reload_CellSmoke(self);
+    if(self.vr_shootnade)
+    {
+        VR_GrenShot_Update(self); // (a launcher's round: shots meet it lying about, not in a hand)
+    }
     float life = cvar_hget(cvarh_vr_reload_loose_time);
     if(self.carry_player != world || (!(self.flags & FL_ONGROUND) && vlen(self.velocity) > 1))
     {
@@ -482,7 +562,7 @@ void() VR_Reload_RoundThink =
     if(self.carry_player != world || life <= 0 || time < self.vr_ammo_born + life)
     {
         self.alpha = 0;
-        self.nextthink = time + (self.vr_ammo_smoke ? 0.1 : 0.25);
+        self.nextthink = time + ((self.vr_ammo_smoke || self.vr_shootnade) ? 0.1 : 0.25);
         return;
     }
     if(!self.alpha)
@@ -534,18 +614,53 @@ void() VR_Reload_MakeRoom =
     }
 };
 
-// A new round of `xCount` of ammo `xAid` at `xOrg` (`xWid`: a magazine for that gun; 0 a shell): a carried thing (taken,
-// thrown, force grabbed; a rigid body loose).
+// A launcher's round set off (VR_GrenShot_SetOff; self): let go of if a hand holds it, no longer a round, the launcher's
+// grenade's blast (its owner's: who set it off).
+void() VR_Reload_RoundBoom =
+{
+    entity p = self.carry_player;
+    if(p != world)
+    {
+        VR_Carry_SetHeld(p, p.mainhand_held == self ? cVR_MainHand : cVR_OffHand, world);
+        self.carry_player = world;
+    }
+    VR_Reload_Log(sprintf("%s set off at %v (%s's)", VR_Reload_Desc(self), self.origin, self.owner.classname));
+    self.classname = "vr_ammo_spent"; // (no longer a round: VR_Reload_NextRound; nor taken while it goes off)
+    self.flags = self.flags - (self.flags & (FL_FORCEGRABBABLE | FL_EASYHANDTOUCH));
+    self.handtouch = SUB_Null;
+    self.carry_use = SUB_Null;
+    self.movetype = MOVETYPE_NONE;
+    self.velocity = '0 0 0';
+    GrenadeExplode();
+};
+
+// A new round of `xCount` of ammo `xAid` at `xOrg` (`xWid`: a magazine for that gun; 0 a shell; vr_reload_make_front, set
+// just before: a launcher's round for that launcher; the grenade and proximity launchers': the pouch grenade,
+// VR_HandGrenade_Make): a carried thing (taken, thrown, force grabbed; a rigid body loose).
+float vr_reload_make_front;
 entity(float xWid, float xAid, float xCount, vector xOrg, vector xAngles) VR_Reload_MakeRound =
 {
+    float front = vr_reload_make_front;
+    vr_reload_make_front = 0;
     VR_Reload_MakeRoom();
+    if(front == WID_GRENADE_LAUNCHER || front == WID_PROXIMITY_GUN)
+    {
+        // The grenade launchers' rounds are the back pouch's grenades (vr_grenade.qc, "One grenade from either pouch"):
+        // armed by their pin, or loaded while unarmed.
+        return VR_HandGrenade_Make(world, front, xAid, xOrg, xAngles);
+    }
     entity r = spawn();
-    r.classname = xWid ? VR_RELOAD_MAGCLASS : VR_RELOAD_CLASS;
+    r.classname = xWid ? VR_RELOAD_MAGCLASS : (front ? VR_RELOAD_FRONTCLASS : VR_RELOAD_CLASS);
     r.vr_ammo_wid = xWid;
+    r.vr_ammo_front = front;
     r.vr_ammo_aid = xAid;
     r.vr_ammo_count = xCount;
     VR_Reload_SetModel(r);
     r.skin = (xWid && (xAid == AID_LAVA_NAILS || xAid == AID_PLASMA)) ? 1 : 0; // (the lava nails' and plasma's look)
+    if(front && xAid == AID_MULTI_ROCKETS)
+    {
+        r.skin = 1; // (the multi-rocket's: the grenades are VR_HandGrenade_Make's)
+    }
     setorigin(r, xOrg);
     r.angles = xAngles;
     r.movetype = MOVETYPE_TOSS;
@@ -562,7 +677,22 @@ entity(float xWid, float xAid, float xCount, vector xOrg, vector xAngles) VR_Rel
     r.vr_ammo_born = time;
     r.think = VR_Reload_RoundThink;
     r.nextthink = time + 0.25;
+    if(front)
+    {
+        // Lying about, a shot, a strong blow or a blast sets it off: the launcher's grenade's blast (VR_GrenShot).
+        r.vr_ammo_boom = VR_Reload_RoundBoom;
+        VR_GrenShot_Make(r);
+        VR_GrenShot_Update(r);
+        r.nextthink = time + 0.1;
+    }
     return r;
+};
+
+// A new launcher's round for `xFront` (WID_*) of ammo `xAid` (VR_Reload_MakeRound).
+entity(float xFront, float xAid, vector xOrg, vector xAngles) VR_Reload_MakeFront =
+{
+    vr_reload_make_front = xFront;
+    return VR_Reload_MakeRound(0, xAid, 1, xOrg, xAngles);
 };
 
 // ----------------------------------------------------------------------------
@@ -672,6 +802,18 @@ float(float xWeapon) VR_Reload_PortRadius =
     {
         return cvar_hget(cvarh_vr_reload_port_light_radius);
     }
+    if(xWeapon == WID_GRENADE_LAUNCHER)
+    {
+        return cvar_hget(cvarh_vr_reload_port_gl_radius);
+    }
+    if(xWeapon == WID_PROXIMITY_GUN)
+    {
+        return cvar_hget(cvarh_vr_reload_port_prox_radius);
+    }
+    if(xWeapon == WID_ROCKET_LAUNCHER)
+    {
+        return cvar_hget(cvarh_vr_reload_port_rl_radius);
+    }
     return cvar_hget(cvarh_vr_reload_port_shot_radius);
 };
 
@@ -756,11 +898,14 @@ float(float xHand, entity r) VR_Reload_MagAtWell =
 // The pouch
 
 // The pouch's round for the gun `xWeapon` (its flags `xFlags`): its ammo, and `vr_reload_kind_wid` the gun a magazine is
-// for (0: shells). -1: none (a rocket launcher's, a melee weapon's: the pouch gives nothing for it yet).
+// for (0: shells), `vr_reload_kind_front` the launcher a launcher's round is for (0: none). -1: none (a melee weapon's,
+// the launchers' without vr_reload_front: the pouch gives nothing for it).
 float vr_reload_kind_wid;
+float vr_reload_kind_front;
 float(float xWeapon, float xFlags) VR_Reload_KindOf =
 {
     vr_reload_kind_wid = 0;
+    vr_reload_kind_front = 0;
     if(xWeapon == WID_FIST || xWeapon == WID_GRAPPLE)
     {
         return -1;
@@ -775,14 +920,50 @@ float(float xWeapon, float xFlags) VR_Reload_KindOf =
         vr_reload_kind_wid = xWeapon;
         return aid;
     }
+    if(VR_Reload_IsFront(xWeapon))
+    {
+        vr_reload_kind_front = xWeapon; // (its ammo mode's: the rockets, or the multi-rockets)
+        return aid;
+    }
     return -1;
 };
 
+// Whether `xWeapon` held draws on the pouch's cells by a coiled cord (the engine draws it: vr_cellcord.cpp): the laser
+// cannon (vr_cellcord_laser), Mjolnir (vr_cellcord_hammer), the Super Axe (vr_cellcord_superaxe).
+float(float xWeapon) VR_Reload_Corded =
+{
+    if(xWeapon == WID_LASER_CANNON)
+    {
+        return cvar_hget(cvarh_vr_cellcord_laser);
+    }
+    if(xWeapon == WID_MJOLNIR)
+    {
+        return cvar_hget(cvarh_vr_cellcord_hammer);
+    }
+    if(xWeapon == WID_SUPERAXE)
+    {
+        return cvar_hget(cvarh_vr_cellcord_superaxe);
+    }
+    return FALSE;
+};
+
 // Once a player frame (W_Frame, before the hands'): the pouch's last kind from the guns held (the main hand's first),
-// and what the clients draw.
+// and what the clients draw. A weapon held on its cell cord (VR_Reload_Corded) first: the pouch gives and shows cells
+// (the lightning gun's), the cord plugged into one.
 void() VR_Reload_PlayerFrame =
 {
-    for(float h = 0; h < 2; h++)
+    float corded = FALSE;
+    if(self.ishuman && VR_Reload_Immersive())
+    {
+        corded = (VR_Reload_Corded(VRGetEntWeapon(self, cVR_MainHand)) || VR_Reload_Corded(VRGetEntWeapon(self, cVR_OffHand)));
+    }
+    if(corded)
+    {
+        self.vr_pouch_aid = AID_CELLS;
+        self.vr_pouch_wid = WID_LIGHTNING;
+        self.vr_pouch_front = 0;
+    }
+    for(float h = 0; h < 2 && !corded; h++)
     {
         float hand = h ? cVR_OffHand : cVR_MainHand;
         float aid = VR_Reload_KindOf(VRGetEntWeapon(self, hand), VRGetEntWeaponFlags(self, hand));
@@ -790,6 +971,7 @@ void() VR_Reload_PlayerFrame =
         {
             self.vr_pouch_aid = aid;
             self.vr_pouch_wid = vr_reload_kind_wid;
+            self.vr_pouch_front = vr_reload_kind_front;
             break;
         }
     }
@@ -797,12 +979,19 @@ void() VR_Reload_PlayerFrame =
     {
         self.vr_pouch_aid = AID_SHELLS;
         self.vr_pouch_wid = 0;
+        self.vr_pouch_front = 0;
     }
     float w = self.vr_pouch_wid;
     self.vr_pouch_kind = w == WID_NAILGUN ? 2 : (w == WID_SUPER_NAILGUN ? 3 : (w == WID_LIGHTNING ? 4 : 1));
-    if(self.vr_pouch_aid == AID_LAVA_NAILS || self.vr_pouch_aid == AID_PLASMA)
+    w = self.vr_pouch_front;
+    if(w)
     {
-        self.vr_pouch_kind = self.vr_pouch_kind + 8; // (the clients draw them glowing: the pouch's skin 1)
+        // (5 rockets, 6 grenades, 7 proximity grenades: the clients draw as many as are left, up to 3, 4 and 4.)
+        self.vr_pouch_kind = w == WID_ROCKET_LAUNCHER ? 5 : (w == WID_GRENADE_LAUNCHER ? 6 : 7);
+    }
+    if(self.vr_pouch_aid == AID_LAVA_NAILS || self.vr_pouch_aid == AID_PLASMA || self.vr_pouch_aid == AID_MULTI_ROCKETS)
+    {
+        self.vr_pouch_kind = self.vr_pouch_kind + 8; // (the clients draw them glowing, or the multi-rounds: skin 1)
     }
     self.vr_pouch_count = VR_AmmoUtil_GetAmmoCountByAmmoId(self, self.vr_pouch_aid);
 };
@@ -818,6 +1007,7 @@ float(float xHand) VR_Reload_PouchKind =
         return aid;
     }
     vr_reload_kind_wid = self.vr_pouch_wid;
+    vr_reload_kind_front = self.vr_pouch_front;
     return self.vr_pouch_aid ? self.vr_pouch_aid : AID_SHELLS;
 };
 
@@ -828,6 +1018,7 @@ void(float xHand) VR_Reload_Take =
 {
     float aid = VR_Reload_PouchKind(xHand);
     float w = vr_reload_kind_wid;
+    float front = vr_reload_kind_front;
     if(aid < 0 || !VR_Reload_Immersive())
     {
         return;
@@ -858,15 +1049,24 @@ void(float xHand) VR_Reload_Take =
     {
         n = min(WeaponIdToBaseClipSize(w), have);
     }
+    if(front)
+    {
+        n = 1; // (a launcher's round: one at a time)
+        vr_reload_make_front = front;
+    }
     entity r = VR_Reload_MakeRound(w, aid, n, VRGetEntHandPos(self, xHand), VRGetEntHandRot(self, xHand));
     VR_AmmoUtil_DelAmmoCountByAmmoId(self, aid, n);
     VR_Reload_AmmoChanged(self);
     vr_carry_quiet = TRUE; // (the pouch's own sound)
     VR_Carry_Start(self, xHand, r);
     vr_carry_quiet = FALSE;
+    if(r.vr_shootnade)
+    {
+        VR_GrenShot_Update(r); // (in a hand: no shot meets it)
+    }
     VR_Reload_Sound(self, VRGetHandChannel(xHand), "vr/reload_pouch.wav", 0.9);
     VR_Reload_Haptic(self, xHand, 0.07, 120, 0.7);
-    VR_Reload_Log(sprintf("%s taken from the pouch by hand %g: %g left", w ? VR_Reload_Desc(r) : (n >= 2 ?
+    VR_Reload_Log(sprintf("%s taken from the pouch by hand %g: %g left", (w || front) ? VR_Reload_Desc(r) : (n >= 2 ?
         "a taped pair" : "a shell"), xHand, VR_AmmoUtil_GetAmmoCountByAmmoId(self, aid)));
 };
 
@@ -920,7 +1120,8 @@ float(float xHand, entity box) VR_Reload_PouchTakesBox =
 };
 
 // The magazine of the gun in `xGunHand` of self (held or carried) knocked out by a hit (VR_Reload_MagFrame): what the
-// other hand brings (the fist, a prop it holds, a magazine, the gun it holds: its line to the muzzle) within
+// other hand brings (the fist, a prop it holds: its shape's point nearest the magazine, as on the super shotgun's barrels
+// (the engine's shapenearest: its Box3D body as held, not its box), a magazine, the gun it holds: its line to the muzzle) within
 // vr_reload_hit_reach of the magazine anywhere on it (its box, as drawn: VR_Reload_MagDist) at vr_reload_bump_speed or
 // more (the hands' relative speed); not by that hand holding the magazine (the two-handed grip) or gripping it now (its
 // grip closing on it: HS_MAGAZINE), nor in the half second after one seated. Out it flies along the blow, with the gun's
@@ -943,13 +1144,26 @@ void(float xGunHand) VR_Reload_HitFrame =
     vector at = VRGetEntHandPos(self, other);
     float d = VR_Reload_MagDist(self, xGunHand, at);
     entity held = VR_Carry_Held(self, other);
-    if(held != world)
+    if(held != world && held.vr_ammo_wid)
     {
+        // A magazine (or a round): its middle and its top, as drawn (its box, square to the world, is larger than it:
+        // the bump would knock the old one out from further off, the new one then seated by the same approach).
         d = min(d, VR_Reload_MagDist(self, xGunHand, held.origin));
-        if(held.vr_ammo_wid)
+        d = min(d, VR_Reload_MagDist(self, xGunHand, VR_Reload_MagRef(held)));
+    }
+    else if(held != world)
+    {
+        // A prop: its surface, not its middle (a held prop is kept off the gun by the hands' collisions): its shape's
+        // point nearest the magazine's length (the well's top without a box): its Box3D body as the hand holds it, turned
+        // with it (the author's note 10-42-18: its box, square to the world, reached out of it by a head's width).
+        vector m0 = xGunHand == cVR_MainHand ? self.loadportpos : self.offloadportpos;
+        vector m1 = m0;
+        if(VR_Reload_HasMagBox(self, xGunHand))
         {
-            d = min(d, VR_Reload_MagDist(self, xGunHand, VR_Reload_MagRef(held)));
+            m0 = VR_Reload_MagBoxPos(self, xGunHand) - VR_Reload_MagBoxUp(self, xGunHand);
+            m1 = VR_Reload_MagBoxPos(self, xGunHand) + VR_Reload_MagBoxUp(self, xGunHand);
         }
+        d = min(d, VR_Reload_MagDist(self, xGunHand, shapenearest(held, m0, m1)));
     }
     if(VRGetEntWeapon(self, other) != WID_FIST)
     {
@@ -1203,8 +1417,9 @@ void(entity p, float xHand, string xHow) VR_Reload_SsgBreak =
         r.avelocity = '0 1 0' * (crandom() * 400) + '1 0 0' * (crandom() * 300);
         r.flags = r.flags - (r.flags & FL_ONGROUND);
     }
-    VR_Reload_Log(sprintf("the super shotgun (hand %g) broken open by %s: %g spent and %g live thrown out", xHand, xHow,
-        spent, live));
+    VR_Reload_Log(sprintf("the super shotgun (hand %g) broken open by %s: %g spent and %g live thrown out%s", xHand, xHow,
+        spent, live, (p.vr_ssg_fired && time - p.vr_ssg_fired < 5) ? sprintf(", %.2f s after its last shot",
+        time - p.vr_ssg_fired) : ""));
 };
 
 // The super shotgun in `xHand` of `p` snaps shut (`xHow`, for the log): it fires again (what its chambers hold).
@@ -1227,9 +1442,10 @@ void(entity p, float xHand, string xHow) VR_Reload_SsgClose =
 // self (its front 40%): `xSide` -1 from above (the gun's own down; it breaks open: vr_reload_ssg_hit_open_speed, _angle), 1 from below
 // (its own up; open, it snaps shut: vr_reload_ssg_hit_close_*), within vr_reload_ssg_hit_reach of them (open: as they
 // are turned down by vr_reload_ssg_open_angle from the breech), at the hands' relative speed: a fist, a held prop's
-// middle, the other gun's line from its hand to its muzzle. Not while both hands hold it (the pry and the lift are
+// shape (its nearest point: the engine's shapenearest, its Box3D body as held), the other gun's line from its hand to its muzzle. Not while both hands hold it (the pry and the lift are
 // theirs), nor a round the hand holds (brought to the breech to load). What it was in vr_ssg_hitdesc.
 string vr_ssg_hitdesc;
+
 float(float xGunHand, float xSide) VR_Reload_SsgHit =
 {
     float other = VRGetOtherHand(xGunHand);
@@ -1273,7 +1489,7 @@ float(float xGunHand, float xSide) VR_Reload_SsgHit =
     {
         if(k == 0)
         {
-            q = held != world ? held.origin : VRGetEntHandPos(self, other);
+            q = held != world ? shapenearest(held, p0, p1) : VRGetEntHandPos(self, other);
         }
         else if(VRGetEntWeapon(self, other) != WID_FIST)
         {
@@ -1462,6 +1678,60 @@ void(float xHand) VR_Reload_HandFrame =
 // ----------------------------------------------------------------------------
 // Loading
 
+vector(entity r) VR_Reload_RoundAxis;
+
+// A round's reference point, what goes to a load point: a shell's middle, a magazine's top (VR_Reload_MagRef), a
+// launcher's rocket's or grenade's butt (its model's back end, along its axis), a proximity grenade's middle.
+vector(entity r) VR_Reload_RoundRef =
+{
+    if(r.vr_ammo_wid)
+    {
+        return VR_Reload_MagRef(r);
+    }
+    if(r.vr_ammo_front && r.vr_ammo_front != WID_PROXIMITY_GUN)
+    {
+        vector lo = drawnbounds(r, 0); // (as drawn: a grenade at vr_grenade_scale)
+        return r.origin + VR_Reload_RoundAxis(r) * (r.model == VR_RELOAD_MULTI ? lo_z : lo_x);
+    }
+    return r.origin;
+};
+
+// Whether the round `r` is for the gun in `xGunHand` of self as a launcher's round goes: a launcher's round only into its
+// launcher, and a launcher takes only its rounds (their ammo is shared: the rockets).
+float(float xGunHand, entity r) VR_Reload_FrontFits =
+{
+    float w = VRGetEntWeapon(self, xGunHand);
+    return r.vr_ammo_front == (VR_Reload_IsFront(w) ? w : 0);
+};
+
+// Whether the launcher's round `r` lies the way it goes into the muzzle of the gun in `xGunHand` of self: butt first,
+// its nose along the barrel out of the muzzle, within vr_reload_front_angle degrees (`xLoose`: of a loose one, the looser
+// of that and vr_reload_contact_angle); a proximity grenade any way round (TRUE for any other round).
+float(float xGunHand, entity r, float xLoose) VR_Reload_FrontLiesWithin =
+{
+    if(!r.vr_ammo_front || r.vr_ammo_front == WID_PROXIMITY_GUN)
+    {
+        return TRUE;
+    }
+    vector way = xGunHand == cVR_MainHand ? self.loadportaxis : self.offloadportaxis;
+    if(way == '0 0 0')
+    {
+        return FALSE; // (no axis from the engine: a bot's)
+    }
+    float most = cvar_hget(cvarh_vr_reload_front_angle);
+    if(xLoose)
+    {
+        most = max(most, cvar_hget(cvarh_vr_reload_contact_angle));
+    }
+    most = max(0, min(89, most));
+    return VR_Reload_RoundAxis(r) * normalize(way) >= cos(most * 0.0174533);
+};
+
+float(float xGunHand, entity r) VR_Reload_FrontLies =
+{
+    return VR_Reload_FrontLiesWithin(xGunHand, r, FALSE);
+};
+
 // The round `r` goes into the gun in `xGunHand` of self (from the other hand, `xHeld`; else a loose one:
 // VR_Reload_LooseFrame): as many of its rounds as fit (a pair with one place left: one, a single shell left in the hand
 // or lying). TRUE if it is used up (gone). A full gun takes nothing: a dull tap (once, until it leaves the port).
@@ -1564,13 +1834,18 @@ float(float xHand, entity r) VR_Reload_HeldFrame =
         r.vr_ammo_full = FALSE;
         return FALSE;
     }
+    if(!VR_Reload_FrontFits(gunHand, r))
+    {
+        r.vr_ammo_full = FALSE;
+        return FALSE; // (a launcher's round for another launcher)
+    }
     vector port = gunHand == cVR_MainHand ? self.loadportpos : self.offloadportpos;
-    float d = vlen((r.vr_ammo_wid ? VR_Reload_MagRef(r) : r.origin) - port);
+    float d = vlen(VR_Reload_RoundRef(r) - port);
     float leniency = VR_Reload_PortRadius(VRGetEntWeapon(self, gunHand)) + VR_Reload_MagRadius(r.vr_ammo_wid);
     if(cvar_hget(cvarh_vr_reload_debug) >= 2)
     {
         dprint(sprintf("reload: a held round %.1f units from the port (leniency %g): at %v, the port %v\n", d,
-            leniency, r.vr_ammo_wid ? VR_Reload_MagRef(r) : r.origin, port));
+            leniency, VR_Reload_RoundRef(r), port));
     }
     if(d > leniency + 4)
     {
@@ -1589,6 +1864,21 @@ float(float xHand, entity r) VR_Reload_HeldFrame =
     {
         return VR_Reload_MagAtWell(xHand, r);
     }
+    if(!VR_Reload_FrontLies(gunHand, r))
+    {
+        if(!r.vr_ammo_full)
+        {
+            // (A launcher's round the wrong way round, or across the barrel: a dull tap, once as it comes within the
+            // muzzle's range, until it leaves it.)
+            r.vr_ammo_full = TRUE;
+            VR_Reload_Haptic(self, xHand, 0.06, 40, 0.6);
+            VR_Reload_Sound(self, VRGetGunChannel(gunHand), "vr/reload_blocked.wav", 1);
+            VR_Reload_Log(sprintf("%s the wrong way round: butt first into the muzzle (lying %.2f along the barrel)",
+                VR_Reload_Desc(r), VR_Reload_RoundAxis(r) * normalize(gunHand == cVR_MainHand ? self.loadportaxis :
+                self.offloadportaxis)));
+        }
+        return FALSE;
+    }
     return VR_Reload_Load(xHand, r);
 };
 
@@ -1600,11 +1890,12 @@ float(float xHand, entity r) VR_Reload_HeldFrame =
 // 1.2 units in, the thunderbolt's 1.9: vr_physics_shapes): a round that fits passes through it near the load point (the
 // engine's reachSkips, by .vr_ammo_pass), so that it reaches it.
 
-// The way the round `r` lies: a shell's axis (its open end: +x), a magazine's (its feed end: +z).
+// The way the round `r` lies: a shell's axis (its open end: +x), a magazine's (its feed end: +z), a launcher's rocket or
+// grenade's (its nose: +x; the multi-grenade's progs/mervup.mdl stands along its +z).
 vector(entity r) VR_Reload_RoundAxis =
 {
     makevectors('-1 0 0' * r.angles_x + '0 1 0' * r.angles_y + '0 0 1' * r.angles_z); // (a model's pitch is the other way)
-    return r.vr_ammo_wid ? v_up : v_forward;
+    return (r.vr_ammo_wid || r.model == VR_RELOAD_MULTI) ? v_up : v_forward;
 };
 
 // Whether the gun in `xGunHand` of self takes the loose round `r` now: it fits (its ammo; a magazine its gun's), there is
@@ -1630,6 +1921,14 @@ float(float xGunHand, entity r) VR_Reload_LooseFits =
     {
         return FALSE;
     }
+    if(!VR_Reload_FrontFits(xGunHand, r))
+    {
+        return FALSE;
+    }
+    if(r.vr_ammo_front)
+    {
+        return VR_Reload_FrontLiesWithin(xGunHand, r, TRUE); // (butt first; a proximity grenade any way round)
+    }
     vector way = xGunHand == cVR_MainHand ? self.loadportaxis : self.offloadportaxis;
     if(way == '0 0 0')
     {
@@ -1643,7 +1942,7 @@ float(float xGunHand, entity r) VR_Reload_LooseFits =
 // along its way since the last (a falling round moves a few units a frame).
 float(entity r, vector xPort) VR_Reload_LooseDist =
 {
-    vector b = r.vr_ammo_wid ? VR_Reload_MagRef(r) : r.origin;
+    vector b = VR_Reload_RoundRef(r);
     vector ab = r.velocity * frametime;
     vector a = b - ab;
     float t = 0;
@@ -1685,7 +1984,7 @@ void(float xHand) VR_Reload_LooseFrame =
             float within = radius + VR_Reload_MagRadius(r.vr_ammo_wid) + lenient;
             float d = VR_Reload_LooseDist(r, port);
             // (From the opening's side only, at most half the radius past it: not through the gun from its other side.)
-            float side = ((r.vr_ammo_wid ? VR_Reload_MagRef(r) : r.origin) - port) * face;
+            float side = (VR_Reload_RoundRef(r) - port) * face;
             if(d > within + lenient + 4)
             {
                 r.vr_ammo_fresh = FALSE;
@@ -1730,6 +2029,256 @@ void(float xHand) VR_Reload_LooseFrame =
             }
         }
         r = next;
+    }
+};
+
+// ----------------------------------------------------------------------------
+// Guns lying about (the author's note vrfiringrange_2026-10-08_10-31-35: a magazine or a shell couldn't go into a gun in
+// prop form; the prop and the held gun should do most of the same): a gun lying as a prop (thrown_weapon: dropped,
+// thrown, on a table) loads as a held one does, by hand and by contact: shells into the shotgun's port and the open super
+// shotgun's barrels, a magazine into its empty well, a launcher's round into its muzzle. The rounds stay with the weapon
+// (its record's magazine, .weaponinst.wi_clip; a magazine seated clears its QVR_WPNFLAG_NOMAG), so the hand that picks
+// it up has them. Its load point is the engine's (loadportof: from its model as it lies, the super shotgun's turned down
+// with its barrels open), its collision its drawn shape in convex pieces (vr_box3d.cpp gunPieces: the port and the wells
+// open); a loose round that fits passes through it within the leniency (.vr_ammo_passgun: the engine's preSolve), as
+// through a held gun.
+// Held-only still: the magazine's pull and B/Y's eject (the gun must be held to pull against, or its button pressed),
+// the bump that knocks a magazine out and the hits that break the super shotgun open or shut (the other hand's blows at
+// the gun one hand holds), the flick, the ammo button's press (the hand's own gun's).
+
+.entity vr_ammo_passgun; // a loose round passing through a gun lying about to its load point (VR_Reload_PropsFrame;
+                         // the engine's vr_box3d.cpp preSolve)
+.entity vr_ammo_tapped;  // a round held at a lying gun that can't take it (full, shut, the wrong way round): that gun,
+                         // tapped once (until the round leaves its port)
+float vr_reload_props_time; // (VR_Reload_PropsFrame: once a frame)
+
+// The ammo whose rounds the gun lying as `g` takes, if it loads by hand (immersive); else -1.
+float(entity g) VR_Reload_PropAmmoFor =
+{
+    if(g.classname != "thrown_weapon" || !VR_Reload_ManualFor(g.weapon) || !g.weaponinst)
+    {
+        return -1;
+    }
+    return WeaponIdToAmmoId(g.weapon, g.weaponflags);
+};
+
+// Whether the round `r` is for the gun lying as `g`: its ammo; a magazine its gun's, a launcher's round its launcher's.
+float(entity g, entity r) VR_Reload_PropTakes =
+{
+    float w = g.weapon;
+    if(VR_Reload_PropAmmoFor(g) != r.vr_ammo_aid || r.vr_ammo_front != (VR_Reload_IsFront(w) ? w : 0))
+    {
+        return FALSE;
+    }
+    if(r.vr_ammo_wid)
+    {
+        return r.vr_ammo_wid == w;
+    }
+    return !VR_Reload_UsesMag(w);
+};
+
+// Whether the gun lying as `g` has room for `r` now: a magazine its well empty; a round a place in it, the super shotgun
+// open.
+float(entity g, entity r) VR_Reload_PropRoom =
+{
+    float w = g.weapon;
+    if(r.vr_ammo_wid)
+    {
+        return (g.weaponflags & QVR_WPNFLAG_NOMAG) != 0;
+    }
+    if(w == WID_SUPER_SHOTGUN && !(g.weaponflags & QVR_WPNFLAG_SSG_OPEN))
+    {
+        return FALSE;
+    }
+    return g.weaponinst.wi_clip < WeaponIdToBaseClipSize(w);
+};
+
+// Whether `r` lies the way it goes into the gun lying as `g` (its .loadportaxis): a launcher's round butt first within
+// vr_reload_front_angle (a proximity grenade any way round); loose (`xLoose`), a shell's open end along the tube or the
+// barrels, a magazine's feed end up the well, within vr_reload_contact_angle (held, any way: as into a held gun).
+float(entity g, entity r, float xLoose) VR_Reload_PropLies =
+{
+    if(r.vr_ammo_front == WID_PROXIMITY_GUN || (!r.vr_ammo_front && !xLoose))
+    {
+        return TRUE;
+    }
+    float most = cvar_hget(cvarh_vr_reload_contact_angle);
+    if(r.vr_ammo_front)
+    {
+        most = xLoose ? max(most, cvar_hget(cvarh_vr_reload_front_angle)) : cvar_hget(cvarh_vr_reload_front_angle);
+    }
+    most = max(0, min(89, most));
+    return VR_Reload_RoundAxis(r) * normalize(g.loadportaxis) >= cos(most * 0.0174533);
+};
+
+// From `xHand` of the player `xBy`, the round `r` (its model as it is now: of a pair with one place, a single shell) went
+// into the gun lying as `g`: drawn sliding in on his client as into a held gun (vr_collectfx.cpp, QVR_CFX_INTO_PROP; the
+// author's note vrfiringrange_2026-10-08_14-18-22: it went in at once). Not a magazine (it seats, as into a held gun).
+void(entity g, entity r, entity xBy, float xHand) VR_Reload_PropSlide =
+{
+    if(!xBy || r.vr_ammo_wid)
+    {
+        return;
+    }
+    entity was = self;
+    self = xBy; // (collectfx goes to self's client)
+    collectfx(xHand, g, QVR_CFX_INTO_PROP, r.modelindex, r.origin, r.angles);
+    self = was;
+};
+
+// The round `r` goes into the gun lying as `g` (which takes it and has room), from `xHand` of the player `xBy` (world: a
+// loose one by contact): a magazine seats (its rounds the gun's), shells go in as many as fit. TRUE if `r` is used up.
+float(entity g, entity r, entity xBy, float xHand) VR_Reload_IntoProp =
+{
+    float w = g.weapon;
+    float n = r.vr_ammo_count;
+    string how = xBy ? "from a hand" : "a loose round by contact";
+    if(r.vr_ammo_wid)
+    {
+        g.weaponinst.wi_clip = n;
+        g.weaponflags = g.weaponflags - (g.weaponflags & QVR_WPNFLAG_NOMAG);
+        VR_Reload_Sound(g, CHAN_AUTO, "vr/reload_mag_in.wav", 1);
+        VR_Reload_Log(sprintf("%s seated in the %s lying about (%s): it holds %g", VR_Reload_Desc(r), g.netname, how, n));
+        r.vr_ammo_count = 0;
+    }
+    else
+    {
+        float clip = g.weaponinst.wi_clip;
+        n = min(n, WeaponIdToBaseClipSize(w) - clip);
+        g.weaponinst.wi_clip = clip + n;
+        r.vr_ammo_count = r.vr_ammo_count - n;
+        VR_Reload_Sound(g, CHAN_AUTO, VR_Reload_ShellInSound(), 1);
+        VR_Reload_Log(sprintf("%g into the %s lying about (%s): its magazine %g of %g", n, g.netname, how, clip + n,
+            WeaponIdToBaseClipSize(w)));
+        if(clip + n >= WeaponIdToBaseClipSize(w))
+        {
+            VR_Reload_Sound(g, CHAN_AUTO, "vr/reload_full.wav", 1);
+        }
+    }
+    if(xBy)
+    {
+        VR_Reload_Haptic(xBy, xHand, 0.06, 150, 0.9); // (the round pushed home)
+    }
+    if(r.vr_ammo_count > 0)
+    {
+        VR_Reload_SetModel(r); // (a pair's other shell, still in the fingers, or lying)
+        VR_Reload_PropSlide(g, r, xBy, xHand);
+        return FALSE;
+    }
+    VR_Reload_PropSlide(g, r, xBy, xHand);
+    if(xBy)
+    {
+        VR_Carry_SetHeld(xBy, xHand, world);
+        r.carry_player = world;
+    }
+    remove(r);
+    return TRUE;
+};
+
+// The round `r` at the gun lying as `g` this frame: held in a hand, within the gun's radius (a magazine's added) of its
+// load point it goes in (the wrong way round, or no room: a dull tap, once); loose, as VR_Reload_LooseFrame takes one
+// into a held gun (within the radius and vr_reload_contact_leniency, from the opening's side, lying right; through
+// the gun within the leniency more).
+void(entity g, entity r) VR_Reload_PropRound =
+{
+    vector port = g.loadportpos;
+    float radius = VR_Reload_PortRadius(g.weapon);
+    float within = radius + VR_Reload_MagRadius(r.vr_ammo_wid);
+    float d;
+    if(r.carry_player)
+    {
+        entity p = r.carry_player;
+        float hand = -1;
+        if(VR_Carry_Held(p, cVR_MainHand) == r)
+        {
+            hand = cVR_MainHand;
+        }
+        else if(VR_Carry_Held(p, cVR_OffHand) == r)
+        {
+            hand = cVR_OffHand;
+        }
+        if(hand < 0 || !p.ishuman || p.health <= 0 || !VR_Reload_PropTakes(g, r))
+        {
+            return;
+        }
+        d = vlen(VR_Reload_RoundRef(r) - port);
+        if(d > within)
+        {
+            if(r.vr_ammo_tapped == g)
+            {
+                r.vr_ammo_tapped = world;
+            }
+            return;
+        }
+        if(!VR_Reload_PropRoom(g, r) || !VR_Reload_PropLies(g, r, FALSE))
+        {
+            if(r.vr_ammo_tapped != g)
+            {
+                r.vr_ammo_tapped = g;
+                VR_Reload_Haptic(p, hand, 0.06, 40, 0.6);
+                VR_Reload_Sound(g, CHAN_AUTO, "vr/reload_blocked.wav", 1);
+                VR_Reload_Log(sprintf("%s held at the %s lying about: it can't take it (full, shut, or the wrong way "
+                    "round)", VR_Reload_Desc(r), g.netname));
+            }
+            return;
+        }
+        VR_Reload_IntoProp(g, r, p, hand);
+        return;
+    }
+    if(!cvar_hget(cvarh_vr_reload_contact) || r.fg_state == 1)
+    {
+        return;
+    }
+    float lenient = max(0, cvar_hget(cvarh_vr_reload_contact_leniency)) * VRMetersToUnits() / 100;
+    d = VR_Reload_LooseDist(r, port);
+    float side = (VR_Reload_RoundRef(r) - port) * g.loadportface;
+    if(d <= within + 2 * lenient && side >= -0.5 * radius && VR_Reload_PropTakes(g, r) && VR_Reload_PropRoom(g, r) &&
+       VR_Reload_PropLies(g, r, TRUE))
+    {
+        r.vr_ammo_passgun = g; // (through its collision, which may cover the port: the engine's preSolve)
+        if(d <= within + lenient)
+        {
+            VR_Reload_IntoProp(g, r, world, 0);
+        }
+    }
+};
+
+// Once a frame (StartFrame): each round (loose, or in a hand) at each gun lying about that loads by hand
+// (VR_Reload_PropRound), with the gun's load point from the engine as it lies now (loadportof).
+void() VR_Reload_PropsFrame =
+{
+    if(vr_reload_props_time == time)
+    {
+        return;
+    }
+    vr_reload_props_time = time;
+    entity r = VR_Reload_NextRound(world);
+    if(!r || !VR_Reload_Immersive())
+    {
+        return;
+    }
+    while(r)
+    {
+        r.vr_ammo_passgun = world; // (set again below while it is at one)
+        r = VR_Reload_NextRound(r);
+    }
+    float open = cvar_hget(cvarh_vr_reload_ssg_open_angle);
+    entity g = find(world, classname, "thrown_weapon");
+    while(g)
+    {
+        entity nextGun = find(g, classname, "thrown_weapon");
+        float ssgOpen = g.weapon == WID_SUPER_SHOTGUN && (g.weaponflags & QVR_WPNFLAG_SSG_OPEN);
+        if(VR_Reload_PropAmmoFor(g) >= 0 && loadportof(g, ssgOpen ? open : 0))
+        {
+            r = VR_Reload_NextRound(world);
+            while(r)
+            {
+                entity next = VR_Reload_NextRound(r);
+                VR_Reload_PropRound(g, r);
+                r = next;
+            }
+        }
+        g = nextGun;
     }
 };
 

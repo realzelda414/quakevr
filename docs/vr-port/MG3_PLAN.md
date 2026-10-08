@@ -330,12 +330,20 @@ Melee-touching tasks also run `eval.sh` (archived settings; no melee tuning).
 ### Phase E: acceptance and readiness
 
 - **M3-28 Performance pass.** map2/secret2/map1 `vr_profile` with full monster counts and ragdoll caps; fixes or
-  documented budgets. Run after the profiling worker; `--exclusive` for timings.
+  documented budgets. Run after the profiling worker; `--exclusive` for timings. **Done 2026-10-08:** bench group `mg3` (tours, whole
+  count awake, kill-all at ragdoll caps 8 and 32; `vr_test_monsters`); every scenario holds 90 Hz at the median, the
+  worst steady load secret2's 166 monsters awake (CPU 4.1 ms of 11.1), a death 0.15-0.2 ms; fixes with identical
+  output (MG frame ticks, water tests, pushers, the caps' walks: secret2's fight SV_Physics -0.19 ms); budgets and
+  trade-offs in BENCHMARKS.md "Dawn of the Machine" and PERF_DECISIONS.md 8-11.
 - **M3-29 Full-campaign route sweep.** all 22 BSPs 0 missing classes/fields; every normal/secret route; runes;
-  hub returns; both endings; carry/save/load/death at each hop; language-gate checks.
+  hub returns; both endings; carry/save/load/death at each hop; language-gate checks. **Done 2026-10-08:**
+  `Misc/quakevr/mg3_route_test.sh` (main 93/0, Bloody Nightmare 29/0, every exit 71/0; results table in EXPANSIONS.md,
+  "Dawn of the Machine route sweep"; two bugs fixed: the language gate's missing ending identifiers, the sweep presser).
 - **M3-30 Readiness flip and docs.** `nativeReady` true for single-player (Q6), solo guard as Dopa, INSTALL/README/
   CREDITS/EXPANSIONS, Debug menu tests, human VR QA checklist (Super Axe contacts, axe buttons, lore readability,
-  teleports/ceilings comfort, new monsters' hit zones).
+  teleports/ceilings comfort, new monsters' hit zones). **Done 2026-10-08** (Vittorio: "unlock MG3 both in-game and in
+  the installer"): `nativeReady` true, `soloOnly` 5, the installer's table, the docs, in one revertable commit
+  (EXPANSIONS.md, "Readiness"); the human VR QA is his, while playing.
 
 Order: A (01-04) -> B (05-10, 05-07 can run in parallel) -> C (11-14, parallel to D) -> D (15-23 parallel by archetype,
 24-27 after 10) -> E. About 30 worker runs.

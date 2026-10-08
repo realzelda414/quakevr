@@ -105,8 +105,7 @@ So a launch that does not rely on the working directory is
 | `id1` (original) | `pak0.pak` + `pak1.pak` | yes | `COM_SetBaseDir`; installer should also check `pak1` and the known 1.06 sizes (PAK0 18,689,235 bytes, PAK1 34,257,856 bytes: verify) |
 | `id1` (rerelease) | `pak0.pak` ~220 MB | yes (campaign, packs); relight works from it with `--quake <rerelease>` | |
 | `hipnotic`, `rogue` | every file of `vr_pack_hipnotic.inc` / `vr_pack_rogue.inc` (100 / 131 entries) found intact in the packs of any base dir | yes (merged VR progs) | `inspectPack`: 1 available, 2 incomplete/corrupt (a pak or one of the pack's files is there, but not all of them), 0 missing (also a folder holding only an extracted texture pack's `textures\`); `vr_pack_status` |
-| `dopa`, `mg1` | its resource list, from `ownedRoots()` (Steam `rerelease`, GOG enhanced, each base dir, its `rerelease` and `..\rerelease`) | **yes**, single player only (`coop 0`, `deathmatch 0`, `maxplayers 1`): "ready (single player)" | `discoverCampaigns`; `soloOnly()`; also needs current language tables from the rerelease `id1` pak |
-| `mg3` | as dopa | **no**: shown as "detected, not yet supported" (decision 9); selection refused ("native support in progress") | `nativeReady` false in `campaigns[]`; `vr_campaign_status` |
+| `dopa`, `mg1`, `mg3` | its resource list, from `ownedRoots()` (Steam `rerelease`, GOG enhanced, each base dir, its `rerelease` and `..\rerelease`) | **yes**, single player only (`coop 0`, `deathmatch 0`, `maxplayers 1`): "ready (single player)" | `discoverCampaigns`; `soloOnly()`; also needs current language tables from the rerelease `id1` pak |
 
 The installer's labels follow the engine's flags: `ExpansionDetector.Campaigns` mirrors `nativeReady` and `soloOnly()`,
 and the self-test "expansions: readiness matches the engine" reads `Quake/vr/vr_gamedir.cpp` and fails when they differ.
@@ -143,9 +142,9 @@ or read there.
 
 | Item | Source (from this repo's docs) | Size | Goes to | Needs |
 |---|---|---:|---|---|
-| HQ textures (QRP, PNG), **ticked by default** | `https://github.com/vittorioromeo/quakevr/releases/tag/textures-2026-10-03`, `quakevr-hq-textures-png-2026-10-03.zip` | ~0.6 GB unpacked (id1 360 MB, hipnotic 88 MB, rogue 121 MB, Quetoo copy 47 MB) | `id1\textures`, and `hipnotic\textures` / `rogue\textures` **only for packs the player owns** | nothing; install before relighting |
+| HQ textures (QRP, PNG), **ticked by default** | `https://github.com/vittorioromeo/quakevr/releases/tag/assets-2026-10-08` (the support-files release, RELEASING.md "Support files"; first published as `textures-2026-10-03`), `quakevr-hq-textures-png-2026-10-03.zip` (614,919,925 bytes; latest.json carries its URL, size and SHA-256; when latest.json cannot be read or names no `hdtextures`, the installer's built-in copy of the same entry, `BuiltInComponents`, RELEASING.md "Support files") | ~0.6 GB unpacked (id1 360 MB, hipnotic 88 MB, rogue 121 MB, Quetoo copy 47 MB) | `id1\textures`, and `hipnotic\textures` / `rogue\textures` **only for packs the player owns** | nothing; install before relighting |
 | QRP archive (fallback) | `https://www.moddb.com/addons/quake-revitalization-project-archive`, `QuakeRevitalizationProject.7z` | 1.26 GB | the same, after unpacking the `.pk3`s | 7-Zip; not for the installer (use the PNG release) |
-| ericw-tools | `https://github.com/ericwa/ericw-tools/releases/tag/2.0.0-alpha11`, `ericw-tools-2.0.0-alpha11-win64.zip` (27,503,991 bytes, SHA-256 `4e5ea11be2194a1c4acac6d6da9d5b5b9f65324fda2d67efa0731d1fd8e0745f`) | 27.5 MB (what is kept: about 39 MB) | `<QVR>\quakevr\tools\ericw-tools\` (as `Windows/package-quakevr.ps1` lays it out: `light.exe`, `embree4.dll`, `tbb12.dll`, `tbbmalloc.dll`, `gpl_v3.txt`, `LICENSE-embree.txt`, `README.md`, `NOTICE.txt`) | exact version (the light differs between versions). The package ships it. If it is missing, the game offers it: Graphics > Relighting > **Download ericw-tools (27.5 MB)** (`vr_relight_get_tool`, `Quake/vr/vr_relight_tool.cpp`) fetches this exact zip, checks the pinned size and SHA-256, and unpacks only those files into the user's `quakevr\tools\ericw-tools\` (light.exe last). The author's own copy (`C:/OHWorkspace/ericw-tools-2.0.0-alpha11-win64`) is looked in only at Menu Detail: Developer (`vr_menu_level 2`) |
+| ericw-tools | `https://github.com/ericwa/ericw-tools/releases/tag/2.0.0-alpha11` (mirrored on `assets-2026-10-08`, the in-game download's first mirror), `ericw-tools-2.0.0-alpha11-win64.zip` (27,503,991 bytes, SHA-256 `4e5ea11be2194a1c4acac6d6da9d5b5b9f65324fda2d67efa0731d1fd8e0745f`) | 27.5 MB (what is kept: about 39 MB) | `<QVR>\quakevr\tools\ericw-tools\` (as `Windows/package-quakevr.ps1` lays it out: `light.exe`, `embree4.dll`, `tbb12.dll`, `tbbmalloc.dll`, `gpl_v3.txt`, `LICENSE-embree.txt`, `README.md`, `NOTICE.txt`) | exact version (the light differs between versions). The package ships it. If it is missing, the game offers it: Graphics > Relighting > **Download ericw-tools (27.5 MB)** (`vr_relight_get_tool`, `Quake/vr/vr_relight_tool.cpp`) fetches this exact zip, checks the pinned size and SHA-256, and unpacks only those files into the user's `quakevr\tools\ericw-tools\` (light.exe last). The author's own copy (`C:/OHWorkspace/ericw-tools-2.0.0-alpha11-win64`) is looked in only at Menu Detail: Developer (`vr_menu_level 2`) |
 | VisPatch data | `https://sourceforge.net/projects/vispatch/files/vispatch%20data/1.0/`: `id1_vis.tgz` (949 KB), `hipnotic_vis.tgz` (807 KB), `rogue_vis.tgz` (787 KB); mirror: `https://www.quake-info-pool.net/vispatch/files.htm` | 2.5 MB | `<QVR>\quakevr\tools\vispatch\` (`id1.vis`, `hipnotic.vis`, `rogue.vis`), beside `relight_maps.py`, which takes that folder by itself (else `--vis-dir`, `QUAKEVR_VISPATCH`); the in-game relight reads it there too (Relighting > *See-Through Liquids*, `vr_relight_seethrough` 1, vr_relight_vis.cpp: vis_maps.py's patch in C++, the same bytes), so the installer only unpacks the files: **no separate vis step** | `tar` (in Windows 10+) |
 | Relit maps | made **in the game** (the relight as an in-game tool, decision 5: Graphics > Relighting > Many Maps), with the bundled (or downloaded) `light.exe` and the VisPatch data | ~220 MB. A batch lights two maps at once by default (`vr_relight_parallel` 0: two from 8 cores) and skips the maps already relit with the same settings. Measured 2026-10-06 on 32 cores at the defaults (Smooth shadows, no Bounced Light): every map of id1, hipnotic, rogue and quakevr (79) in 1:52; e1's 8 in about 6 s (about 33 s with Bounced Light 1) | in-game results: `<QVR>\quakevr\relit_custom\<game>\maps\` (`relight_maps.py` still writes `<QVR>\quakevr\relit\`; the game prefers `relit_custom`, `vr_relight_use`) | `light.exe`, VisPatch; textures first. **Ticked by default** |
 | Music | read **in place**: the rerelease's `rerelease\id1\music` and the original Quake's music (the store copies' tracks) | | nothing copied (decision 8) | an owned copy |
@@ -202,11 +201,70 @@ Quake files", survives store updates, and the engine already supports it. Two ca
   `notes\`, `profile\`, `relit\`, `bodycal\`, `motions\` (except shipped ones), `eyeshots\`, `checklist_ticks.txt`,
   `retro_overrides.txt`, `cache\`, `qvr_addons\` (everything the package's allowlist does not name; `quakevr\.gitignore` lists them).
 - Settings migrate by themselves on the first start (`configVersion`, [section 6](#6-out-of-the-box-settings)).
-- After an update the relight is re-run: it only relights maps whose stamp changed (fast).
+- After an update the relight is re-run only when its inputs changed (below); the game's batch then relights only the
+  maps whose stamp changed (fast).
 - Update check: the build now names itself (`VR_BuildVersion`: commit date and short hash); a small `latest.json`
-  on both hosts (GitHub releases and vittorioromeo.com) names the newest. Offer, never auto-install.
+  asset of the GitHub release names the newest (the only feed: Vittorio, 2026-10-08). Offer, never auto-install.
 - Adopting a zip install (layout A): offer to move `quakevr\ironwail.cfg`, saves, notes, `relit\` and Map Library
   data to `<QVR>`; never delete the old ones (say what can be removed).
+
+### Update mode (done 2026-10-08)
+
+Setup started again finds the install and opens on the **Update screen** instead of the first-install wizard.
+
+- **Finding the install** (`InstallDetection`, `qvr-setup detect`): a folder with an `install.json` that reads, looked
+  for in this order: the folder given (`--target`, a sandbox, Browse), the install this Setup runs from (its copy in
+  `<QVR>\setup`), the Apps & Features entry's `InstallLocation`, the default folder (`%LOCALAPPDATA%\Programs\QuakeVR`).
+  The first found is picked; the others are listed on the screen. An entry whose folder has no install any more (moved
+  or deleted by hand) is said and passed over; **Use another install…** browses to a moved one (its next update rewrites
+  the entry).
+- **Versions** (`ReleaseVersion`): manifest.json's `1.0.1 (2026-10-20 abcdef12)`; ordered by MAJOR.MINOR.PATCH, then
+  the pre-release suffix (`1.0.1-dev` < `1.0.1`, `1.0.0-rc.1` < `1.0.0`), then the build's date. Newer (or another build of the same version and
+  day) -> **Update**; the same or older -> **Repair**. The old stamp-only versions (`2026-10-06 c131f4bf`) come before
+  every numbered one.
+- **The screen:** "Quake VR: Unleashed 1.0.0 is installed", "Update to 1.0.1: only the program files that changed are
+  replaced", and the footer's one primary button, **Update** (or **Repair**). It needs the package: the release list
+  read, or a local one; without either it says so with **Pick a package…** and **Try again**. It goes straight to the
+  Install page (the Statement was answered at install; the Quake folder, shortcuts and relight choice are install.json's).
+  An install whose Quake folder is gone goes through the wizard instead (Your PC asks for it), still as an update.
+- **Update** (`MaintenancePlanner`, `InstallEngine` with `InstallMode.Update`): every program file is hashed; only those
+  that differ from the package are staged and checked (added, replaced, restored); the rest are not touched (not even
+  rewritten). Files the previous version shipped and this one does not are removed when unchanged, kept when the player
+  changed them. A shipped file the player changed, or the player's own file where this version ships one, is copied into
+  a backup first (`<QVR>ackups\<yyyy-MM-dd HHmmss> update\`, with `backup.json`: path, size, SHA-256; checked). The
+  player's files (everything install.json does not list: configs, saves, screenshots, voice notes, Map Library maps,
+  relit maps, checklist ticks, caches) are never opened. The Apps & Features entry gets the new version.
+  - **HD textures:** install.json now records the pack (`hdTexturesFile`, `hdTexturesSha256`). The same SHA-256 as the
+    target's (the release list's `hdtextures`, else the built-in pin): skipped, not downloaded. Another pack: downloaded
+    and installed (the old pack's files it does not have are removed). Installed by an older Setup (no recorded hash):
+    kept. Not installed: an update never adds them (Install again does).
+  - **First-start relight:** asked for again only when its inputs changed (`MaintenancePlanner.IsRelightInput`:
+    `quakevr	ools\ericw-tools\*`, `quakevr	oolsispatch\*`, `quakevrelight_textures.cfg`, a new HD pack, VisPatch
+    newly added) and the player chose the relight at install; a relight still pending stays. The game's batch skips maps
+    relit with the same settings anyway (vr_relight.cpp `relitAlready`).
+  - Shortcuts: made again as chosen at install (a deleted one comes back); the console keeps them unless `--shortcuts-dir`.
+- **Repair** (same version): the same plan; missing or changed program files restored (a changed one backed up first);
+  no relight asked (a pending one stays). With the HD textures, their files are checked too and the pack is downloaded
+  again when one is missing or changed. **An older package never downgrades:** only files identical in both versions are
+  restored; the rest stay as installed, and the damaged ones it cannot restore are named (they need the installed
+  version's package); install.json and the entry keep the installed version.
+- **Install again from scratch** (secondary, on the same screen): two choices, **Reset settings** (unrecorded `*.cfg`
+  such as `ironwail.cfg` and `autoexec.cfg`, `retro_overrides.txt`, `bodycal\`) and **Remove saves and installed maps**
+  (`*.sav`, `autosave\`, `qvr_addons\`, `cache\maps_installed.txt`; the zip cache stays). Whatever is ticked is moved
+  (never deleted) into `<QVR>ackups\<date> reinstall\`, each file hashed before and after (a mismatch stops before
+  anything is installed); then the whole wizard (Statement, Your PC, Options) and a full install, every program file
+  copied again. Screenshots, voice notes, relit maps, checklist ticks and caches are never part of it. Setup never deletes
+  a backup; the uninstall leaves `backups\` with the player's files.
+- **Console:** `qvr-setup update [--target|--sandbox] [--package|--feed] [--dry-run]` (the plan: each file's action, the
+  backups, the HD textures and relight decisions, the entry's version; from a feed the file plan needs the package, unless
+  it is in `--downloads` already), `qvr-setup reinstall --reset-settings --remove-saves [--dry-run]` (the files moved,
+  then install's flow and `--accept-statement`), `qvr-setup detect` prints the install found.
+- **Tested** (self-test, 36 cases): a fresh machine finds nothing (the normal flow); an older install's plan lists only
+  program files and the player's 13 files hash the same before and after (an unchanged file not even rewritten, the
+  changed shipped file and the player's file at a new shipped path in a checked backup); same version -> repair restores
+  a deleted and a changed file; an older package keeps the newer engine; each reinstall choice -> its files in a dated
+  backup with matching hashes, the others untouched, the emptied map folders gone; HD pack unchanged -> kept, not
+  rewritten; another pack -> installed and the relight asked again; a new light.exe -> relight asked again.
 
 ### Uninstall, integrity, offline, disk
 
@@ -304,15 +362,16 @@ for (.NET carries its own native parts), so it can install it; a self-contained 
 
 ### Hosting and SmartScreen (decision 6)
 
-Downloads are hosted on **both GitHub releases and vittorioromeo.com** (the same files, the same SHA-256s; the
-installer and the update check try one, then the other). There is **no code-signing certificate**, so:
+Downloads and the release list are hosted on **GitHub releases** (revised 2026-10-08: the vittorioromeo.com feed is
+dropped, GitHub's is the only one; a release may still list a mirror after GitHub's URL in `latest.json`, tried in order
+with the same SHA-256). There is **no code-signing certificate**, so:
 
 - Windows marks downloaded files (Mark of the Web). An unsigned `setup.exe` (or an `ironwail.exe` from an extracted
   zip) shows SmartScreen's "Windows protected your PC" until the file has built reputation: the player clicks
   **More info > Run anyway**. Reputation is per file hash, so every release starts again; a signed file would carry
   the publisher's reputation instead.
 - Say so on the download page and in the README, with a screenshot of the two clicks, and publish each file's SHA-256
-  next to it (both hosts) so players can check what they run (`Get-FileHash`).
+  next to it (on the release) so players can check what they run (`Get-FileHash`).
 - Keep file names stable and ship few executables (one installer). Antivirus false positives on an unsigned
   installer can be reported to Microsoft's file submission portal.
 - If it becomes a problem: Azure Trusted Signing (a monthly subscription, no hardware token) signs the installer and
@@ -329,9 +388,10 @@ defaults when no `installer-settings.json` sits beside the exe; one there overri
 | Feed, in order | Status |
 |---|---|
 | `https://github.com/vittorioromeo/quakevr/releases/latest/download/latest.json` | Works as soon as a release has a `latest.json` asset and is the newest non-draft, non-prerelease one (GitHub's "latest" skips both) |
-| `https://vittorioromeo.com/quakevr/latest.json` | **Needs you to create it**: the `/quakevr/` folder on the site and the file, uploaded with each release |
 
-Until a release exists both answer 404: the installer then offers "Use a local package" (and installs from a
+(The second feed, `https://vittorioromeo.com/quakevr/latest.json`, was dropped on 2026-10-08: GitHub's is the only one.)
+
+Until a release exists it answers 404: the installer then offers "Use a local package" (and installs from a
 `QuakeVR.zip` beside it with no network at all), so nothing has to change in the code.
 
 Steps for each release:
@@ -339,20 +399,17 @@ Steps for each release:
 1. Build and package: `Windows\package-quakevr.ps1 -Build` (dist\QuakeVR with `manifest.json`, and dist\QuakeVR.zip). The
    installer: `dotnet publish Installer/src/QuakeVR.Installer -c Release -r win-x64 --self-contained -p:PublishSingleFile=true`.
 2. `python Misc/quakevr/make_release.py --package dist/QuakeVR --setup <publish>\QuakeVR-Setup.exe
-   [--textures <HD texture pack>.zip] --asset ericw-tools-2.0.0-alpha11-src.zip` writes `dist/release/<tag>/`: `QuakeVR.zip`
+   [--textures <HD texture pack>.zip | --no-textures]` writes `dist/release/<tag>/`: `QuakeVR.zip`
    (zipped from the folder after checking every file against its manifest), the other assets, `latest.json` (schema 1:
    version, `package`, `components.hdtextures`; each with file, size, SHA-256 and URLs
    `https://github.com/vittorioromeo/quakevr/releases/download/<tag>/<file>`, the release's own assets, so an old `latest.json`
-   never points at newer files) and `PUBLISH.txt`. The tag defaults to `v` + the package's version
+   never points at newer files; `hdtextures` by default the pack hosted on the support-files release,
+   `Misc/release/support_assets.json`, not copied) and `PUBLISH.txt`. The tag defaults to `v` + the package's version
    (`2026-10-06 c131f4bf` gives `v2026-10-06-c131f4bf`); `--tag` sets another.
 3. Create the GitHub release with every file of that folder (latest.json included), from the folder (the command is in
    `PUBLISH.txt`; the script runs nothing):
    `gh release create <tag> --repo vittorioromeo/quakevr --target <commit> --title "Quake VR: Unleashed <version>" --notes-file <notes.md> "QuakeVR.zip" "QuakeVR-Setup.exe" ... "latest.json"`
-4. Upload the same `latest.json` to `https://vittorioromeo.com/quakevr/latest.json`. For a download mirror there too, also
-   upload the other files (e.g. to `/quakevr/releases/<tag>/`) and run the script again with
-   `--url-base "https://github.com/vittorioromeo/quakevr/releases/download/{tag}/{file}" --url-base "https://vittorioromeo.com/quakevr/releases/{tag}/{file}"`
-   before uploading (the URLs are in `latest.json`; its hashes do not change).
-5. Check: `qvr-setup feed --url <each feed>` prints the version and the package's size; then the installer with no local
+4. Check: `qvr-setup feed --url https://github.com/vittorioromeo/quakevr/releases/latest/download/latest.json` prints the version and the package's size; then the installer with no local
    package.
 
 Verified (2026-10-07) without publishing: a release made from a scratch package, served by a local HTTP server
@@ -362,9 +419,10 @@ installed, verified and uninstalled; the default run's `latest.json` and `gh` co
 ### Release checklist: third-party files
 
 - **ericw-tools' source next to every release** (GPL-3, section 3; the package ships `light.exe` and the game can
-  download it): upload `ericw-tools-2.0.0-alpha11-src.zip` (the 2.0.0-alpha11 tag's source with its submodules:
+  download it): `ericw-tools-2.0.0-alpha11-src.zip` (the 2.0.0-alpha11 tag's source with its submodules:
   `git clone --recursive --branch 2.0.0-alpha11 https://github.com/ericwa/ericw-tools`, zipped; GitHub's own tag
-  archive leaves the submodules out) to the same release page on both hosts, beside the Quake VR package. Both `NOTICE.txt`s (the package's, `Misc/quakevr/ericw-tools-NOTICE.txt`,
+  archive leaves the submodules out) is hosted on the support-files release `assets-2026-10-08`, and every release's
+  notes link it ("Source of ericw-tools' light.exe"; `make_release.ps1 -EricwSource <zip>` attaches a copy instead). Both `NOTICE.txt`s (the package's, `Misc/quakevr/ericw-tools-NOTICE.txt`,
   and the one the in-game download writes) say it is there.
 - Check that the package has `quakevr\tools\ericw-tools\light.exe` (`package-quakevr.ps1` warns when it is missing;
   players would then need the in-game download).
@@ -377,9 +435,9 @@ installed, verified and uninstalled; the default run's `latest.json` and `gh` co
 |---|---|---|
 | 0. Prerequisite fixes | **done:** packaging from `git ls-files` (allowlist); ship `ironwail.pdb`; embed a version string; textures-only pack folders read as "missing"; Map Library zips checked against their sha256; Epic in `ownedRoots`; **the package's hash manifest** (`manifest.json`, `Windows/write-package-manifest.ps1`, 2026-10-06). **Left:** the relight's `_luma.png` lookup (the in-game relight tool); drop unused codec DLLs; confirm monster-model licences | [section 12](#12-problems-found-while-researching) |
 | 1. Minimal installer | **done (2026-10-06, `Installer/`, section 13):** C# WPF wizard, per-user, layout B: Steam/GOG/Epic/manual detection with a status page (expansions by the engine's rules, OpenXR runtime, Virtual Desktop, SteamVR, VC++ runtime, music, an older zip install), payload copy checked against `manifest.json`, `install.json`, shortcuts (VR, flat, log, folder), update in place, uninstall keeping player data, downloads from `latest.json` with mirrors, resume and pinned hashes (tested on a local server only). **Left:** installing the VC++ runtime (only a link now), an Apps & Features entry and a Setup copy in the install folder (maintenance mode is "run the installer again"), a published single-file exe | replaces "unzip into the Quake folder" |
-| 2. Optional components | HQ textures (owned packs only, ticked: **done** from a local zip or the feed's `hdtextures`), bundled `light.exe` (**done**: in the package) + VisPatch (download), the in-game relight (**done**: the game's first start, however started, runs `vr_relight_batch everything` from the installer's marker), offline file pickers (package: done; textures: command line only), pinned hashes | |
+| 2. Optional components | HQ textures (owned packs only, ticked: **done** from a local zip, the feed's `hdtextures`, or without one the installer's built-in pinned pack), bundled `light.exe` (**done**: in the package) + VisPatch (download), the in-game relight (**done**: the game's first start, however started, runs `vr_relight_batch everything` from the installer's marker), offline file pickers (package: done; textures: command line only), pinned hashes | |
 | 3. Defaults | promote the author's approved values (Appendix A) with a `defaultChanges` entry; first-run graphics preset and runtime suggestion in the game | needs his answers |
-| 4. Updates and repair | version check against `latest.json` at start, update in place keeping player files (**done**), adopt zip installs, verify (**done**: `qvr-setup verify`)/repair (re-run with the same package) | |
+| 4. Updates and repair | version check against `latest.json` at start, update in place keeping player files (**done**), adopt zip installs, verify (**done**: `qvr-setup verify`)/repair (**done**: the Update screen, [section 5](#update-mode-done-2026-10-08)) | |
 | 5. Integrations | Steam non-Steam shortcut (explained on the last page, with the launch options to copy: **done**), SteamVR manifest, bug-report collector, Xbox app detection | each optional |
 
 ## 11. Decisions (Vittorio, 2026-10-06)
@@ -392,10 +450,10 @@ installed, verified and uninstalled; the default run's `latest.json` and `gh` co
 | 4 | HQ textures (0.6 GB) and the relight (~1 min) by default? | **Both ticked by default.** |
 | 5 | Embedded Python for the relight? | No: the relight became an **in-game tool** (Advanced VR > Graphics > Relighting), with
 the VisPatch step in it (*See-Through Liquids*: the data files in `<QVR>\quakevr\tools\vispatch`). |
-| 6 | Hosting; code signing | Host on **both GitHub and vittorioromeo.com**; **no code-signing certificate** (SmartScreen: [section 9](#hosting-and-smartscreen-decision-6)). |
+| 6 | Hosting; code signing | Host on **GitHub releases** (2026-10-08: the vittorioromeo.com feed dropped, GitHub's `latest.json` is the only feed); **no code-signing certificate** (SmartScreen: [section 9](#hosting-and-smartscreen-decision-6)). |
 | 7 | Bundle ericw-tools' `light.exe`? | **Bundle it**, since GPL-3 does not extend to our code: it is a separate program run as its own process (mere aggregation), shipped unmodified with its licence and a source offer. Were that ever in doubt, download it on demand (pinned hash) instead. |
 | 8 | Music | Read the rerelease's music **in place** (worker `music` is doing it), and the original Quake's music too; never copied. |
-| 9 | Expansions the game cannot play yet (mg3; mg1 until 2026-10-07) in the detection page | Shown as **"detected, not yet supported"**. |
+| 9 | Expansions the game cannot play yet (none now; mg1 until 2026-10-07, mg3 until 2026-10-08) in the detection page | Shown as **"detected, not yet supported"**. |
 | 10 | Offer VDXR? | **Suggest Virtual Desktop's OpenXR runtime** when Virtual Desktop is installed. |
 | 11 | Steam integration | **Explain how only** (Add a Non-Steam Game); nothing writes `shortcuts.vdf`. |
 
@@ -424,19 +482,19 @@ Found by the research; the ones marked **fixed** were fixed on branch `agent/rel
 | Part | Where | What it does |
 |---|---|---|
 | Detection | `Core/Detection` | Steam: `HKCU\Software\Valve\Steam` `SteamPath` (then HKLM, then Program Files), every library of `steamapps\libraryfolders.vdf` (both VDF formats; a tolerant KeyValues reader), `appmanifest_2310.acf`'s `installdir`. GOG: the two registry keys of section 2. Epic: the launcher's `*.item` manifests (DisplayName has "quake", InstallLocation with `rerelease\id1\pak0.pak` or `id1\pak0.pak`). Manual: a folder, its `id1` or its `rerelease`. Each Quake gets its `id1` kind (original: pak0 + pak1, 1.06 sizes recognised; rerelease: large pak0 or `QuakeEX.kpf`; shareware; corrupt), its base dir (the original when present), its rerelease root, its music folder (read in place) and an older zip install (`<Quake>\quakevr`) |
-| Expansions | `ExpansionDetector`, `PackInspector`, `ResourceValidator` | The engine's rules, ported: hipnotic/rogue over the base dirs; dopa/mg1/mg3 over `ownedRoots` (Steam's rerelease, GOG enhanced, Epic, then each base's `..\rerelease`, `rerelease`, itself), highest first, a data-less folder skipped; pak directories and every listed resource checked as `validResource` does. The resource lists are the engine's own `Quake/vr/vr_pack_*.inc`, compiled in as resources. The labels follow the engine's `nativeReady`/`soloOnly()` (a self-test compares them): mg3 "detected, not yet supported" (decision 9), dopa and mg1 "ready (single player)". On the author's PC the report matches the game's `vr_campaign_status` line for line |
+| Expansions | `ExpansionDetector`, `PackInspector`, `ResourceValidator` | The engine's rules, ported: hipnotic/rogue over the base dirs; dopa/mg1/mg3 over `ownedRoots` (Steam's rerelease, GOG enhanced, Epic, then each base's `..\rerelease`, `rerelease`, itself), highest first, a data-less folder skipped; pak directories and every listed resource checked as `validResource` does. The resource lists are the engine's own `Quake/vr/vr_pack_*.inc`, compiled in as resources. The labels follow the engine's `nativeReady`/`soloOnly()` (a self-test compares them): dopa, mg1 and mg3 "ready (single player)"; a campaign whose `nativeReady` is false would read "detected, not yet supported" (decision 9; mg3 until 2026-10-08). On the author's PC the report matches the game's `vr_campaign_status` line for line |
 | VR and system | `SystemChecks.cs` | `HKLM\SOFTWARE\Khronos\OpenXR\1` `ActiveRuntime` and `AvailableRuntimes` (classified by file name: VDXR, SteamVR, Quest Link, WMR); Virtual Desktop (the Streamer's folder or its runtime); SteamVR (app 250820 or its runtime); VDXR suggested when Virtual Desktop is installed and not active (decision 10); the VC++ runtime (`...\VC\Runtimes\x64` >= 14.44, and `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` in System32 present and >= 14.44: a key left by a broken uninstall does not count) |
 | Package | `PackageSource`, `PackageManifest` | A folder or zip (one top folder allowed) from `package-quakevr.ps1`, with its `manifest.json` (schema 1: version, path/size/SHA-256 per file). Paths are refused unless plainly relative inside the install folder |
 | Install | `InstallEngine` | Layout B (decision 2): refuses a folder inside (or around) the Quake folder, in Program Files, or not empty without an `install.json`; checks the free space; stages every file as `*.qvrnew` beside its destination while hashing it (a mismatch stops the install, naming the file), then moves them all into place: a failed or cancelled install changes nothing. HD textures (decision 4): `id1\textures` always, `hipnotic`/`rogue` only for owned packs, never over a file of the player's. Writes `install.json` (version, Quake dir, choices, every installed file with its hash and component, folders made, shortcuts, relight pending) |
-| Update | the same | Over an existing install: the new payload replaces the old; files the old version shipped and the new one does not are removed when unchanged (kept and reported when the player changed them); stale shortcuts removed; textures kept unless reinstalled; everything not in the record is the player's and is never touched |
+| Update | the same, `MaintenancePlanner` | The Update screen and `qvr-setup update` ([section 5, Update mode](#update-mode-done-2026-10-08)): only the program files that differ are copied, HD textures and the relight skipped when unchanged, Repair for the same or an older package, Install again from scratch with a backup. Over an existing install: the new payload replaces the old; files the old version shipped and the new one does not are removed when unchanged (kept and reported when the player changed them); stale shortcuts removed; textures kept unless reinstalled; everything not in the record is the player's and is never touched |
 | Uninstall | `Uninstaller` | Removes the recorded files that are unchanged, the recorded shortcuts whose target is inside the install, then the folders it made once empty; HD textures only when asked; reports the player's files left. `Verify` lists missing or changed files |
 | Shortcuts | `Shortcuts/` | `IShellLinkW` through COM. Named after the product, **Quake VR: Unleashed** (as a file name `Quake VR Unleashed`: Windows refuses `:`). Desktop: Quake VR Unleashed; Start menu `Quake VR Unleashed\`: Quake VR Unleashed, (flat screen) `+vr_enabled 0`, (log for bug reports) `-condebug`, Quake VR Unleashed files (the `quakevr` folder). An update removes the old names' shortcuts (recorded in `install.json`) and the emptied older `Quake VR` Start menu folder. All: `ironwail.exe -basedir "<Quake>" -basedir "<QVR>" -game quakevr`, started in `<QVR>`, paths without a trailing backslash |
-| Downloads | `Downloader`, `ReleaseFeed` | `latest.json` (schema 1: version, `package` and `components.hdtextures`, each with file, size, SHA-256 and mirror URLs) read from the first host that answers (GitHub's `releases/latest/download/latest.json`, then `vittorioromeo.com/quakevr/latest.json`: the final addresses; the first release and the site's file make them answer: "Publishing a release"); each file from its mirrors in order, resumed with HTTP Range, checked for size and SHA-256 before it gets its name, a mirror serving another file skipped. `GitHubReleases` reads the releases API (assets' `digest: sha256:...`) for a later fallback. Tested only against local servers |
+| Downloads | `Downloader`, `ReleaseFeed` | `latest.json` (schema 1: version, `package` and `components.hdtextures`, each with file, size, SHA-256 and mirror URLs) read from GitHub's `releases/latest/download/latest.json` (the only feed since 2026-10-08; the first release makes it answer: "Publishing a release"); each file from its mirrors in order, resumed with HTTP Range, checked for size and SHA-256 before it gets its name, a mirror serving another file skipped. `GitHubReleases` reads the releases API (assets' `digest: sha256:...`) for a later fallback. The HD textures: the feed's `hdtextures` when it names them, else `BuiltInComponents.HdTextures` (pinned file, size, SHA-256, the two GitHub URLs; `InstallerSettings.Component`; installer-settings.json's `builtInComponents` replaces it for tests), checked the same way; the window warns only in offline mode, `qvr-setup install --hd [--no-feed] --dry-run` prints which one and from where. Tested only against local servers |
 | Window | `QuakeVR.Installer` | Welcome (the official logo; update/remove when installed) > Statement (Vittorio's statement on AI usage: three paragraphs and four YES/NO switches that start with neither picked and cannot go back to neither; Continue only with YES to all four; the answers are kept only in memory for the run, never saved or sent; text in `Core/AiStatement.cs`) > Your PC (the checks with status icons and fix hints; another folder) > Options (where the package comes from, folder, components with sizes, shortcuts) > Install (progress, log, Cancel) > Play (Play in VR, on the monitor, open the folder; VR Calibration, relight and VDXR notes; the Steam "Add a Non-Steam Game" steps with launch options to copy, decision 11) > Thanks (a word from the author and Ko-fi). Title "Quake VR: Unleashed Setup", the square logo as its icon. Writes no game settings (section 6); its only file is the mute choice (`%LOCALAPPDATA%\QuakeVR-Installer\ui.json`) |
 | Package source | `LocalPackages`, `MainViewModel` | A package (zip or folder with `manifest.json`) beside the installer (`QuakeVR.zip`, a `QuakeVR` folder, or any other `QuakeVR*.zip` that has a manifest; texture packs skipped) or picked by the player installs with no network at all. Otherwise the release feed is asked in the background at start: online is the default only when a feed answers. When none answers (no release published yet, offline), the Options page says so in plain words and offers **Use a local package…** and **Try again**; Install stays off until one of them works. If the download fails at Install anyway, the error offers the same button and installs from the picked package. The HD textures are skipped with a note (or taken from a picked zip) when their download is unavailable |
 | Skin | `Skin/`, `Themes/Theme.xaml` | "Quake VR: Unleashed" in a grimy Quake look: soot-black stone and riveted iron, ember and brass, bone-white text; the official logos (wide on the Welcome page, square in the sidebar, on Play and Thanks). Textures come from the **player's own Quake, read at run time** (`Core/Assets`: a PAK reader, `gfx/palette.lmp`, WAD2 pictures, the textures of `maps/start.bsp`, `e1m1`, `e1m2`, WAV decoding): bricks `wbrick1_5` behind the page, `wizmet1_2` in the sidebar, `metal1_4` on buttons and the footer, `wizmet1_3` on plaques, `*lava1` (warped like the engine's liquids) in the progress bar, the status bar's digits for the percentage, the palette for the flames. Nothing of id Software's is in the repository or the installer: before Quake is found (a quiet detection starts with the window) or without it, the same slots get generated textures (seeded noise: bricks, brushed metal with seams, rivets and rust, lava) and a smooth fire ramp. Fonts (SIL OFL 1.1, embedded with their licences, shown under "credits"): Grenze Gotisch for titles, Barlow for text, Barlow Semi Condensed for labels and buttons |
 | Animation | `FrameClock`, `FireView`, `LavaView`, `Fx` | Flames behind the logos (the classic "Doom fire": heat rising a row a step, drifting, cooling at random, blurred and upscaled), embers rising from the bottom of the page (each its own small visual: a frame redraws only where they are), a flickering glow, lava flowing in the progress bar, buttons that heat up and glow under the mouse, check marks that pop in, a pulsing Ko-fi line, pages that rise in. One clock paced by a high-resolution timer (not WPF's per-frame event, which on a 144-360 Hz display redraws hundreds of times a second): 60 Hz while the window is active, 15 Hz in the background, stopped when minimized; a governor drops it to 30 Hz for the run when the process uses more than 12% of a core (software composition, remote sessions). Windows' "Animation effects" off (or `--reduce-motion`): still flames, no embers, no pulse, no transitions. Measured on the author's PC (2026-10-07, 359 Hz display behind a Citrix adapter): flames 0.05-0.08 ms and lava 0.12 ms of simulation a frame; the whole window 20-30% of a core at 60 Hz, so the governor settles at 30 Hz, about 9%; reduced motion 1-2% |
-| Sounds | `Audio/` | Quake's own sounds from the player's paks once found: `misc/menu1` (clicks, check boxes, typing at a low volume and higher pitch), `misc/menu2` (the main button), `misc/menu3` (Back, Cancel), `weapons/pkup` (install starts), `misc/secret` (install done), `misc/talk` (an error), `items/health1` (Ko-fi), and `ambience/fire1` looping very quietly. Before or without Quake: synthesized stand-ins (metal ticks and clanks, a bell chime, a buzz, a crackle). A small mixer (`Core/Audio/SoundMixer`) on winmm's wave-out (`Audio/SoundEngine`, no dependency): eight 10 ms buffers (80 ms; Windows' emulated wave-out starves with 50 ms or less queued, which crackled: ROUND21.md, "Installer sounds crackled"), quiet levels, each sound at most once per 45 ms and three at once (the oldest fades out), every voice faded in and out over 2-4 ms, the loop's seam crossfaded, the mute ramped, a smooth limiter; nothing is sent to the device while silent. The harness's `--extras` renders a scripted session offline (`ui-mix-*.wav`, the mixer's own steps) and counts the device's underruns under the live window. The speaker button in the sidebar mutes everything, remembered |
+| Sounds | `Audio/` | Quake's own sounds from the player's paks once found: `misc/menu1` (clicks, check boxes, typing at a low volume and higher pitch), `misc/menu2` (the main button), `misc/menu3` (Back, Cancel), `weapons/pkup` (install starts), `misc/secret` (install done), `misc/talk` (an error), `items/health1` (Ko-fi), and `ambience/fire1` looping very quietly. Before or without Quake: synthesized stand-ins (metal ticks and clanks, a bell chime, a buzz, a crackle). A small mixer (`Core/Audio/SoundMixer`) on winmm's wave-out (`Audio/SoundEngine`, no dependency): eight 10 ms buffers (80 ms; Windows' emulated wave-out starves with 50 ms or less queued, which crackled: ROUND21.md, "Installer sounds crackled"), quiet levels, each sound at most once per 45 ms and three at once (the oldest fades out), every voice faded in and out over 2-4 ms, the loop's seam crossfaded, the mute ramped, a smooth limiter; nothing is sent to the device while silent. The harness's `--extras` renders a scripted session offline (`ui-mix-*.wav`, the mixer's own steps) and counts the device's underruns under the live window. The speaker button in the sidebar mutes everything, remembered. Play (in VR or on the monitor) mutes the installer too, through the same button (it shows muted): every sound and the fire fade out over 0.3 s (`UiSounds.MuteForGame`), and it stays muted after the game exits; that mute is not remembered (the next run starts as the button was last set). The harness checks it on every run (`PlayMuteCheck`: both Play buttons pressed through their automation peers, the game's start recorded instead of run, an offline engine: muted, faded, then silent) |
 | Statement on the console | `qvr-setup` | `qvr-setup install` prints the statement and exits 3 unless `--accept-statement` is given (YES to all four); `qvr-setup statement` prints it. The screenshot harness renders the page unanswered, mixed and all YES (`1c`/`1d`/`1e-statement-*.png`), drives its switches through their automation peers and fails (exit 1) unless Continue is enabled exactly when all four are YES (`1-statement-check.txt`) |
 | Ko-fi | sidebar, Thanks page | "Support me on Ko-fi" with Ko-fi's official cup logo (from its brand assets) is in the sidebar on every page, its line gently pulsing; after Play, the Thanks page asks warmly for a token of appreciation (https://ko-fi.com/vittorioromeovee). Finish is always one click away |
 | VisPatch (see-through water) | `VisPatch`, `GetVisPatchAsync` | Part of the relight component, ticked with it: the game's relight applies VisPatch's water-vis itself whenever its data is in `<QVR>\quakevr\tools\vispatch` (`vr_relight_seethrough`, Quake/vr/vr_relight_vis.cpp), so the first-start `vr_relight_batch everything` includes it. The installer gets the "vispatch data" 1.0 archives for id1 and the owned packs from their original SourceForge location (`https://sourceforge.net/projects/vispatch/files/vispatch%20data/1.0/<file>/download`, then `downloads.sourceforge.net`; `visPatchUrls` in `installer-settings.json` adds mirrors, which must serve the same files): `id1_vis.tgz` 949,270 bytes, SHA-256 `b16e400e...55f0`; `hipnotic_vis.tgz` 806,759, `254febdc...fe49`; `rogue_vis.tgz` 786,802, `6dd44ae5...796a` (fetched once 2026-10-07; full hashes in `VisPatch.cs`). Licence unknown, so never bundled or mirrored by us; a copy beside the installer is used when it matches. **sezero/vispatch** (https://github.com/sezero/vispatch, read 2026-10-07) is not a mirror of the data: it hosts only the tool, O. Sezer's revision of Andy Bay's VisPatch 1.2a source (GPLv2, `COPYING`), and in `old1997/` the 1997 tool releases (`vispatch12.zip`, `unixvis.zip`, `vispsrc.zip`, `vispatch12.txt`); no `.vis`, `vispatch.dat` or `*_vis.tgz`, and no releases. Its README says only that "a lot of vispatch data files" are around, with no address or licence for them; `vispatch12.txt` credits "our Data donators" (community-made 1997 data, first hosted on allgames.com, razor.stomped.com/water, sod.net/vis and ftp.cdrom.com, all gone) and states no copyright or terms. So the data's licence is still unknown, nothing was added to `visPatchUrls`, and SourceForge stays the only source. The GPLv2 covers the tool's code, which the game does not use (its own patcher, `vr_relight_vis.cpp`, reads the same data format). Unpacked in C# (`System.Formats.Tar` over `GZipStream`): only `<game>.vis` at the top or `<game>/vispatch.dat`, nothing leaving the folder (`rogue.txt` skipped); installed and recorded in `install.json` (component `vispatch`, kept by updates that do not reinstall it, removed by uninstall). A failed download only skips the see-through water (a note in the log); the relight still runs. Tested against a local server with made-up archives; the three real archives unpacked byte-identical to `tar` |
@@ -455,10 +513,10 @@ dead mirror, then the file).
 Next phases:
 
 1. **Ship it:** `dotnet publish` single-file self-contained exe (its copy in `<QVR>\setup` and the Apps & Features entry: done, above); a "Quake VR
-   Setup" Start menu shortcut to that copy (maintenance mode = the Welcome page's Update / Remove); publish `latest.json` with each release on both hosts.
+   Setup" Start menu shortcut to that copy (maintenance mode = the Welcome page's Update / Remove); publish `latest.json` with each GitHub release (the only feed).
 2. **Prerequisites:** done (VC++ runtime install, above).
 3. **Optional components:** sizes from the feed before downloading.
-4. **Updates:** check `latest.json` at start and on the Welcome page; adopt an older zip install (move its config, saves,
+4. **Updates:** the Update screen is done ([section 5](#update-mode-done-2026-10-08)); left: adopt an older zip install (move its config, saves,
    notes and `relit\` with the player's consent, never deleting the old ones).
 5. **Later:** the in-game first-run graphics preset; a "collect a bug report" button; SteamVR `.vrmanifest`; Xbox app
    detection; a code-signing certificate if SmartScreen becomes a problem.
@@ -519,21 +577,3 @@ history since 2026-07-01 (none do).
 | `gamma` / `contrast` | 0.95 / 1.2 | 1 / 1 (check whether they reach the headset image) |
 | `scr_conscale`, `scr_menuscale`, `scr_sbarscale`, `scr_crosshairscale` | 3 | 1 |
 | `scr_centerprintbg` / `scr_menubgstyle` | 3 / 0 | 2 / -1 |
-
-### Gameplay and look: promoted (his own values)
-
-Promoted on 2026-10-07: his values are the shipped defaults (`vr_cfg_version` 95, `vr_wofs_version` 35,
-`vr_props_version` 58); a config still holding the old default takes the new one, a changed value is kept.
-`vr_dummy_gib` was not part of it (still a question).
-
-| Setting | His = now shipped | Was |
-|---|---|---|
-| `vr_fire_particles_alpha` / `_count` / `_origin` / `_size` | 1 / 8 / 0.2 / 2.5 | 0.55 / 6 / 0.25 / 2 |
-| `vr_decap_pop_always_range` / `_never_range` | 2 / 12 | 3 / 15 |
-| `vr_decap_pop_thrown_light_chance` | 0.25 | 0 |
-| `vr_ragdoll_grab_reach` / `vr_ragdoll_hand_stick` | 2 / 2 | 6 / 12 |
-| `vr_dummy_gib` | 1 | 0 (not promoted) |
-| `vr_messages_hologram_height` | 10 | 5 |
-| `vr_retro_all_average` / `_block` / `_dither` / `_fade` / `_palette` (the All Categories panel: now the shipped look every kind has had since config 89) | 0 / 0.5 / 0.5 / -1 / 1 | 1 / 1 / 0 / 1 / 0 |
-| `vr_wofs_torch_out_18` / `vr_wofs_torch_up_18` (the grappling hook's flashlight) | -0.035 / 0.075 | 0 / 0 |
-| Masses (kg), `vr_prop_mass_NN` | h_grem 9, gib2 15, gib3 10, h_guard 8, h_dog 9, h_mega 9, h_knight 8, h_hellkn 11, h_ogre 15, h_shal 10, h_shams 65, h_demon 18 (gib1 8, h_player 5, h_wizard 10, h_zombie 8, h_scourg 50 unchanged) | 18, 20, 12, 10, 12, 16, 12, 17, 30, 12, 70, 28 |

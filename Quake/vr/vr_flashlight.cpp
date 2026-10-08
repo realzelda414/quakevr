@@ -1663,12 +1663,25 @@ void killLight(int key)
     }
 }
 
+// The beam as last lit (lightBeam), for the monsters' eyes (beamNow; vr_stealth.cpp): the lens, its axis, its reach and
+// when (cl.time).
+struct BeamNow
+{
+    bool lit{false};
+    glm::vec3 lens{0.f};
+    glm::vec3 dir{1.f, 0.f, 0.f};
+    float range{0.f};
+    double at{0.0};
+};
+BeamNow beamNowState;
+
 void killLights()
 {
     for(int key : {keySpot, keySpill, keyLamp})
     {
         killLight(key);
     }
+    beamNowState.lit = false;
     beam.visible = false;
     st.beamLength = -1.f;
 }
@@ -1798,6 +1811,7 @@ void lightBeam(const Pose& p)
     const glm::vec3 dir = p.rot * glm::vec3{1.f, 0.f, 0.f};
     const float range = za::max(64.f, vr_flashlight_range.value);
     const glm::vec3 at = lens + dir * 0.25f; // just out of the lens
+    beamNowState = {true, lens, dir, range, cl.time};
 
     const float base = za::max(0.f, vr_flashlight_brightness.value) * 1.5f;
     const glm::vec3 warm = beamColor(); // (named for the warm white it was)
@@ -1835,11 +1849,7 @@ void updateCord(const Pose& mount, const Pose& lamp)
     coil::Style style;
     if(vr_flashlight_cord.value == 2.f)
     {
-        // Coiled: 64 turns of 3.8 mm dark wire, 1.3 cm across relaxed (its relaxed length the turns touching, 0.243 m).
-        style.turns = 64;
-        style.coilRadius = 0.0065f;
-        style.wireRadius = 0.0019f;
-        style.albedo = glm::vec3{0.14f, 0.14f, 0.135f};
+        style = coil::coiled(); // (64 turns of 3.8 mm dark wire, 1.3 cm across relaxed: 0.243 m)
     }
     else
     {
@@ -2496,6 +2506,11 @@ void drawOpaque()
     gfx::drawTube(d.batch, d.sides, cord.albedo(), glm::normalize(glm::vec3{0.3f, 0.2f, 1.f}), cord.rust(), cord.flat());
 }
 
+bool cordDrawn()
+{
+    return cord.visible() && enabled();
+}
+
 // The lens lit, in the beam's colour: a disc over it, bright in the middle, added onto the scene (the skin's own
 // fullbright lens was one colour).
 void drawLens()
@@ -3016,6 +3031,25 @@ bool wantsSecondary(int hand)
     return holds(hand) || (enabled() && handAtHeadTorch(hands::current(), hand));
 }
 
+
+bool beamNow(glm::vec3& lens, glm::vec3& dir, float& range, float& cosOuter)
+{
+    // Lit this frame or the last few (lightBeam runs as the view is set up; a server frame may come between).
+    if(!beamNowState.lit || cl.time - beamNowState.at > 0.25 || cl.time < beamNowState.at)
+    {
+        return false;
+    }
+    lens = beamNowState.lens;
+    dir = beamNowState.dir;
+    range = beamNowState.range;
+    cosOuter = za::cos(glm::radians(outerAngle));
+    return true;
+}
+
+bool ownsLight(int key)
+{
+    return key == keySpot || key == keySpill || key == keyLamp;
+}
 
 } // namespace qvr::flashlight
 

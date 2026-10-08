@@ -350,7 +350,8 @@ Most of these have switches on the *Graphics* pages, and the *Preset* there sets
 
 - **The VR hub** (`vrstart`, an island in a lake at night) is where the game starts: a path from the pier past the
   campaign lecterns and their slipgate, a settings pavilion, a firing range and a lookout tower. Pick Quake, Scourge of
-  Armagon, Dissolution of Eternity or Dimension of the Past and step into the slipgate. Its boards and tips explain the
+  Armagon, Dissolution of Eternity, Dimension of the Past, Dimension of the Machine or Dawn of the Machine and step
+  into the slipgate. Its boards and tips explain the
   basics. (The old hub is `vrstart_old`, in the Debug menu.) From *Advanced VR Options > Play* you can go back to the
   hub, the **tutorial** or the **firing range** (weapons to try, both swords, the crowbar, props, and the training
   dummy).
@@ -358,8 +359,8 @@ Most of these have switches on the *Graphics* pages, and the *Preset* there sets
   automatically, with its weapons, monsters and maps. Quake, the hub, tutorial and firing range work without
   either pack; unavailable campaign buttons are labelled in the hub. Quake VR's QuakeC contains all three campaigns.
 - **Official campaigns** (Single Player > *Official Campaigns*, or Play): the re-release's Dimension of the
-  Past and Dimension of the Machine (with its Horde mode) play natively in VR, in single player, when you own them;
-  Dawn of the Machine is detected, and its native port is in progress. See [INSTALL.md](INSTALL.md#official-campaigns).
+  Past, Dimension of the Machine (with its Horde mode) and Dawn of the Machine (with its Bloody Nightmare difficulty)
+  play natively in VR, in single player, when you own them. See [INSTALL.md](INSTALL.md#official-campaigns).
 - **Map Library** (the main menu, or the corner's *Map Library*): browse [Quaddicted](https://www.quaddicted.com/)'s
   archive of custom maps, then download, install and play one in the game; *Uninstall* and *Reinstall* manage what you
   installed, and the download cache is capped (Debug > Tools > *Download Cache Size*). See

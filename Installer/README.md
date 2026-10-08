@@ -56,15 +56,17 @@ about 60 MB, with WPF's native DLLs inside; see INSTALLER.md, "Hosting and Smart
 | `--textures <zip>` | The HD texture pack, already downloaded |
 | `--target <dir>` | The install folder (default `%LOCALAPPDATA%\Programs\QuakeVR`) |
 | `--shortcuts-dir <dir>` | Shortcuts go to `<dir>\Desktop` and `<dir>\Programs` instead of the real desktop and Start menu (tests) |
-| `--feed <url>` | Where `latest.json` is read (repeatable; default: GitHub, then vittorioromeo.com). Also `installer-settings.json` beside the exe |
+| `--feed <url>` | Where `latest.json` is read (repeatable; default: the GitHub release's, the only feed). Also `installer-settings.json` beside the exe |
 | `--downloads <dir>` | Where downloads go (default `%LOCALAPPDATA%\QuakeVR-Installer\downloads`) |
-| `--screenshots <dir>` | Render every page to PNG and exit, no window (the Statement page unanswered, mixed and all YES; exit 1 unless its Continue is enabled exactly with YES to all four); `fit.txt` (also printed) says which page would scroll, and by how much, at the default size, on 1366x768 at 100% and on 1080p at 150%; `7-*-150pct*.png` are renders at 150% (with `--package --target --shortcuts-dir` it runs a real install into those folders first) |
+| `--screenshots <dir>` | Render every page to PNG and exit, no window (the Statement page unanswered, mixed and all YES; exit 1 unless its Continue is enabled exactly with YES to all four, or unless both Play buttons mute the installer: a 0.3 s fade, then silence, with the game's start recorded instead of run); `fit.txt` (also printed) says which page would scroll, and by how much, at the default size, on 1366x768 at 100% and on 1080p at 150%; `7-*-150pct*.png` are renders at 150% (with `--package --target --shortcuts-dir` it runs a real install into those folders first) |
 | `--offline` | Never ask the network: the online release counts as unavailable (the "Use a local package" path) |
 | `--no-quake-look` | The generated textures and sounds even when Quake is found (screenshots of the fallback) |
 | `--reduce-motion` | Animations off, as with Windows' "Animation effects" off |
 | `--silent` | No sound |
 | `--no-prerequisites` | Never install the VC++ runtime (it is still detected) |
 | `--uninstall [--quiet]` | Remove the install in `--target` (default: the install this copy of Setup is in, `<QVR>\setup`): the Remove dialogs, or none with `--quiet`. Apps & Features runs this. From the install's own copy it restarts from a copy in `%TEMP%` first |
+| `--sandbox <dir>` | A test install kept in `<dir>`: the game in `<dir>\QuakeVR`, shortcuts in `<dir>\_shortcuts`, downloads in `<dir>\_downloads`, no Apps & Features entry, the VC++ runtime only checked (`Misc\release\test_local_release.ps1`). A yellow bar says SANDBOX |
+| `QVR_SETUP_FEED` (environment) | Like `--feed` (several separated by `;`); `--feed` wins. Any feed other than the release hosts' shows a yellow TEST FEED bar on every page and `[TEST]` in the title |
 | `--registry-file <json>` | The Apps & Features entry goes into this made-up registry root instead of HKCU (tests; installs with `--shortcuts-dir` and the screenshot harness write none) |
 | `--vcredist-dry-run` | Only log what the VC++ runtime's install would do (download, signature check, `/install /quiet /norestart`); download and run nothing |
 | `--extras` | With `--screenshots`: also a strip of flame frames, a sheet of Quake's textures, and `report.txt` (skin, sounds, per-frame costs, the live window's frame rate and CPU) |
@@ -77,6 +79,9 @@ qvr-setup manifest <package folder> --version <v>  # write manifest.json (packag
 qvr-setup install --package dist\QuakeVR.zip --target <dir> --accept-statement [--shortcuts-dir <dir>] [--textures <zip>] [--relight] [--vispatch id1_vis.tgz ...]
                   [--setup-from QuakeVR-Setup.exe] [--registry-file <json> | --register]   # Setup's copy in <dir>\setup; the Apps & Features entry
 qvr-setup verify --target <dir>
+qvr-setup install --feed http://127.0.0.1:8517/latest.json --sandbox <dir> --accept-statement [--hd] [--relight]   # the window's download path
+qvr-setup install --package dist\QuakeVR.zip --hd [--no-feed] --dry-run   # what would be downloaded: --hd is the feed's hdtextures, else the built-in pinned pack
+qvr-setup serve --dir out\release\<v>-local\assets --port 8517 [--drop-after <bytes>]   # a local release over HTTP (Range), 127.0.0.1 only
 qvr-setup statement                                # the author's statement on AI usage (install exits 3 without --accept-statement)
 qvr-setup vcredist [--check <vc_redist.x64.exe>] [--dry-run [--assume-missing] [--file <exe>]]   # the VC++ runtime (without --dry-run: installs it, one UAC prompt)
 qvr-setup uninstall --target <dir> [--remove-textures] [--registry-file <json> | --register]
@@ -102,7 +107,7 @@ refused), install target rules, install/verify/update/uninstall end to end (zip 
 the Quake folder unchanged), damaged and cancelled installs, HD textures for owned packs only, downloads (mirror
 fall-back, a wrong file skipped, resume with HTTP Range, pinned SHA-256) and the release feed, all against a local
 HTTP server; the skin's readers (pak search order, palette, WAD2 pictures and CONCHARS, a BSP's textures, 8/16-bit WAV,
-junk refused) on made-up files, the sounds' mixer (no step in the output: voice fades, stolen voices, the loop's seam, the mute, a smooth limiter), local packages (found beside the installer, checked for a manifest, texture packs
+junk refused) on made-up files, the sounds' mixer (no step in the output: voice fades, stolen voices, the loop's seam, the mute and Play's 0.3 s fade, a smooth limiter), local packages (found beside the installer, checked for a manifest, texture packs
 skipped), and VisPatch's data (made-up `.tgz` archives from a local server: mirror order, pinned hash, safe unpacking,
 installed where the game looks, kept by updates, removed by uninstall). The machine is a `MemorySystemProbe`: no test reads the real registry or writes outside the scratch folder.
 xUnit/MSTest were not used because their NuGet packages are not available offline here; moving the tests to xUnit later
@@ -118,6 +123,6 @@ files do not match (`--unverified` on the console accepts one without a manifest
 
 `python Misc/quakevr/make_release.py --package dist/QuakeVR --setup <QuakeVR-Setup.exe> [--textures <zip>] [--asset <file>]`
 makes a release from a package: the zip, the assets, `latest.json` in the format `ReleaseFeed` reads, and `PUBLISH.txt`
-with the `gh release create` command and the upload to vittorioromeo.com (it publishes nothing). The steps are in
+with the `gh release create` command (it publishes nothing). The steps are in
 docs/vr-port/INSTALLER.md, "Publishing a release". `Misc\release\make_release.ps1` runs it as part of a whole release
 (docs/vr-port/RELEASING.md), and checks its `latest.json` with `qvr-setup feed --file latest.json --assets <folder>`.

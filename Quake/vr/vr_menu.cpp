@@ -80,7 +80,7 @@ extern cvar_t vr_zone_threadcheck; // zone.c
 const char* M_Main_RowLabel(void); // menu.c: the main menu's selected row (menu_vr pos)
 extern int m_singleplayer_cursor; // menu.c: Single Player's (menu_vr pos)
 int M_ContentLeft(void); // menu.c: the left edge of what its menu shown draws (menu x)
-void M_ContentExtent(float* right, float* bottom); // menu.c: how far right and down its menu shown draws
+float M_ContentRightBelow(float y); // menu.c: how far right its menu shown draws below y (the main menu's rows as drawn)
 int M_TextLeft(void); // menu.c: its leftmost text (Ironwail's lists; 320 for Quake's menus)
 void M_Main_Layout(int* step, int* gap); // menu.c: the main menu's rows' spacing and its groups' gaps
 }
@@ -475,6 +475,8 @@ using PageBuilder = za::Vector<Item> (*)();
 [[nodiscard]] za::Vector<Item> pageDebugTools();
 [[nodiscard]] za::Vector<Item> pageDebugTests();
 [[nodiscard]] za::Vector<Item> pageDebugCheats();
+[[nodiscard]] za::Vector<Item> pageStealth();
+[[nodiscard]] za::Vector<Item> pageStealthTests();
 [[nodiscard]] za::Vector<Item> pageSpawnWeapons();
 [[nodiscard]] za::Vector<Item> pageHitbox();
 [[nodiscard]] za::Vector<Item> pageMonsterHitbox();
@@ -560,6 +562,7 @@ mem::Cache<PageTexts> pageTexts{"menu texts", mem::Never};
 #include "vr_menu_pages.inc"
 #include "vr_menu_recording.inc"
 #include "vr_menu_cheats.inc"
+#include "vr_menu_stealth.inc"
 
 // ----------------------------------------------------------------------------
 // Pages of the port's own tweaks
@@ -732,7 +735,8 @@ char reviewListHeader[64];
 // The old Single Player and Bot Control menus' extras.
 void playCalibration() { Cbuf_AddText("vr_setup\n"); }
 void playHub() { Cbuf_AddText("vr_campaign_hub\n"); }
-void playTutorial() { Cbuf_AddText("map vrtutorial\n"); }
+// The tutorial (vrtutorial2: Misc/quakevr/maps/vrtutorial2_gen.py) on Easy; the old one (vrtutorial) still loads by name.
+void playTutorial() { Cbuf_AddText("skill 0; map vrtutorial2\n"); }
 void playFiringRange() { Cbuf_AddText("map vrfiringrange\n"); }
 // Official Campaigns > Dawn of the Machine: Bloody Nightmare: skill 3 and vr_mg3_bn_start (the start map's first frame
 // makes it a Bloody Nightmare game, QC vr_mg3_defs.qc MG3_Frame), then the campaign as its own row starts it. While
@@ -800,6 +804,7 @@ int campaignsBloodyShown = -1;
 [[nodiscard]] za::Vector<Item> pageEnemyWeapons();
 [[nodiscard]] za::Vector<Item> pageEnemyShoves();
 [[nodiscard]] za::Vector<Item> pageKnockdowns();
+[[nodiscard]] za::Vector<Item> pageHoldingEnemies();
 [[nodiscard]] za::Vector<Item> pageSound();
 
 [[nodiscard]] za::Vector<Item> pageGameplay()
@@ -807,6 +812,10 @@ int campaignsBloodyShown = -1;
     return {
         header("Monsters"),
         toggle("Enemies Hurt by Liquids", vr_enemy_liquid_damage).help("Monsters burn in slime/lava and drown after 12 seconds with their heads underwater, including knocked-down ragdolls. Fish, bosses and lava dwellers are immune."),
+        toggle("Smooth Monster Steps", vr_monster_lerp_continue)
+            .help("A monster's next step is drawn on from where it is drawn, not from where its last step ends: no jump "
+                  "when it moves again before the last step is drawn out (a dog's quick turns looked like teleports). "
+                  "Off: Quake's drawing."),
         toggle("Ogres Aim Grenades Up and Down", vr_ogre_aim_height)
             .help("Ogres (and zombies throwing flesh) lob at your height, on a ledge above them or a floor below, on an arc at "
                   "their throw's own speed. Off: Quake's lob, which always flies as if you stood level with them."),
@@ -850,6 +859,52 @@ int campaignsBloodyShown = -1;
             .help("An enforcer's shove's damage, times Damage."),
         slider("Enforcer Push", vr_enemy_shove_enforcer_distance, 0.f, 3.f, 0.05f, "%.2fx").extend(0.f, 10.f)
             .help("How far an enforcer's shove pushes you, times Push Distance."),
+    };
+}
+
+// Holding enemies (vr_foegrab.cpp, QC vr_foegrab.qc; ROUND21.md, "Holding enemies"): an empty hand holds on to a living
+// monster, slows it and drags it a little.
+[[nodiscard]] za::Vector<Item> pageHoldingEnemies()
+{
+    return {
+        toggle("Holding Enemies", vr_foegrab)
+            .help("Experimental. Grip with an empty hand touching a living enemy to hold on to that spot of it: the hand "
+                  "stays on it as it moves, and the enemy is slowed and can be pulled a little. Small ones are held well, "
+                  "big ones (fiends, ogres) a little, huge ones (shamblers, vores) hardly. Let go of the grip, or pull too "
+                  "far, and the hand lets go. Grabbing a sleeping or idle enemy wakes it. Needs Precise Hit Detection."),
+        slider("Touch Leniency", vr_foegrab_leniency, 0.f, 5.f, 0.25f, "%.2f cm").extend(0.f, 20.f)
+            .help("How far off the enemy's model your fist may be and still take hold."),
+        slider("Let Go Beyond", vr_foegrab_break, 10.f, 80.f, 1.f, "%.0f cm").extend(5.f, 200.f)
+            .help("Your hand this far from the spot it holds (the enemy ran, or you moved away) lets go: after a quarter "
+                  "of a second there, or at once at twice this."),
+        header("Hold"),
+        cycle("Hold By", "vr_foegrab_by_mass", {{0.f, "Size Class"}, {1.f, "Mass"}})
+            .help("Size Class: the three holds below, by kind of enemy. Mass: from the enemy's mass, full at Light and "
+                  "none at Heavy."),
+        slider("Small Enemies", vr_foegrab_strength_small, 0.f, 1.f, 0.05f, "%.2f")
+            .help("One hand's hold on a grunt, an enforcer, a zombie, a knight, a mummy, a dog. Two hands together: "
+                  "1 - (1 - a)(1 - b) (0.85 each: 0.98)."),
+        slider("Big Enemies", vr_foegrab_strength_medium, 0.f, 1.f, 0.05f, "%.2f")
+            .help("One hand's hold on a fiend, an ogre, a death knight's bigger kin."),
+        slider("Huge Enemies", vr_foegrab_strength_large, 0.f, 1.f, 0.01f, "%.2f")
+            .help("One hand's hold on a shambler, a vore and anything bigger."),
+        slider("Light (Mass)", vr_foegrab_mass_light, 10.f, 400.f, 10.f, "%.0f kg").extend(1.f, 5000.f)
+            .help("Hold By Mass: enemies this light or lighter are held fully (a grunt 80 kg, an enforcer 100)."),
+        slider("Heavy (Mass)", vr_foegrab_mass_heavy, 100.f, 2000.f, 25.f, "%.0f kg").extend(10.f, 20000.f)
+            .help("Hold By Mass: enemies this heavy or heavier are not held at all (a fiend or an ogre 250, a shambler 600)."),
+        header("Effect"),
+        slider("Slow Down", vr_foegrab_slow, 0.f, 1.f, 0.05f, "%.2f")
+            .help("Share of a fully held enemy's own movement (and turning) taken off, times its hold."),
+        slider("Pull", vr_foegrab_drag, 0.f, 20.f, 0.5f, "%.1f /s")
+            .help("How quickly your hand pulls the spot it holds towards it, times the hold (0: not at all)."),
+        slider("Pull Speed", vr_foegrab_drag_speed, 0.f, 300.f, 5.f, "%.0f units/s")
+            .help("The pull's top speed (32 units are about a metre)."),
+        header("Their Shoves"),
+        cycle("Held Enemy's Shove", "vr_foegrab_shove", {{0.f, "Resisted"}, {1.f, "Breaks Free"}})
+            .help("Resisted: a grunt or enforcer you hold barely pushes you (by Shove Resistance and its hold), and comes "
+                  "along with you. Breaks Free: its shove pushes you fully, as ever, and tears it from your hands."),
+        slider("Shove Resistance", vr_foegrab_shove_resist, 0.f, 1.f, 0.05f, "%.2f")
+            .help("Resisted: share of a held enemy's shove taken off, times its hold."),
     };
 }
 
@@ -1029,6 +1084,18 @@ int campaignsBloodyShown = -1;
                   "1750)."),
         slider("Shots", vr_enfrifle_ammo, 1.f, 80.f, 1.f, "%.0f").extend()
             .help("The shots in a dropped rifle: its own, never refilled (cells don't). Empty, it is still a club."),
+        header("Spent Rifles"),
+        slider("Spent Smoke", vr_enemygun_spent_smoke, 0.f, 15.f, 0.5f, "%.1f s").extend(0.f, 60.f)
+            .help("A burst rifle or a laser rifle whose last round you fire smokes this long, in the hand or dropped: it "
+                  "is done, drop it (0: never)."),
+        slider("Spent Crackle", vr_enemygun_spent_crackle, 0.f, 10.f, 0.5f, "%.1f s").extend(0.f, 30.f)
+            .help("And crackles all over with lightning's arcs this long, as a corpse the lightning struck (0: never)."),
+        slider("Crackle Volume", vr_enemygun_spent_volume, 0.f, 1.f, 0.05f, "%.2f")
+            .help("The corpses' crackle as it starts, this loud (0: silent)."),
+        slider("Spent Shake", vr_enemygun_spent_shake, 0.f, 1.f, 0.05f, "%.2f units").extend(0.f, 3.f)
+            .help("While it crackles in your hand the gun shakes this much, fading with its arcs (0: still)."),
+        slider("Spent Haptics", vr_enemygun_spent_haptics, 0.f, 1.f, 0.05f, "%.2f")
+            .help("And buzzes in your hand this hard (0: not at all)."),
     };
 }
 
@@ -2534,10 +2601,45 @@ void hologramTestMessage()
     return {
         header("Wrist Gadget"),
         toggle("Level and Stats", vr_gadget_show_level),
+        toggle("Hide Gear When Dead", vr_dead_hide_gear)
+            .help("While you are dead the holstered guns, the ammo pouch, the grenade pouch and the wrist gadget are hidden "
+                  "(the flashlight is, always) and the HUD is "
+                  "Quake's status bar on a hand; all back when you respawn or load a save."),
         toggle("Stamina and Counters", vr_gadget_stamina)
             .help("The STAMINA row shows your stamina (parries, shoves and blows spend it) and COUNTER while a counter-attack's window is open."),
         slider("Screen Light", vr_gadget_light, 0.f, 3.f, 0.1f, "%.1fx").extend()
             .help("The screen casts a light in its colour the way it faces, and a faint one on your hand (0 off)."),
+        header("Gear Lights: the Gadget's Side Button"),
+        toggle("Gear Lights", vr_gear_lights)
+            .help("Off: your gear's lights dim, for sneaking about in the dark: the light the gadget's and your guns' "
+                  "screens cast (monsters see you by it) and their glow, and the screens themselves. The button on the "
+                  "gadget's lower edge (the inner one) toggles this with a click; bindable: vr_gear_lights_toggle. The "
+                  "flashlight keeps its own switch."),
+        slider("Lights When Dimmed", vr_gear_lights_dim, 0.f, 0.5f, 0.01f, "%.2fx").extend(0.f, 1.f)
+            .help("While off: the screens' cast light and glow at this share (0: none at all)."),
+        slider("Screens When Dimmed", vr_gear_lights_screen_dim, 0.05f, 1.f, 0.05f, "%.2fx").extend(0.f, 1.f)
+            .help("While off: the screens' text, numbers and the hologram at this share of their brightness, readable "
+                  "up close."),
+        toggle("Side Button", vr_gadget_button)
+            .help("The button on the gadget's lower edge, pressed with your other hand's fingertip, toggles the gear "
+                  "lights."),
+        slider("Button Size", vr_gadget_button_size, 1.f, 8.f, 0.25f, "%.2f cm").extend(0.3f, 20.f)
+            .help("How near the button's middle your fingertip must come (from the button's side: never from over the "
+                  "screen). Show the Button shows it."),
+        slider("Button Across", vr_gadget_button_x, -6.f, 6.f, 0.25f, "%.2f cm").extend(-20.f, 20.f)
+            .help("The button's hit spot moved along the screen's width (positive: to the screen's right)."),
+        slider("Button Up", vr_gadget_button_y, -6.f, 6.f, 0.25f, "%.2f cm").extend(-20.f, 20.f)
+            .help("Moved along the screen's height (negative: further out past its lower edge)."),
+        slider("Button Out", vr_gadget_button_z, -6.f, 6.f, 0.25f, "%.2f cm").extend(-20.f, 20.f)
+            .help("Moved out of the screen's face (negative: down towards your arm)."),
+        slider("Fingertip Reach", vr_gadget_button_reach, -5.f, 15.f, 0.5f, "%.1f cm").extend(-20.f, 30.f)
+            .help("Where your fingertip is taken to be, ahead of your hand's point."),
+        slider("Button Cooldown", vr_gadget_button_cooldown, 0.f, 2.f, 0.1f, "%.1f s").extend(0.f, 5.f)
+            .help("After a press counts, how long before the next one does (no double toggles from a bounce)."),
+        cycle("Show the Button", vr_debug_gadget_button, {{0.f, "Off"}, {1.f, "Its Hit Volume"}, {2.f, "And the Screen Tap"}})
+            .help("Draws the button's hit volume (green ready, yellow pressed, red cooling down; the faint disc: no "
+                  "press from behind it) and your fingertip; And the Screen Tap: also bullet time's tap zone over the "
+                  "screen. Presses are printed."),
         slider("CRT Look", vr_gadget_crt, 0.f, 2.f, 0.1f, "%.1fx").extend()
             .help("Scanlines, a slight flicker, faint static and now and then a glitch (0 off)."),
         slider("Screen Glow", vr_screen_glow, 0.f, 3.f, 0.1f, "%.1fx").extend()
@@ -2557,6 +2659,8 @@ void hologramTestMessage()
             .help("One of the game's messages in the hologram, as they come: raise the gadget to see it while you change these settings. Press again for another: they stack."),
         toggle("Messages Only on the Gadget", vr_messages_hologram_only)
             .help("The game's messages never show in front of you: they wait in the hologram until you look at the gadget. A new one (a key needed, a secret, the map's text; not pickups) chimes from the gadget on your wrist and buzzes it."),
+        toggle("Console Log on the HUD", vr_hud_console_log)
+            .help("The console's log (the engine's own lines: warnings, settings changed, command output) shows with the game's messages, over the gadget or in view (and at the top of the flat screen). Off: only the game's messages (pickups, deaths, chat); the console (~) keeps everything."),
         cycle("Console Messages", vr_notify_wrist, {{1.f, "Over the gadget"}, {2.f, "Both"}, {0.f, "In view"}})
             .help("The console's other messages (the engine's: settings changed, cheats, errors) float in a small log over the gadget, or at the top of the view."),
         slider("Console Message Time", vr_notify_wrist_time, 2.f, 30.f, 1.f, "%.0f s").extend()
@@ -2636,6 +2740,26 @@ void hologramTestMessage()
             .help("In slow motion (bullet time, not Sandevistan), a throw goes the way your controller moved, as the same "
                   "motion at full speed would, even when the slowed hand lags behind it; its speed stays the slowed "
                   "hand's. Off: the way the lagging hand moved to catch up (fast throws went 20 to 30 degrees high)."),
+        slider("Slow Motion: Real-Time Flicks", vr_throw_slowmo_flick, 0.f, 1.f, 0.05f, "%.2f")
+            .help("In slow motion (bullet time, not Sandevistan), a wrist flick at real speed throws as at full speed: its "
+                  "speed in your real time, not three times it in the slowed world's (a flick that threw 1 m threw 8 m). "
+                  "The arm's part of a throw is unchanged. 0: as before; between: a blend."),
+        slider("Slow Motion: Wrist Flick Below", vr_throw_slowmo_flick_arm, 0.f, 0.9f, 0.05f, "%.2f").extend()
+            .help("In slow motion, a throw your arm moves less than this share of (your wrist's turn doing the "
+                  "rest) is a wrist flick, thrown as far as the same flick at full speed, however fast or gently you "
+                  "flicked. A throw your arm carries keeps the arm's speed. Higher: flicks with more arm count too."),
+        slider("Slow Motion: Nudge Below", vr_throw_slowmo_short_travel, 0.f, 0.5f, 0.01f, "%.2f m").extend()
+            .help("In slow motion, a throw whose hand moved less than this up to the release (from where the motion "
+                  "got going) is a nudge, thrown as hard as the same nudge at full speed (a 10 cm nudge went 14 "
+                  "times as far). Longer throws, from Arm Throw From up, keep the bullet-time scaling. 0: off."),
+        slider("Slow Motion: Arm Throw From", vr_throw_slowmo_long_travel, 0.f, 0.6f, 0.01f, "%.2f m").extend()
+            .help("In slow motion, a throw whose hand moved this far or more up to the release is the arm's, with the "
+                  "bullet-time scaling (a slow throw made with the slowed world goes as at full speed). Between Nudge "
+                  "Below and this: a blend."),
+        toggle("Slow Motion: Throws As In Real Time", vr_throw_slowmo_real_strength)
+            .help("In slow motion, every throw is as strong as the same motion at full speed: no bullet-time scaling. "
+                  "A throw you make slowly with the slowed world then goes as slowly as you made it. Off: nudges and "
+                  "flicks as in real time, longer throws scaled."),
         toggle("Slow Motion: Slow Throws Match", vr_throw_slowmo_tempo)
             .help("In slow motion, a throw you make slowly, with the slowed world, is judged as the same throw at full "
                   "speed (its release over the same part of the arc); one faster than the slowed hands can follow, over "
@@ -2942,6 +3066,10 @@ void hologramTestMessage()
         toggle("Weapons Push Things", vr_box3d_weapon_push)
             .help("The weapons you hold are solid to loose things as drawn: shove things with a gun, balance them on it, bat a "
                   "grenade away with the axe."),
+        cycle("Guns' Shape", vr_box3d_gun_pieces, {{1.f, "One Hull"}, {6.f, "6 Pieces"}, {12.f, "12 Pieces"}, {20.f, "20 Pieces"}})
+            .help("The guns' solid shape, held and lying about: in convex pieces that follow the drawn gun (a shell drops "
+                  "into the shotgun's port, a magazine into its well, nothing rests on the air between its parts), or one "
+                  "hull round each (which fills them). For guns made from then on (picked up, dropped)."),
         slider("Heaviest Thing Held Up", vr_box3d_hand_hold_mass, 0.f, 50.f, 1.f, "%.0f kg")
             .extend()
             .help("An open hand or a weapon holds up nothing heavier: a heavier thing slips through (it is still pushed). 0: no "
@@ -2974,8 +3102,18 @@ void hologramTestMessage()
         slider("Push Strength", vr_carry_nudge, 0.f, 2.f, 0.1f, "%.1fx").extend()
             .help("How hard a touch knocks a thing loose, or pushes what the hands' and weapons' bodies don't (both off)."),
         slider("Box Throw Speed", vr_carry_throw_mult, 0.5f, 3.f, 0.1f, "%.1fx").extend(),
+        slider("Throws Keep Your Motion", vr_carry_throw_inherit, 0.f, 1.f, 0.05f, "%.2f")
+            .help("How much of your own velocity a thing you throw takes with it, as a thrown weapon does (1: all: a brick "
+                  "thrown running forward flies further, running back shorter). 0: none (as before)."),
         slider("Box Punch Damage", vr_carry_melee_mult, 1.f, 3.f, 0.1f, "%.1fx").extend().help("Punching with a box in hand."),
         slider("Thrown Box Damage", vr_carry_throw_damage, 0.f, 50.f, 1.f, "%.0f").extend().help("Damage of a box thrown at about 6 m/s; more the faster."),
+        slider("Heavy Throws From", vr_throw_heavy_from, 0.f, 40.f, 1.f, "%.0f kg").extend(0.f, 200.f)
+            .help("Props heavier than this (a crate, a barrel) hurt more thrown: by their mass over it (Heavy Throw Curve), "
+                  "up to Heavy Throw Most. A barrel thrown with both hands hurt for about 14 before. 0: off. Never weapons."),
+        slider("Heavy Throw Curve", vr_throw_heavy_exp, 0.f, 2.f, 0.05f, "%.2f")
+            .help("1: a prop twice as heavy as Heavy Throws From hurts twice as much thrown; 0: no more."),
+        slider("Heavy Throw Most", vr_throw_heavy_max, 1.f, 10.f, 0.25f, "x%.2f")
+            .help("The most a heavy prop's throw is multiplied by."),
         open("Flung Props (Throwing and Physics)", pageIndex(pageThrowing))
             .help("Whether props batted, knocked flying or swung on the grapple hurt monsters (and players), and how much."),
         open("Held Object Offsets (Held Prop)", pageIndex(pageHeldObjectOffsets))
@@ -3134,6 +3272,8 @@ void hologramTestMessage()
         header("Crates"),
         toggle("Crates Burn", vr_burn_crates)
             .help("Wooden crates catch fire: a lit torch's blow or touch, a lava nail, a burning crate touching them."),
+        toggle("Wood Burns in Lava", vr_burn_lava)
+            .help("Crates, barrels and their pieces dropped in lava catch fire there, and burn on in it."),
         slider("Crate Burn Time", vr_burn_crate_time, 1.f, 60.f, 1.f, "%.0f s").extend(0.5f, 300.f)
             .help("How long a crate burns before it breaks (or its fire goes out)."),
         toggle("Burnt Crates Break", vr_burn_crate_break)
@@ -3252,6 +3392,12 @@ void hologramTestMessage()
             .help("The chance a crate has another on it, turned and off its middle a little. Next map."),
         slider("Large Ones", vr_crates_large, 0.f, 1.f, 0.05f, "%.2f")
             .help("The share of large crates (40 x 40 x 48 units; the small ones 32 units a side). Next map."),
+        slider("Barrels", vr_crates_barrels, 0.f, 1.f, 0.05f, "%.2f")
+            .help("The share of barrels among them (upright, 22 units across and 32 high), and of the tops of stacks: a "
+                  "barrel on a crate or a barrel, a small crate on a barrel. Next map."),
+        slider("Barrels Lying", vr_crates_barrel_lying, 0.f, 1.f, 0.05f, "%.2f")
+            .help("The share of barrels standing alone that lie on their side along the wall (they roll when pushed). "
+                  "Next map."),
         slider("Room in Front", vr_crates_clearance, 32.f, 256.f, 8.f, "%.0f units").extend(0.f, 1024.f)
             .help("Open floor kept in front of a crate, so that it never blocks a passage or a doorway. Next map."),
         slider("Away From Things", vr_crates_margin, 24.f, 256.f, 8.f, "%.0f units").extend(0.f, 1024.f)
@@ -3266,6 +3412,23 @@ void hologramTestMessage()
         slider("Breaks On Impact", vr_crate_impact, 0.f, 30.f, 1.f, "%.0f m/s").extend(0.f, 100.f)
             .help("A crate hitting something this hard breaks (dropped from about 85 units); from 70% of it, it is damaged. "
                   "Things thrown at it damage it as they do monsters. 0: impacts never break them."),
+        toggle("Overhead Slam", vr_carry_slam)
+            .help("A crate or barrel held in both hands over your head and swung down onto a monster, a prop or a wall breaks "
+                  "at once (what it hits takes a heavy blow); thrown down from there, it takes heavy damage (two such "
+                  "throws break it)."),
+        slider("Slam: Over the Head", vr_carry_slam_height, -20.f, 40.f, 1.f, "%.0f cm").extend(-100.f, 100.f)
+            .help("How far over your eyes your hands must be for it to count as over your head."),
+        slider("Slam: Swing Speed", vr_carry_slam_speed, 1.f, 8.f, 0.25f, "%.2f m/s")
+            .help("How fast your hands must swing it down for it to break on what it meets."),
+        slider("Slam: Time to Swing", vr_carry_slam_window, 0.2f, 3.f, 0.1f, "%.1f s")
+            .help("How long after it was over your head a swing down still counts."),
+        slider("Slam: Damage", vr_carry_slam_damage, 0.f, 5.f, 0.1f, "x%.1f")
+            .help("What it is slammed onto takes this times a punch with it in hand (more the faster, up to twice)."),
+        slider("Thrown Down: Damage", vr_crate_slam_throw_damage, 0.f, 1.f, 0.05f, "%.2f")
+            .help("Let go of from over your head, its first hard landing takes this share of its full health (0.55: two "
+                  "such throws break it)."),
+        slider("Thrown Down: Landing Speed", vr_crate_slam_throw_speed, 0.f, 10.f, 0.5f, "%.1f m/s")
+            .help("... a landing at least this fast."),
         slider("Pieces", vr_crate_pieces, 0.f, 16.f, 1.f, "%.0f").extend(0.f, 40.f)
             .help("How many boards and splinters a small crate breaks into (a large one more). Light: they barely get in "
                   "your way, and turn to dust when hit."),
@@ -3366,6 +3529,9 @@ void hologramTestMessage()
             .help("A dying grunt, knight, ogre, enforcer, death knight, rottweiler, scrag, fiend, shambler or gremlin goes limp: his body becomes jointed parts that fall, tumble, are pushed, grabbed "
                   "and thrown (vr_ragdoll). Their settings: Ragdoll Settings."),
         open("Ragdoll Settings", pageIndex(pageRagdolls)),
+        slider("Your Body: Killing Blow's Push", vr_death_ragdoll_push, 0.f, 3.f, 0.25f, "%.2fx")
+            .help("Your own ragdoll body when you die (Death View: VR Settings, Comfort): the blow that killed you throws it "
+                  "this much of what Quake throws the player (0: only the motion you had), at most about 10 m/s."),
     };
 }
 
@@ -4168,6 +4334,13 @@ za::Vector<Item> pageDebugViews()
                   "test maps the point struck to the standing pose, so these zones move with the model."),
         toggle("Hit Zones Through Walls", vr_debug_hitzones_xray)
             .help("Draws the animated positional regions through walls and the back of the model. Off: only visible surfaces."),
+        cycle("Show Gadget Button", vr_debug_gadget_button, {{0.f, "Off"}, {1.f, "Its Hit Volume"}, {2.f, "And the Screen Tap"}})
+            .help("vr_debug_gadget_button: the wrist gadget's side button's hit volume (green ready, yellow pressed, red "
+                  "cooling down) and your fingertip, its presses printed; And the Screen Tap: also bullet time's tap "
+                  "zone over the screen."),
+        command("Gear Lights Info", "vr_gear_lights_info")
+            .help("vr_gear_lights_info: the gear lights' state, the side button's place and your fingertip's distance to "
+                  "it, and the stealth AI's light on you now."),
         cycle("Show Hits", vr_debug_hits, {{0.f, "Off"}, {1.f, "Hits"}, {2.f, "Hits and Misses"}})
             .help("Precise hit detection: each hit on a monster's model drawn for a few seconds (the model as it was then, "
                   "the triangle hit in green, the point on the model in red, where the grown model was met in yellow) and "
@@ -4224,6 +4397,9 @@ za::Vector<Item> pageDebugViews()
         command("Flashlight Cord Info", "vr_flashlight_cord_info")
             .help("vr_flashlight_cord_info: in the console, the cord's last frame (Body > Flashlight > Cord): its "
                   "length, its rings and triangles, a chain's links."),
+        command("Cell Cord Info", "vr_cellcord_info")
+            .help("vr_cellcord_info: in the console, the cell cords (Weapons > Reloading > Cell Cords): each one's weapon, "
+                  "its ends (the weapon's bottom, the pouch's cell), loose or plugged in, its length and rings."),
         command("Probe Flashlight", "vr_flashlight_probe menu")
             .help("vr_flashlight_probe: in the console, where the torch is, whether each hand is at it (lit, as the game "
                   "reads the hand, still), whether B/Y would clip it on the head or a gun, and the player's speed and turn."),
@@ -4250,10 +4426,10 @@ za::Vector<Item> pageDebugLogging()
             .help("The game's developer messages: needed by Shots and Damage and the Grappling Hook's log below, and many "
                   "others (melee events, grenades, deflections). Verbose: every frame's melee detail too."),
         header("Logs"),
-        cycle("Bullet Time", vr_debug_bullettime, {{0.f, "Off"}, {1.f, "On, Off, Refused"}, {2.f, "And the Button's Distance"}, {3.f, "And the Wrist Tap"}})
-            .help("Bullet time starting, stopping and refused (the meter, the cooldown), each tap and press; and every "
-                  "frame, how far your fingertip is from the gadget's button, or (And the Wrist Tap) how far your other "
-                  "hand is from the gadget and how fast the hands come together."),
+        cycle("Bullet Time", vr_debug_bullettime, {{0.f, "Off"}, {1.f, "On, Off, Refused"}, {2.f, "And the Screen Tap"}})
+            .help("Bullet time starting, stopping and refused (the meter, the cooldown), each tap and taps that never "
+                  "stopped on the screen; And the Screen Tap: every frame near the gadget's screen, how far over it your "
+                  "hand (and its gun's butt) is and how fast it comes into it."),
         cycle("Flashlight Flicks", vr_flashlight_flick_debug, {{0.f, "Off"}, {1.f, "Each Flick and Why"}, {2.f, "And the Wrist Every Frame"}})
             .help("vr_flashlight_flick_debug: the wrist flick that turns the held torch over, taken or refused (and why); 2: the held hand's wrist speed every frame."),
         cycle("Chainsaw", vr_debug_chainsaw, {{0.f, "Off"}, {1.f, "Pulls and Cuts"}, {2.f, "And the Bar in Monsters"}})
@@ -4393,6 +4569,26 @@ za::Vector<Item> pageDebugProfiling()
             .help("profile 30: the 30 QuakeC functions that ran the most instructions (their own) since the last time, and "
                   "the total; then all are zeroed. Press it, do the thing, press it again. A call over 16 million is a "
                   "runaway loop error."),
+        toggle("Time QuakeC Functions", vr_qcprofile)
+            .help("vr_qcprofile: each server QuakeC function's time (its own, with the builtins it calls, and with its "
+                  "callees), its calls, and each builtin's, for QuakeC Time Report. Costs a little while on."),
+        command("QuakeC Time Report", "profile_qc 30")
+            .help("profile_qc 30: the 30 QuakeC functions and builtins that took the most time a frame since the last "
+                  "report (Time QuakeC Functions on), in the console; then all are zeroed. Press it, do the thing, press "
+                  "it again."),
+        toggle("Edict Index", vr_edictindex)
+            .help("vr_edictindex: find() by classname and findflags() on monsters, clients, items, lit torches and "
+                  "bodies step straight to the next match instead of walking every entity (the same results). Off: "
+                  "they walk, as Quake did."),
+        toggle("Verify Edict Index", vr_edictindex_verify)
+            .help("vr_edictindex_verify: every indexed search walks as well and any difference is counted and printed "
+                  "(the walk's answer is used). Edict Index Stats prints the counts."),
+        command("Edict Index Stats", "vr_edictindex_stats")
+            .help("vr_edictindex_stats: the index's searches, rebuilds, edicts read again, searches verified and "
+                  "differences since the last time."),
+        command("Game State Hash", "vr_bench_statehash")
+            .help("vr_bench_statehash: one hash of every entity's QuakeC fields (and which are in use), printed with the "
+                  "server's time: the same script on two builds gives the same hash when a change left the game the same."),
         command("Benchmark Capture (10 s)", "vr_bench_begin manual 10s")
             .help("vr_bench_begin manual 10s: the next 10 seconds' frame times (median, 95th and 99th percentiles, worst), "
                   "each GPU pass, the heap events and what there is, into quakevr/profile/bench/manual.json and a line in "
@@ -4409,6 +4605,10 @@ za::Vector<Item> pageDebugProfiling()
         command("Check Layered Shadows", "vr_shadow_layered_check 20")
             .help("vr_shadow_layered_check 20: this frame's shadow maps drawn both ways 20 times, timed (draw calls, CPU and "
                   "GPU ms), then read back and compared texel by texel, in the console. Stand where shadows are."),
+        command("Check Shadow Caster Set-up", "vr_shadow_layered_check 20 cache")
+            .help("vr_shadow_layered_check 20 cache: this frame's shadow maps drawn with each caster set up again for every "
+                  "light, then once a pass over the lights (as the game draws them), 20 times each, timed, then read back "
+                  "and compared texel by texel, in the console. Stand where shadows are."),
         command("Load Times", "vr_startup_times")
             .help("vr_startup_times: where the start-up and the last map load spent their time (from the map command to its "
                   "first frame drawn: the stages, then the kinds of work across them), and every load's total."),
@@ -4449,6 +4649,16 @@ za::Vector<Item> pageDebugProfiling()
         toggle("Freeze Particles", vr_particle_freeze)
             .help("vr_particle_freeze: the particles stop where they are (still drawn), to compare settings on the same "
                   "frame."),
+        toggle("Half-Res Particles Always", vr_particle_halfres_force)
+            .help("vr_particle_halfres_force: the particles drawn at half resolution in every frame with some in view "
+                  "(when Half-Res Heavy Particles or Half-Res Retro Particles allow it), not only in dense effects: to "
+                  "compare with Freeze Particles."),
+        cycle("Half-Res Blend", vr_particle_halfres_upsample,
+            {{0.f, "Filtered (before)"}, {1.f, "By Depth"}, {2.f, "By Depth, Edges Shown"}})
+            .help("vr_particle_halfres_upsample: how half-resolution particles are blended into the view. By Depth: each "
+                  "pixel takes the half-size texels at its own distance (no smoke bled onto a crate's edge in front of "
+                  "it). Edges Shown: the pixels that took texels by distance in green. Filtered: the four blended, as "
+                  "before."),
         header("Server Tick"),
         toggle("Fixed 72 Hz Server Tick", host_fixedtick)
             .help("host_fixedtick: the server (monsters, physics, your hands' blows) runs in steady 1/72 s ticks at any "
@@ -4465,6 +4675,10 @@ za::Vector<Item> pageDebugProfiling()
             .help("The game crashes at once, with the culprit's stack (qvr_crash.txt), when a thread other than the main one "
                   "uses the hunk, the model cache or the zone (none of them is thread-safe; vr_zone_threadcheck). For "
                   "testing: a map load's crash in its data is often one of these."),
+        toggle("Evict Models at Map Start", vr_hitmodel_cachestress)
+            .help("vr_hitmodel_cachestress: at the next map's start, each model's data is dropped from the model cache once "
+                  "the next is loaded (what a full cache does), before precise hit detection's meshes are made on the "
+                  "thread pool. They must come out the same (developer 1: the hash in the console). For testing."),
         cycle("Worker Threads", vr_jobs_threads, {{0.f, "Auto"}, {1.f, "1"}, {2.f, "2"}, {3.f, "3"}, {4.f, "4"}, {8.f, "8"}, {16.f, "16"}})
             .help("The thread pool's workers besides the main thread (Auto: the CPU's threads less one). Changed, the pool is "
                   "made again. -jobs <n> on the command line sets it from the start."),
@@ -4581,6 +4795,12 @@ za::Vector<Item> pageDebugReports()
                   "server's; each mismatch listed (a saved game loaded wrong: buttons drawn as gibs). 0 wrong is right."),
         command("View", "vr_dumpview").help("vr_dumpview: the hands, grips, palms, fingers and every entity drawn in the view (long)."),
         command("Bullet Time Now", "vr_bullettime").help("vr_bullettime: starts or stops bullet time, as the gadget's button."),
+        command("Distortion Trails Test", "vr_bullettime_trails_test 5")
+            .help("vr_bullettime_trails_test [count] [m/s] [distance]: shots across your view (a test's distortion "
+                  "trails, whatever kinds are on): start bullet time first (or Distortion Trails: Always)."),
+        command("Distortion Trails", "vr_bullettime_trails_list")
+            .help("vr_bullettime_trails_list: each distortion trail (its kind, places, head, age), their strength now and "
+                  "the vertices made."),
         command("Slow Motion Clocks", "vr_slowmo_probe")
             .help("vr_slowmo_probe [classname | number]: the time scale, the server's, real, slowed and client's clocks, the "
                   "player's origin and velocity, the main hand's speed and lag behind the controller (and an entity's)."),
@@ -4603,12 +4823,16 @@ za::Vector<Item> pageDebugReports()
             "Throws by Weight off and on; the least speed each hurts at, and the most spin one hand and two give it."),
         command("Ledges Ahead", "vr_climb_probe").help("vr_climb_probe: the ledges 16 to 64 units ahead of you, and why each holds or not."),
         command("Rocks and Bricks", "vr_debris_list").help("vr_debris_list: the rocks and bricks placed in this map."),
-        command("Crates", "vr_crates_list").help("vr_crates_list: the crates in this map (health, resting) and how many pieces lie about."),
+        command("Crates", "vr_crates_list").help("vr_crates_list: the crates in this map (health, resting), how many pieces lie about, and any two placed into each other."),
+        command("Gear (Hidden When Dead)", "vr_gear_status").help("vr_gear_status: what of the gear is drawn (holstered guns and their parts, holster sleeves, ammo pouch, grenade pouch, flashlight and cord, wrist gadget, body) and whether the HUD is the status bar on a hand: dead, with Hide Gear When Dead, only the status bar."),
         command("Hit Detection", "vr_hitmodel_stats").help("vr_hitmodel_stats: precise hit detection's tests so far (hits, shots through a box beside the model) and their cost."),
         command("Wounds", "vr_wounds_info").help("vr_wounds_info: the wound masks in use."),
         command("Bloody Hands and Washing", "vr_gore_hands_info")
             .help("vr_gore_hands_info: the blood on your hands and body (texels), the wounds kept to re-open, the wash and its re-opening, and the blood on your weapons and props."),
         command("Decals and Gore", "vr_decal_count").help("vr_decal_count: the decals and gore pieces in the world."),
+        command("Decals in Both Eyes", "vr_decal_eyes_test 90")
+            .help("vr_decal_eyes_test 90: for 90 frames a blood mark is made between the eyes' views; then whether both "
+                  "eyes drew the same marks each frame (console: 0 frames different)."),
         command("Particle Lighting", "vr_particle_light_report").help("vr_particle_light_report: the last frame's lit particles (Lit Particles), their mean light and colour against unlit, and the lightmap traces it took."),
         command("Model Lighting", "vr_model_ambient_show").help("vr_model_ambient_show: the six nearest entities' ambient light."),
         command("Ambient Occlusion", "vr_ao_show").help("vr_ao_show: the ambient occlusion's occluders and bake."),
@@ -4657,6 +4881,21 @@ za::Vector<Item> pageDebugReports()
         command("Relighting: Tool Lookup", "vr_relight_get_tool status").help("vr_relight_get_tool status: the light.exe found (or not), the folder Download ericw-tools writes, the pinned file (version, size, sha256), its URL and the last download's result. vr_relight_tool_dir points both lookup and download at a test folder; vr_relight_tool_url at a test server."),
         command("Relighting: Batch's Maps", "vr_relight_batch -list").help("vr_relight_batch -list: the maps Graphics > Relighting's Relight These Maps would take (Maps, Episode, Game), with their files and sizes, without relighting them."),
         command("Menu Rows", "menu_vr rows").help("menu_vr rows: this page's rows as drawn (MROW: row, top, label), the scroll, the section gap, and whether the laser and mouse find each row where it is drawn."),
+        toggle("Menu Links: Print, Do Not Open", vr_menu_link_dryrun)
+            .help("vr_menu_link_dryrun: the version box's Support on Ko-fi link (bottom right of the menus) prints its address "
+                  "in the console instead of opening the desktop's browser (tests)."),
+        command("Check for Updates Now", "vr_update_check_now")
+            .help("vr_update_check_now: the release feed (latest.json) read now, whatever the hour's cache and Check for "
+                  "Updates say, and what it found in the console; the notice above the version box follows. "
+                  "vr_update_url points it at a test server, vr_update_test_version fakes the feed's version."),
+        command("Update Check: Status", "vr_update_status")
+            .help("vr_update_status: this game's version, the latest the feed gave (where from, how long ago, cached or "
+                  "asked), the feeds, the cache file's age, and the notice shown."),
+        command("Update Notice: Fake 9.9.9", "vr_update_test_version 9.9.9")
+            .help("vr_update_test_version 9.9.9: the update notice shows as for a newer release, without asking anyone "
+                  "(its page: the feed's, else the releases' latest). Update Notice: Real Version undoes it."),
+        command("Update Notice: Real Version", "vr_update_test_version \"\"")
+            .help("vr_update_test_version \"\": the feed's own version again (no notice unless it is newer)."),
         command("Menu Help Fit", "menu_vr helpcheck").help("menu_vr helpcheck [columns]: every VR page's help wrapped as drawn: the pages whose box grew, the help shown in parts, the longest (HELPSUM)."),
         command("Main Menu Lettering", "vr_bigfont").help("vr_bigfont: which of the main menu's letters were cut from the menu pictures, and which were left out (a mod's own picture: the menu then shows the picture)."),
     };
@@ -4727,6 +4966,8 @@ za::Vector<Item> pageDebugTools()
         command("Soak Your Arms", "vr_wounds_test self 9 0 0 52").help("vr_wounds_test self 9 0 0 52: wet as from water up to your chest; dries in about 25 seconds."),
         command("Test Light", "vr_light_test").help("vr_light_test: a white light 48 units ahead for 5 seconds."),
         command("Test Message", "vr_message_test").help("vr_message_test: a message in the gadget's hologram (once the gadget has been drawn)."),
+        command("Test Console Line", "vr_message_test console Test console log line").help("vr_message_test console <text>: an engine log line, as a warning: in the notify lines only with HUD and Menus > Screens > Console Log on the HUD (vr_hud_console_log 1)."),
+        command("Notify Lines Info", "vr_notify_info").help("vr_notify_info: prints the notify lines shown now, in view and in the gadget's log (which of the game's messages and the console's log pass vr_hud_console_log)."),
         cycle("Gadget Screen Readings", "vr_gadget_test_state",
             {{0.f, "Real"}, {1.f, "Low"}, {2.f, "Exhausted, Counter"}, {3.f, "Hanging, Bullet Time"}, {4.f, "Relighting"}, {5.f, "Every Item"}})
             .help("vr_gadget_test_state: the wrist gadget's screen shows made-up readings, to see each state of its layout: low health, ammo and "
@@ -5028,13 +5269,13 @@ za::Vector<Item> pageMachineHordeTests()
     };
 }
 
-// Dawn of the Machine (MG3) acceptance aids: developer campaign only (`vr_campaign_native mg3`), "mg3test:" lines
+// Dawn of the Machine (MG3) acceptance aids: its campaign only (Official Campaigns, or `vr_campaign_native mg3`), "mg3test:" lines
 // with developer 1 (QC/vr_mg3_test.qc).
 za::Vector<Item> pageMg3Tests()
 {
     return {
         header("Dawn of the Machine Tests"),
-        header("Developer campaign only: vr_campaign_native mg3"),
+        header("Dawn of the Machine campaign only (Official Campaigns)"),
         command("State Report", "vr_mg3_test 1")
             .help("Print the map, skill, serverflags and the player's health, caps, ammunition and weapons (developer 1)."),
         command("Seed Saved Upgrades", "vr_mg3_test 2")
@@ -5079,6 +5320,12 @@ za::Vector<Item> pageMg3Tests()
             .help("Destructive: the Chthon ending as if he died: the finale text and the credits, or on Bloody Nightmare its new game on map1. Then Leave the Intermission."),
         command("Shub Beaten (Ending)", "vr_mg3_test 22")
             .help("Destructive: the Shub ending: the final text, then the credits. Then Leave the Intermission."),
+        command("Route Carry Report", "vr_mg3_test 31")
+            .help("Runes, health, ammunition, upgrade masks and capacities, hands' and holsters' weapons, magazines and ids: compare across a level change, save/load or death (the route sweep's report)."),
+        command("Seed Hands and Holsters", "vr_mg3_test 32")
+            .help("Destructive: shotgun and nailgun in the hands (magazines 3/7; hold both grips to carry them), six shotguns holstered (1..6), upgrade masks 5 2 8192 16384 1."),
+        command("Give the Four Runes", "vr_mg3_test 36")
+            .help("Destructive: all four runes (serverflags 15), e.g. to open the hub's exit to secret2 in a Bloody Nightmare new game."),
         toggle("Aggro Groups", vr_mg3_aggro_groups)
             .help("A waking monster wakes what its aggro_target names (map3, map7, map8). Upstream ships this off; off by default."),
     };
@@ -5289,6 +5536,20 @@ za::Vector<Item> pageDebugTests()
             .help("Destructive authored mge2m2 puzzle test. Reload afterward."),
         command("Machine: Equipment Carry Setup", "vr_mg_hub_test 20")
             .help("Destructive: seed independent hand/holster magazines for save/carry checks. Hold both grips and reload afterward."),
+        command("Whole-Map Monsters: Report", "vr_test_monsters 1")
+            .help("Count this map's monsters: live, awake (hunting someone), dead, waiting for their trigger (one "
+                  "monsterstest: line)."),
+        command("Whole-Map Monsters: Bring In the Waiting", "vr_test_monsters 4")
+            .help("Every monster still waiting for its trigger (the official campaigns' deferred monsters) comes in at "
+                  "once: the map's full count. Reload afterward."),
+        command("Whole-Map Monsters: Wake All", "vr_test_monsters 2")
+            .help("Every live monster of the map hunts you at once, as if it had seen you: the full count's AI "
+                  "(the benchmarks' mg3_*_awake). Reload afterward."),
+        command("Whole-Map Monsters: Kill All", "vr_test_monsters 3")
+            .help("Every live monster of the map dies at once (just enough damage: deaths, corpses and up to Most "
+                  "Ragdolls ragdolls, vr_ragdoll_max). The benchmarks' mg3_*_kill. Reload afterward."),
+        open("Stealth AI", pageIndex(pageStealthTests))
+            .help("The stealth AI's scenes on e1m1 (Combat > Stealth AI): seeing, hearing, touch, investigating."),
         open("Machine Horde Tests", pageIndex(pageMachineHordeTests))
             .help("Authored waves, currency, physical rewards, revival and saved equipment. Developer arena only."),
         open("Dawn of the Machine Bestiary", pageIndex(pageMg3BestiaryTests))
@@ -5302,7 +5563,7 @@ za::Vector<Item> pageDebugTests()
         open("Dawn of the Machine Monsters", pageIndex(pageMg3MonsterTests))
             .help("The infected (any campaign) and Dawn of the Machine's own monsters (with its data): spawns and checks."),
         open("Dawn of the Machine Tests", pageIndex(pageMg3Tests))
-            .help("MG3 native port: state, saved upgrades and capacities. Developer campaign only."),
+            .help("MG3 native port: state, saved upgrades and capacities. Dawn of the Machine campaign only."),
         command("Machine: Progression Report", "vr_mg_hub_test 3")
             .help("Report runes, return position, final gate and VR equipment."),
         command("Machine: Walk Into the Next Exit", "vr_mg_hub_test 30")
@@ -5351,6 +5612,13 @@ za::Vector<Item> pageDebugTests()
             .help("vr_physics_steptime: Box3D's step time a frame since the last time (average, median, 95th and 99th "
                   "percentiles, worst, ms), the awake bodies and its threads. Run it, make a pile, play, run it again "
                   "(Profiling and Memory: Physics Threads, Physics Step Time by Awake Bodies)."),
+        command("Explosion Debris Ahead", "vr_explosion_debris_test")
+            .help("vr_explosion_debris_test: an explosion's look and its chunks (the server's Box3D props) 64 units ahead, "
+                  "no blast. Then Explosion Debris List."),
+        command("Explosion Debris List", "vr_explosion_debris_list")
+            .help("vr_explosion_debris_list: each chunk: its entity, place, speed, resting (asleep) or moving and on what "
+                  "(the world, a lift), age, time left, fade. vr_explosion_debris_stats the counts; "
+                  "vr_explosion_debris_launch <x y z> <vx vy vz> [size] [life] one chunk where you say."),
         header("Spatial Audio"),
         command("Spatial Audio Tests", "vr_snd_test all")
             .help("vr_snd_test: offline renders through the spatial audio (a sound circling the head, behind a wall, a door "
@@ -5474,6 +5742,14 @@ za::Vector<Item> pageDebugTests()
                   "asleep); standing up, or holding the small crate up, it should (Crates Hide You)."),
         command("Can the Grunt See You?", "impulse 224")
             .help("impulse 224: whether Crate Cover's grunt sees you now, how high your head is, and whether it woke."),
+        command("Crouch Shots", "developer 1; vr_crouch_test 12")
+            .help("vr_crouch_test 12: a grunt put ahead of you fires 12 bullets at you as it aims them, then goes: whether "
+                  "you are crouched (Player Hitbox > Crouching), your eyes' height, the aim's height over your feet and "
+                  "the damage you took (crouchtest: line; God mode off). Try it crouched behind the 32-high cover in the "
+                  "teleporter test map's crouching room: no damage."),
+        command("Crouch Status", "vr_crouch_status")
+            .help("Prints your eyes' height over your feet, your crouched box's height (0 standing) and whether you could "
+                  "stand."),
         header("Parry"),
         command("Check the Parry Pose", "impulse 249")
             .help("Developer 1: whether each held weapon blocks a blow from ahead, and its angle and position."),
@@ -5483,6 +5759,16 @@ za::Vector<Item> pageDebugTests()
             .help("Developer 1: a knight deals three 10-damage blows in one callback and checks the restored self and vectors. Grants 500 health. A successful parry should cancel the last two."),
         command("A Melee Blow Now", "impulse 242")
             .help("The nearest melee monster within 150 units strikes for 10 damage through the actual parry test. With notarget, it attacks only when asked. Parry Stops Attacks also cancels blows asked for during its stagger."),
+        header("Holding Enemies"),
+        command("Who Is Held?", "vr_foegrab_status")
+            .help("vr_foegrab_status: each hand holding an enemy, its hold, how firmly the enemy is held in all, how far "
+                  "the hand is from the spot it holds (Combat > Holding Enemies)."),
+        command("Walk the Nearest Away", "vr_foegrab_walk_test 110 1")
+            .help("vr_foegrab_walk_test 110 1: the live monster nearest you walks straight away from you at 110 units/s "
+                  "for a second; how far it got is printed. Held, it should hardly move (A Grunt Ahead first)."),
+        cycle("Log Holds", "vr_foegrab_debug", {{0.f, "Off"}, {1.f, "Taken and Let Go"}, {2.f, "Every Frame"}})
+            .help("vr_foegrab_debug: the console logs each hold taken and let go and why (and a grip that found none); "
+                  "Every Frame: each held enemy's movement and each hand's stretch."),
         header("Enemy Shoves"),
         command("Shove the Nearest Monster", "impulse 219")
             .help("impulse 219: the nearest monster within 200 units shoved as your two-handed shove does (knocked away, "
@@ -5537,6 +5823,9 @@ za::Vector<Item> pageDebugTests()
             .help("A loaded shotgun into the off hand and 40 shells: the main hand is free for the ammo pouch."),
         command("Nailgun in the Off Hand", "impulse 156; wait; vr_test_weaponinst 7; impulse 120; give n 100")
             .help("A loaded nailgun into the off hand and 100 nails (impulse 157: the super nailgun, 161 the thunderbolt)."),
+        command("Rocket Launcher in the Off Hand", "impulse 160; wait; vr_test_weaponinst 7; impulse 120; give r 40")
+            .help("A loaded rocket launcher into the off hand and 40 rockets (impulse 158: the grenade launcher, 159 the "
+                  "proximity launcher): empty it, then load it at the muzzle."),
         command("Eject the Off Hand's Magazine", "vr_reload_test 6; impulse 125").help("As its B/Y does."),
         command("Empty the Off Hand's Gun", "vr_reload_test 5; impulse 125")
             .help("Its magazine back into your ammo (to load it again)."),
@@ -5559,14 +5848,41 @@ za::Vector<Item> pageDebugTests()
             .help("On the floor (a shell flat along the gun, a magazine upright): bring the gun down onto it."),
         command("Drop a Round From Above Its Load Point", "vr_reload_test 13; impulse 125")
             .help("From 8 units straight above: turn the gun's opening up first."),
+        command("Toss a Round in the Wrong Way Round", "vr_reload_test 16; impulse 125")
+            .help("A launcher's round thrown into the off hand's muzzle nose first: it must not go in (a proximity "
+                  "grenade does)."),
+        command("Hold the Round at the Load Point", "vr_reload_test 17; impulse 125")
+            .help("The main hand's round put at the off hand's gun's load point lying the way it goes in (a launcher's: "
+                  "butt first): it goes in."),
+        command("Hold It There the Wrong Way Round", "vr_reload_test 18; impulse 125")
+            .help("The same nose first: a dull tap, it stays in the hand (a proximity grenade goes in)."),
         command("Break the Off Hand's Super Shotgun Open", "vr_reload_test 15; impulse 125")
             .help("As the flick does (Immersive, Break Open on): its barrels take loose pairs."),
+        command("Spent Lava Nails or Plasma in the Off Hand's Gun", "vr_reload_test 16; impulse 125")
+            .help("The off hand's nailgun, super nailgun or thunderbolt on its other ammo (lava nails, plasma: 100 given), "
+                  "its magazine emptied as if fired dry: eject it to see a spent one smoke."),
         command("Report the Loose Rounds", "vr_reload_test 14; impulse 125")
             .help("Each loose round's distance from the off hand's load point, how it lies against the way in, and "
                   "whether it passes through the gun; the load point's axis and the way its opening faces."),
-        command("Print the Collision Shapes", "vr_physics_shapes vr_ammo_shell vr_ammo_mag")
-            .help("Each loose round's body against its drawn size, each held gun's hull against the drawn gun, and how "
-                  "deep its load point lies inside the hull (the console)."),
+        command("Put the Off Hand's Gun Down", "vr_reload_test 20; impulse 125")
+            .help("The off hand's gun let go of: it lies as a prop, its rounds with it. Guns lying about load as held "
+                  "ones do, by hand and by contact."),
+        command("Toss a Round Into the Lying Gun", "vr_reload_test 21; impulse 125")
+            .help("A loose round for the nearest gun lying about, tossed into its opening lying right: it goes in."),
+        command("Toss One Sideways at the Lying Gun", "vr_reload_test 24; impulse 125")
+            .help("The same lying sideways a unit out of its opening: it stays out."),
+        command("Hold a Round at the Lying Gun", "vr_reload_test 22; impulse 125")
+            .help("The main hand takes a round from the pouch (hold the grip), then, again, it is put at the nearest lying "
+                  "gun's load point: it goes in."),
+        command("Report the Lying Guns", "vr_reload_test 23; impulse 125")
+            .help("Each gun lying about: its magazine, whether its magazine is in, whether it is open, its load point."),
+        command("The Held Prop's Shape Against Its Box", "vr_reload_test 25; impulse 125")
+            .help("The main hand's prop: how far its shape (as held) and its box are from the off hand's gun's magazine "
+                  "and the front of its barrels. The magazine's bump and the super shotgun's hits count by its shape."),
+        command("Print the Collision Shapes", "vr_physics_shapes vr_ammo_shell vr_ammo_mag vr_ammo_front thrown_weapon")
+            .help("Each loose round's body against its drawn size, each held gun's body against the drawn gun, how deep "
+                  "its load point lies inside it, and its convex pieces (how many, how far their hulls lie off the gun; "
+                  "one hull's for comparison); the guns lying about too (the console)."),
         cycle("Reload Prints", "vr_reload_debug", {{0.f, "Off"}, {1.f, "Events"}, {2.f, "Every Frame"}, {3.f, "And Magazine Grips"}})
             .help("Events: each take, load, refund, loss, magazine out and hold. Every Frame: a held round's distance to the "
                   "port, a held magazine's pull, snap and apart, a hit's speed. And Magazine Grips: each empty hand's "
@@ -5578,6 +5894,20 @@ za::Vector<Item> pageDebugTests()
         command("The Old Hub (vrstart_old)", "vr_campaign_hub vrstart_old")
             .help("vr_campaign_hub vrstart_old: the hub before the island (vrstart until 2026-10-07). Nothing goes there by "
                   "default; vr_hub_map vrstart_old makes it the hub again."),
+        header("Tutorial (vrtutorial2)"),
+        command("The Tutorial", "skill 0; map vrtutorial2")
+            .help("skill 0; map vrtutorial2: the tutorial (a military base by day, 12 lessons and an arena; "
+                  "Misc/quakevr/maps/vrtutorial2_gen.py), on Easy as the start flow and the hub's button start it."),
+        command("The Old Tutorial (vrtutorial)", "map vrtutorial").help("map vrtutorial: the tutorial before 2026-10-08."),
+        command("First Start Again", "vr_tutorial_started 0")
+            .help("vr_tutorial_started 0: the next start of the game goes to the tutorial, as a new install's first start "
+                  "does (the tutorial sets it back to 1 as it loads)."),
+        cycle("Go to a Lesson", "vr_tutorial_goto",
+            {{0.f, "-"}, {1.f, "1 Moving"}, {2.f, "2 Buttons"}, {3.f, "3 Jumping"}, {4.f, "4 Swimming"}, {5.f, "5 Healing"},
+             {6.f, "6 Melee"}, {7.f, "7 A Fight"}, {8.f, "8 Weapons"}, {9.f, "9 Darkness"}, {10.f, "10 Throwing"},
+             {11.f, "11 Fire"}, {12.f, "12 The Arena"}})
+            .help("In vrtutorial2: puts you at that lesson's start (its checkpoint, taken: you come back there). Doors "
+                  "on the way stay as they are."),
         header("Climbing"),
         command("Climbing Test Map", "map vrclimb").help("map vrclimb: rungs, ledges, a jump wall, moving and floating ledges."),
         command("To the Jump Wall", "setpos -40 -310 24 0 0 0; noclip")
@@ -5644,6 +5974,9 @@ za::Vector<Item> pageDebugTests()
                   "torso and the big chunk are the large ones (Misc/quakevr/gib_2h_models_test.sh throws each). Rock, "
                   "Shells Box, Brick: the nearest lying about; Hand Grenade: one from the pouch (Misc/quakevr/"
                   "twohand_regrip_test.sh takes each in both hands and hands it over)."),
+        toggle("Into the Main Hand", vr_test_held_hand)
+            .help("vr_test_held_hand: Gib in the Off Hand fills the main hand instead (hold its grip): a prop to hit the "
+                  "super shotgun's barrels open or shut with, the gun in the off hand (reload_test.sh section 11)."),
         toggle("Real Gib", vr_test_held_destroy)
             .help("vr_test_held_destroy: the off hand's test gib can be burst as a real one (shot, struck, thrown hard "
                   "at a wall). Misc/quakevr/gib_2h_throw_test.sh throws it with both hands along several arcs."),
@@ -5804,6 +6137,16 @@ za::Vector<Item> pageDebugTests()
                   "side in the map why it is not looked through - behind its plane, not in your view, further than the "
                   "range, seen through another gate - or that it is, with its distance and score. It shares the test "
                   "the engine acts on, so the reasons printed are the ones applied."),
+        command("Torch Light Views", "vr_portals_lightviews")
+            .help("vr_portals_lightviews [x y z]: the views whose torches and flames light this frame - your own, each "
+                  "gate's in front of you and the gates seen within those, as deep as Gates Within Gates - each with its "
+                  "eye carried through, and what making them costs. With a point: how far a torch there counts as "
+                  "(none: no view sees it)."),
+        command("The View Through A Gate, Read Back", "vr_portals_shot")
+            .help("vr_portals_shot: the next view drawn through a gate read back from its own targets - its side, the "
+                  "eye and the camera it was drawn from, its brightness over the whole view and over the gate's box - "
+                  "to portalshots/<map>_<n>.png and its float scene to .pfm, to compare with the eye's own float scene "
+                  "(vr_eyeshot 2: eyeshots/<map>_<n>_L.pfm) - in the same frame, the gate's face over the same pixels."),
         command("Against A Gate's Frame", "map start; wait120; setpos 200 1372 24 0 90 0; wait30; vr_portals_info")
             .help("You against the wall beside the first gate's opening (12 units short of its plane): nothing "
                   "teleports you and there is no jump - vr_portals_info says his box reaches 12, that is, stopped."),
@@ -5844,9 +6187,25 @@ za::Vector<Item> pageDebugTests()
         command("To the Turning Gates", "setpos -1280 640 24 0 90 0; noclip")
             .help("In vrslipgates: facing the gate that comes out of the next room's east wall (90 degrees); the loop is "
                   "left and right of you, the 45-degree wall behind you to the left."),
+        command("Into the Loop", "setpos -1560 560 24 0 180 0; noclip")
+            .help("In vrslipgates: 40 units from the loop's west gate, which comes out of the east one: you see your own "
+                  "back (with its head) and, through the gate beyond it, yourself again, as many gates deep as Graphics > "
+                  "Slipgates > Gates Within Gates (vr_portals_view prints the views drawn at each depth)."),
         command("To the Heights and Water", "setpos -400 -960 24 0 180 0; noclip")
             .help("In vrslipgates: facing the floor-level gate that comes out over the 128-high platform; the pool's two "
                   "gates are in the east and south walls."),
+        command("Slide A Crate Through", "map vrslipgates; wait60; setpos -256 536 24 0 90 0; wait5; noclip 0; vr_test_spawn 107; vr_test_spawn_dist 40; impulse 241; wait30; vr_physics_fling nearest 250 90")
+            .help("In vrslipgates: a small crate slid along the floor into the flush player gate (8 deep, a wall right "
+                  "behind it): it goes through and comes out of the north gallery's gate (it stopped against the wall "
+                  "behind the sheet before Box3D's level contacts were clipped at the gate)."),
+        command("Quake's Effects Behind A Gate", "map start; wait90; god; notarget; noclip; setpos 1040 1650 -330 0 270 0; wait5; vr_particle_test quake; setpos 1040 1830 -330 0 270 0")
+            .help("start's underwater gate: Quake's own explosion particles and sprite (vr_particle_test quake) made "
+                  "behind it, then seen from in front: with a see-through gate surface (Graphics > Slipgates > Portal "
+                  "Stars > Opacity under 1) they must not show over the view through the gate."),
+        toggle("Print Gate Cuts", "vr_portals_debug_split")
+            .help("vr_portals_debug_split 1: each frame, every entity drawn cut by a slipgate (where, the plane, how far "
+                  "through), the force grab's beam end, and each thrown or rigid thing's middle and why a gate did not "
+                  "take it. -1 (console) also follows the main hand's held object, a number that entity, every frame."),
         header("Visibility: Hidden Staircase"),
         command("Hidden Staircase Probe", "map start; wait120; setpos 278 1728 24 7 -20 0; wait60; vr_hull_leafdebug")
             .help("Places the player at the reported staircase spot. setpos enables noclip; turn it off before "
@@ -6086,6 +6445,20 @@ za::Vector<Item> pageHitbox()
             .help("Shots and missiles meet you only up to the top of your head: crouched behind a crate, those flying "
                   "over it miss you (Quake's box stands as tall), and monsters' bullets aim no higher than your body. "
                   "Off: Quake's height, crouched or not (vr_hull_hit_head)."),
+        header("Crouching"),
+        toggle("Crouched Hitbox", vr_crouch_hull)
+            .help("Crouch in real life and your box is lower: you walk under low ceilings and through small teleporters, "
+                  "and behind cover shots meet only what shows of you. Standing up somewhere too low, you keep the low box "
+                  "until there is room. Off: always Quake's standing height (vr_crouch_hull)."),
+        slider("Lowest Crouched Height", vr_crouch_height, 24.f, 52.f, 4.f, "%.0f units")
+            .help("Your box's height with your eyes under it (Quake's standing box: 56; the crouching room's tunnel in "
+                  "the teleporter test map: 40) (vr_crouch_height)."),
+        cycle("Heights Above It", vr_crouch_step, {{0.f, "None"}, {4.f, "Every 4 units"}, {8.f, "Every 8 units"},
+                  {12.f, "Every 12 units"}})
+            .help("Taller crouched boxes up to 52, so half a crouch gets you under a ceiling that is a little low: your "
+                  "eyes under one, that box (36, 44, 52 every 8). None: the lowest only (vr_crouch_step)."),
+        command("Crouch Status", "vr_crouch_status")
+            .help("Prints your eyes' height over your feet, your box's height (0 standing) and whether you could stand."),
         slider("Prop Push Radius", vr_box3d_player_radius, 5.f, 40.f, 1.f, "%.0f cm")
             .help("Loose props (rocks, bricks, weapons on the floor) are pushed by a capsule this wide round your body, "
                   "not by your box (vr_box3d_player_radius)."),
@@ -6434,6 +6807,11 @@ const Page pages[] = {
     {"Reloading - Nailgun", pageReloadNailgun, pageReloading},
     {"Reloading - Super Nailgun", pageReloadSuperNailgun, pageReloading},
     {"Reloading - Thunderbolt", pageReloadThunderbolt, pageReloading},
+    {"Reloading - Launchers", pageReloadLaunchers, pageReloading},
+    {"Reloading - Cell Cords", pageReloadCellCords, pageReloading},
+    {"Stealth AI", pageStealth, pageCombat}, // (vr_menu_stealth.inc)
+    {"Stealth AI Tests", pageStealthTests, pageDebugTests, LevelDeveloper},
+    {"Holding Enemies", pageHoldingEnemies, pageCombat},
 };
 constexpr int pageCount = static_cast<int>(sizeof(pages) / sizeof(pages[0]));
 
@@ -6693,9 +7071,7 @@ void showWrapper(cvar_t& var, float value)
     {
         return static_cast<float>(trigger);
     }
-    const bool tap = vr_bullettime_tap.value != 0.f;
-    const bool button = vr_bullettime_button.value != 0.f;
-    return tap && button ? 0.f : tap ? 4.f : button ? 5.f : 6.f;
+    return vr_bullettime_tap.value != 0.f ? 0.f : 6.f;
 }
 
 // Its choices: the three, and the settings' own combination where it is none of them (shown, not offered otherwise).
@@ -6705,9 +7081,7 @@ void showWrapper(cvar_t& var, float value)
     switch(static_cast<int>(bulletTimeActivation()))
     {
         case 3: out.pushBack({3.f, "Off"}); break;
-        case 4: out.pushBack({4.f, "Wrist Gadget (tap only)"}); break;
-        case 5: out.pushBack({5.f, "Wrist Gadget (button only)"}); break;
-        case 6: out.pushBack({6.f, "Wrist Gadget (tap and button off)"}); break;
+        case 6: out.pushBack({6.f, "Wrist Gadget (screen tap off)"}); break;
         default: break;
     }
     return out;
@@ -6776,18 +7150,17 @@ void onWrapperSet(cvar_t* var)
     }
     if(var == &vr_menu_bullettime)
     {
-        // A stick: its press alone (the gadget's tap and button do nothing then, as Combat > Bullet Time's Trigger).
-        // The gadget: its tap and its button. A config's own combination: as it was.
+        // A stick: its press alone (the gadget's screen tap does nothing then, as Combat > Bullet Time's Trigger).
+        // The gadget: its screen tap. A config's own combination (the tap off): as it was.
         const int choice = static_cast<int>(var->value);
         Cvar_SetValueQuick(&vr_bullettime_enabled, choice == 3 ? 0.f : 1.f);
         if(choice != 3)
         {
             Cvar_SetValueQuick(&vr_bullettime_trigger, choice == 1 || choice == 2 ? static_cast<float>(choice) : 0.f);
         }
-        if(choice == 0 || choice >= 4)
+        if(choice == 0)
         {
-            Cvar_SetValueQuick(&vr_bullettime_tap, choice == 0 || choice == 4 ? 1.f : 0.f);
-            Cvar_SetValueQuick(&vr_bullettime_button, choice == 0 || choice == 5 ? 1.f : 0.f);
+            Cvar_SetValueQuick(&vr_bullettime_tap, 1.f);
         }
     }
     wrapperBusy = false;
@@ -6975,6 +7348,20 @@ za::Vector<Item> pageMain()
         slider("Fade on Scripted Teleports", vr_comfort_teleport_fade, 0.f, 2.f, 0.1f, "%.1f s")
             .help("When the game moves you somewhere else at once (a boss sending you to another arena), your view goes "
                   "black and comes back over this long. 0: no fade."),
+        cycle("Death View", vr_death_view, {{0.f, "Off"}, {1.f, "Third Person"}, {2.f, "Immersive"}})
+            .help("When you die (not gibbed) your body falls as a ragdoll, thrown by the blow that killed you. Off: no "
+                  "body, as in Quake. Third Person: your view stays where your eyes were, your body there to look at. "
+                  "Immersive: your view goes into your body's head and follows it as it falls (its place smoothed, its "
+                  "turns only sideways, never pitch or roll; the hands hidden). Back to normal when you respawn."),
+        toggle("Immersive Death: Turn With the Body", vr_death_view_turn)
+            .help("Immersive Death View: your view turns sideways as your body's head does, slowly (Turn Speed). Off: "
+                  "only its place follows the head; you turn yourself."),
+        slider("Immersive Death: Turn Speed", vr_death_view_turn_speed, 10.f, 180.f, 10.f, "%.0f deg/s")
+            .help("The fastest the Immersive Death View turns with your body's head."),
+        slider("Immersive Death: Smoothing", vr_death_view_smooth, 0.f, 0.5f, 0.05f, "%.2f s")
+            .help("How long the Immersive Death View takes to follow your body's head: more is gentler, less is closer."),
+        slider("Immersive Death: Fade", vr_death_view_fade, 0.f, 2.f, 0.1f, "%.1f s")
+            .help("The view fades in from black as it goes into your body's head, and as you respawn. 0: no fade."),
 
         header("Teleportation"),
         toggle("Teleport", vr_teleport_enabled)
@@ -7026,9 +7413,9 @@ za::Vector<Item> pageMain()
         header("Bullet Time"),
         cycle("Activation", vr_menu_bullettime, bulletTimeChoices())
             .help("What starts and stops bullet time (the world slowed while the gadget's TIME meter lasts). Wrist "
-                  "Gadget: tap its wrist hard with your other hand, or press its inner button. A thumbstick press: that "
-                  "press does only this (never its bound key), and the gadget's tap and button do nothing. More: "
-                  "Advanced VR Options > Combat > Bullet Time."),
+                  "Gadget: tap its screen hard with your other hand (or the butt of its gun). A thumbstick press: that "
+                  "press does only this (never its bound key), and the screen tap does nothing. More: Advanced VR "
+                  "Options > Combat > Bullet Time."),
 
         header("Body"),
         cycle("Body Type", vr_body_mode, {{3.f, "Full"}, {2.f, "Torso and Arms"}, {0.f, "Only Hands"}})
@@ -7218,11 +7605,16 @@ za::Vector<Item> pageCombat()
             .help("Grunts and enforcers shove you away when you stand too close: how close, how soon, how hard."),
         open("Knockdowns", pageIndex(pageKnockdowns))
             .help("Your shoves can knock monsters down as ragdolls, alive: the chances, how long they stay down, getting up."),
+        open("Holding Enemies", pageIndex(pageHoldingEnemies))
+            .help("Experimental: grip a living enemy with an empty hand to hold on to it, slow it and pull it a little."),
         open("Bullet Time", pageIndex(pageBulletTime))
             .help("The wrist gadget's button slows the world for as long as its meter lasts; Sandevistan; its look."),
         open("Burning", pageIndex(pageBurning))
             .help("What lit torches and lava nails set on fire: the damage (it never stacks), how long, the flames, "
                   "corpses and crates, setting things on fire by touch, nails through a torch's flame."),
+        open("Stealth AI", pageIndex(pageStealth))
+            .help("Enhanced AI (on/off: Quake's monsters at once). Monsters idle, alert or hostile: seeing you by the light "
+                  "on you, hearing noises, investigating, spreading the alarm; sneak attacks."),
     };
 }
 
@@ -7278,6 +7670,9 @@ za::Vector<Item> pageWeaponEffects()
                   "stays and the shell leaves as before. Looks only: the fire rate is the same."),
         slider("Auto Pump Time", vr_autopump_time, 0.15f, 0.45f, 0.01f, "%.2f s").extend(0.1f, 0.48f)
             .help("How long the stroke takes, back and home (the shotgun fires again after 0.5 s)."),
+        slider("Auto Pump Delay", vr_autopump_delay, 0.f, 0.3f, 0.01f, "%.2f s").extend(0.f, 0.38f)
+            .help("How long after the shot the stroke starts: the shot, a moment, then the cycle (0: at once). Cut short so "
+                  "that the stroke is home before the shotgun can fire again (0.5 s)."),
         slider("Auto Pump Travel", vr_autopump_travel, 0.5f, 3.2f, 0.1f, "%.1f units").extend(0.f, 3.2f)
             .help("How far back the fore-end goes, in the gun model's units (about 3.8 cm each, as drawn)."),
         slider("Auto Pump Sound", vr_autopump_sound, 0.f, 1.f, 0.1f, "%.1f").help("Volume of its two clacks (0: off)."),
@@ -11199,9 +11594,7 @@ float qvr::menu::contentRightBelow(float y)
 {
     if(m_state != m_vr)
     {
-        float right, bottom;
-        M_ContentExtent(&right, &bottom);
-        return y < bottom ? right : -1e9f;
+        return M_ContentRightBelow(y);
     }
     const auto build = pages[page].build;
     const Layout l = layout();

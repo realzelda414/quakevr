@@ -88,10 +88,13 @@ QVR_PROP_DEFAULT(3, Mass, "1.2")
 // since vr_props_version 56 (ROUND21.md, "Every prop in both hands": the other hand takes it to grip it again).
 QVR_PROP_DEFAULT(3, GripMode, "2")
 // The author's fit (NOTES.md vrfiringrange_2026-10-01_16-53-53, the thumb round it; vr_props_version 54): turned 10
-// degrees, 1 unit up, the fingers sunk 0.75 cm into it.
+// degrees, 1 unit up; and his of 2026-10-08 (vrfiringrange_2026-10-08_14-16-19; vr_props_version 68): 0.3 units back,
+// 1.1 right, the fingers sunk 0.2 cm into it (0.75 before).
 QVR_PROP_DEFAULT(3, GripRoll, "10")
+QVR_PROP_DEFAULT(3, GripX, "-0.3")
+QVR_PROP_DEFAULT(3, GripY, "-1.1")
 QVR_PROP_DEFAULT(3, GripZ, "1")
-QVR_PROP_DEFAULT(3, Overlap, "0.75")
+QVR_PROP_DEFAULT(3, Overlap, "0.2")
 QVR_PROP_DEFAULT(4, ID, "progs/mervup.mdl")
 QVR_PROP_DEFAULT(4, Mass, "1.2")
 // The multi-grenade held as the grenade is (round 21, "Multi-grenades from the pouch": one from the pouch with B/Y held,
@@ -365,4 +368,25 @@ QVR_PROP_DEFAULT(52, GripX, "-2.6")
 QVR_PROP_DEFAULT(52, GripY, "0.07")
 QVR_PROP_DEFAULT(52, GripZ, "-3.73")
 QVR_PROP_DEFAULT(52, Overlap, "0.4")
+// Immersive reloading's launcher rounds (QC vr_reload.qc, "Front-loaded launchers"; make_rounds.py: their own models at
+// Size 1, so missile.mdl, grenade.mdl and proxbomb.mdl keep their sizes in flight): the rocket held along the fist (Along
+// the Handle) by the nose half of its middle, its butt free below the little finger to go into the muzzle; the
+// grenades in the palm, as the hand grenades. In one hand. vr_props_version 66 gives these slots to configs saved before.
+QVR_PROP_DEFAULT(53, ID, "progs/vr_round_rocket.mdl")
+QVR_PROP_DEFAULT(53, Mass, "1.5")
+QVR_PROP_DEFAULT(53, TwoHands, "0")
+QVR_PROP_DEFAULT(53, GripMode, "3")
+QVR_PROP_DEFAULT(53, HandleFrom, "0")
+QVR_PROP_DEFAULT(53, HandleTo, "2")
+QVR_PROP_DEFAULT(54, ID, "progs/vr_round_grenade.mdl")
+QVR_PROP_DEFAULT(54, Mass, "0.5")
+QVR_PROP_DEFAULT(54, TwoHands, "0")
+QVR_PROP_DEFAULT(54, GripMode, "2")
+// The proximity grenade (the pouches' since 2026-10-08: Quake's progs/proxbomb.mdl again, at vr_grenade_scale; it was
+// make_rounds.py's vr_round_prox.mdl, whose slot this was): in the palm, as the grenades (slots 4 and 5), weighing what
+// they do. vr_props_version 67 gives it to configs saved before.
+QVR_PROP_DEFAULT(55, ID, "progs/proxbomb.mdl")
+QVR_PROP_DEFAULT(55, Mass, "1.2")
+QVR_PROP_DEFAULT(55, TwoHands, "0")
+QVR_PROP_DEFAULT(55, GripMode, "2")
 #endif

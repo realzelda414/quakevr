@@ -32,6 +32,9 @@
 #      magazine's box; a hit at its far end; a gun carried by the off hand, its magazine out and in again.
 #   9. The ammo button: front, behind, side at cone 50, behind at 180; 20 approaches from the front (95% pressed) and 20
 #      from behind (none).
+#  11. The night notes of 10-07/08: the super nailgun's well flush, the super shotgun's firing animation's speed, a held
+#      prop hitting its barrels and the nailgun's magazine, spent lava nail magazines smoking, spent magazines not
+#      pouched, spent enemy guns' smoke and crackle, the pouch's shells.
 # Prints PASS/FAIL per check; exits 1 on a failure.
 AGENT=$1; KIT=${KIT:-C:/OHWorkspace/qvr-kit}
 fail=0
@@ -132,7 +135,7 @@ check $(echo "$log" | grep -q "units further apart)" && echo "$log" | grep "^rel
 log=$(bash $KIT/run.sh $AGENT -Script "$MPRE;$GRIP;vr_mock_hand_to main lport 10;wait10;vr_mock_hand_to main lport;wait10;$REP;toggleconsole;quit" -Filter "$F2" 2>&1)
 check $(echo "$log" | grep -q "knocked out by a hit" && echo "$log" | grep "^reload: off hand" | tail -1 | grep -q "clip 0 mag 0 holds nothing | main hand weapon 0 clip 0 holds nothing" && echo 1 || echo 0) "a punch knocks the magazine out"
 log=$(bash $KIT/run.sh $AGENT -Script "${SG/vr_reload_debug 1/vr_debug_2h_grip 1};$GRIP;vr_mock_hand_to main heldspot 0;wait3;vr_mock_hand_to main heldspot 0;wait10;vr_dumpview;vr_mock_button main grip 0;-grabmain;wait10;$GRIP;vr_dumpview;toggleconsole;quit" -Filter "$F2" 2>&1)
-check $(echo "$log" | grep -q "already closed: no hold" && echo "$log" | grep "^off hand:" | sed -n 1p | grep -q "two-handed 0.00" && echo "$log" | grep "^off hand:" | sed -n 2p | grep -q "two-handed 0.70" && echo 1 || echo 0) "a fist moved onto the shotgun's grip takes no hold; closing there does"
+check $(echo "$log" | grep -q "already closed: no hold" && echo "$log" | grep "^off hand:" | sed -n 1p | grep -q "two-handed 0.00" && echo "$log" | grep "^off hand:" | sed -n 2p | grep -o "two-handed [0-9.]*" | awk '{exit !($2 >= 0.65 && $2 <= 0.75)}' && echo 1 || echo 0) "a fist moved onto the shotgun's grip takes no hold; closing there does (0.68-0.71 from run to run)"
 # 7. The super shotgun broken open (phase 2b and the author's notes on it; ROUND21.md): in the off hand, both barrels
 # fired (their shells stay in), the flick (+flickreloadleft) breaks it open (every shell out), fired open it only clicks,
 # a taped pair from the pouch at its breech loads both, the flick shuts it and it fires again; a pair at the shut gun is
@@ -319,4 +322,80 @@ check $(echo "$st" | awk '{print ($1 >= 6.9 && $1 <= 7.3 && $2 >= 30) ? 1 : 0}')
 log=$(bash $KIT/run.sh $AGENT -Script "${MPRE/impulse 156/impulse 161};give c 100;vr_reload_battery_sparks 0;vr_reload_battery_smoke_time 2;+offhandattack;wait400;-offhandattack;$BY;wait300;$REP;toggleconsole;quit" -Filter "^reload: (the cell|a spent|the spent)" 2>&1)
 st=$(echo "$log" | grep "the spent cell stopped smoking after" | sed 's/.*after \([0-9.]*\) s.*/\1/')
 check $(! echo "$log" | grep -q "contact sparks" && awk -v t="$st" 'BEGIN { print (t != "" && t >= 1.9 && t <= 2.3) ? 1 : 0 }') "Contact Sparks 0: none; Spent Cell Smoke 2: it smokes for 2 s ($st)"
+# 11. The author's night notes of 10-07/08 (ROUND21.md, "Reloading and spent guns: the night notes of 10-07/08").
+# The super nailgun's well flush on the flat band of its face (23-58-30), its collar out along the magazine (2026-10-08
+# 10-33-00: it went into the body and looked turned backwards): at most 1.2 units off the face (the nailgun's collar is
+# 1.1), inside its edges, seated into the body (its flange's back below the face).
+sw=$($PY Misc/quakevr/reload/ssg_checks.py snailwell)
+check $(echo "$sw" | awk '{ok = NF >= 16; for(i = 1; i <= NF; i += 8) { if($(i + 3) > 1.2 || $(i + 3) < 0.5 || $(i + 5) > 0 || $(i + 7) <= 0) ok = 0 } print ok ? 1 : 0}') "the super nailgun's well flush on its face, its collar out ($sw)"
+# The super shotgun's firing animation paced by vr_ssg_fire_anim_speed (23-54-46): B/Y pressed every other frame from the
+# shot, it opens as the animation ends: about 0.6 s after the shot at 1 (id's), 0.43 s at 1.4 (the default), 0.3 s at 2.
+POLL=$(for i in $(seq 60); do printf "vr_mock_button off secondary 1;wait1;vr_mock_button off secondary 0;wait1;"; done)
+ta=""
+for k in 1 1.4 2; do
+    t=$(bash $KIT/run.sh $AGENT -Script "$SSG;vr_ssg_fire_anim_speed $k;+offhandattack;wait2;-offhandattack;$POLL;toggleconsole;quit" -Filter "broken open by" 2>&1 | grep -o "[0-9.]* s after its last shot" | head -1 | cut -d' ' -f1)
+    ta="$ta ${t:-none}"
+done
+check $(echo "$ta" | awk '{print ($1 >= 0.55 && $1 <= 0.65 && $2 >= 0.39 && $2 <= 0.47 && $3 >= 0.27 && $3 <= 0.34) ? 1 : 0}') "Firing Animation Speed 1, 1.4, 2: it opens 0.6, 0.43, 0.3 s after the shot (s:$ta)"
+# A held prop hits the super shotgun's barrels with its surface (00-05-36): a head in the main hand (impulse 252,
+# vr_test_held_hand 1) brought down to 20 cm over the barrels breaks it open, up to 20 cm under them shuts it; the fist
+# alone stopping as far off does neither (its middle out of reach).
+PHIT() { echo "vr_mock_hand_to main held 0.85 $1;wait5;vr_mock_hand_to main held 0.85 $1;wait10;vr_mock_hand_to main held 0.85 $2;wait10;$REST;wait40"; }
+PROP="$GRIP;vr_test_held_hand 1;vr_test_held_pick 4;impulse 252;wait5"
+log=$(bash $KIT/run.sh $AGENT -Script "$SSG;$FIRE;$PROP;$(PHIT 45 20);$REP;$(PHIT -45 -20);$REP;toggleconsole;quit" -Filter "$F7|^test:" 2>&1)
+log2=$(bash $KIT/run.sh $AGENT -Script "$SSG;$FIRE;$(PHIT 45 20);$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
+check $(echo "$log" | grep -q "^test: progs/h_guard.mdl in the main hand" && echo "$log" | grep -q "broken open by a hit from above" && echo "$log" | grep -q "closed by a hit from below" && [ "$(opens "$log")" = 10 ] && [ "$(opens "$log2")" = 0 ] && echo 1 || echo 0) "a prop held in the other hand hits the barrels open and shut by its surface (prop $(opens "$log"), want 10; the fist as far off: $(opens "$log2"), want 0)"
+# The same for the nailgun's magazine (VR_Reload_HitFrame: the prop's shape as held, not its middle nor its box: the
+# author's note 10-42-18): the head brought fast from 30 units off the magazine's side to 4 off (the hand and the prop's
+# middle 3.5 off it, past Hit Reach 2; its shape 1.7 off) knocks it out; the fist stopping as far off doesn't; the head
+# stopping 6 off (its shape 3.5 off, its box 1.2: the box's near miss) doesn't (vr_reload_test 25 prints both).
+MHIT() { echo "vr_mock_hand_to main mag 0 30;wait5;vr_mock_hand_to main mag 0 30;wait10;vr_mock_hand_to main mag 0 $1;wait10"; }
+log=$(bash $KIT/run.sh $AGENT -Script "$MPRE;$PROP;$(MHIT 4);$REP;toggleconsole;quit" -Filter "^reload: (a mag|off hand)|^test:" 2>&1)
+log2=$(bash $KIT/run.sh $AGENT -Script "$MPRE;$GRIP;$(MHIT 4);$REP;toggleconsole;quit" -Filter "^reload: (a mag|off hand)" 2>&1)
+log3=$(bash $KIT/run.sh $AGENT -Script "$MPRE;$PROP;$(MHIT 6);vr_reload_test 25;impulse 125;wait3;toggleconsole;quit" -Filter "^reload: (a mag|off hand|the held)" 2>&1)
+check $(echo "$log" | grep -q "^test: progs/h_guard.mdl in the main hand" && echo "$log" | grep -q "knocked out by a hit" && echo "$log" | grep "^reload: off hand" | tail -1 | grep -q "clip 0 mag 0" && ! echo "$log2" | grep -q "knocked out by a hit" && echo "$log2" | grep "^reload: off hand" | tail -1 | grep -q "clip 24 mag 1" && echo 1 || echo 0) "a prop held in the other hand knocks the nailgun's magazine out by its surface; the fist as far off doesn't ($(echo "$log" | grep -o "knocked out by a hit[^)]*" | head -1))"
+check $(echo "$log3" | grep "the held" | awk '{print ($9 + 0 > 2 && $11 + 0 <= 2) ? 1 : 0}' | grep -q 1 && ! echo "$log3" | grep -q "knocked out by a hit" && echo "$log3" | grep "^reload: off hand" | tail -1 | grep -q "clip 24 mag 1" && echo 1 || echo 0) "its box within Hit Reach but its shape not (a near miss): the magazine stays in ($(echo "$log3" | grep -o "from the magazine: shape [0-9.]* box [0-9.]*"))"
+# Spent lava nail magazines smoke as the spent cells do (00-00-42): the super nailgun and the nailgun on lava nails, fired
+# dry (vr_reload_test 16), their magazine out: smoking for Spent Cell Smoke (2 s here); a plain nail magazine emptied
+# (vr_reload_test 5) doesn't.
+for g in 157 156; do
+    log=$(bash $KIT/run.sh $AGENT -Script "${MPRE/impulse 156/impulse $g};vr_reload_battery_smoke_time 2;vr_reload_test 16;impulse 125;wait3;$BY;wait300;toggleconsole;quit" -Filter "^reload: (a spent|the spent)" 2>&1)
+    st=$(echo "$log" | grep "the spent lava nail magazine stopped smoking after" | sed 's/.*after \([0-9.]*\) s: \([0-9]*\) wisps.*/\1 \2/')
+    check $(echo "$log" | grep -q "a spent lava nail magazine smoking for 2 s" && echo "$st" | awk '{print ($1 >= 1.9 && $1 <= 2.3 && $2 >= 8) ? 1 : 0}') "impulse $g's gun on lava nails, its spent magazine out: it smokes for 2 s (after, wisps: ${st:-none})"
+done
+log=$(bash $KIT/run.sh $AGENT -Script "${MPRE/impulse 156/impulse 157};vr_reload_test 5;impulse 125;wait3;$BY;wait60;toggleconsole;quit" -Filter "^reload: (a spent|a magazine of)" 2>&1)
+check $(echo "$log" | grep -q "a magazine of 0 out of the gun" && ! echo "$log" | grep -q "a spent" && echo 1 || echo 0) "a plain nail magazine taken out empty doesn't smoke"
+# A spent magazine doesn't go back into the pouch (00-01-10): the nailgun's emptied (vr_reload_test 5), pulled off into
+# the hand and let go of at the pouch, it falls: the hand empty, the reserve as it was.
+SNAP="$WELL;$GRIP;vr_mock_hand_to main lport;wait3;vr_mock_hand main 0.45 0.85 -0.1 0 0 70;wait1;vr_mock_hand main 0.5 0.8 -0.05 0 0 90;wait10"
+log=$(bash $KIT/run.sh $AGENT -Script "$MPRE;vr_reload_bump_speed 100;vr_reload_test 5;impulse 125;wait3;$SNAP;$REP;$POUCH;$LETGO;wait30;$REP;toggleconsole;quit" -Filter "^reload: (a mag|off hand|mode)" 2>&1)
+holds=$(echo "$log" | grep "^reload: off hand")
+check $(h 2 | grep -q "holds a round of 0" && echo "$log" | grep -q "a magazine of 0 is spent: not back in the pouch, it falls (hand 1)" && h 3 | grep -q "main hand weapon 0 clip 0 holds nothing" && ! echo "$log" | grep -q "back in the pouch (hand" && [ "$(echo "$log" | grep "^reload: mode" | sed -n 2p | grep -o "nails [0-9]*")" = "$(echo "$log" | grep "^reload: mode" | sed -n 3p | grep -o "nails [0-9]*")" ] && echo 1 || echo 0) "a spent magazine let go of at the pouch falls: not put back"
+# A spent enemy gun's cues (grenedin 00-07-22): the enforcer's rifle in the off hand, its last shot fired (impulse 214
+# leaves one): it crackles over the gun in the hand (vr_shock_info: the gun's arcs drawn), dropped it crackles on as it
+# lies (a body's lasting shock on it), and it smokes for vr_enemygun_spent_smoke (5 s); the grunt's burst rifle in the
+# main hand the same; Spent Smoke 2 and Spent Crackle 1: 2 s.
+DROPOFF="vr_weapon_grip_mode 0;+graboff;vr_mock_button off grip 1;wait5;vr_mock_button off grip 0;-graboff"
+EG="map e1m1;wait60;developer 1;vr_debug_shots 1;vr_weapon_grip_mode 1"
+HANDS="vr_mock_hand off -0.15 1.25 -0.40 50 0 0;vr_mock_hand main 0.25 1.1 -0.3 50 0 0;wait10"
+FE="^spent gun|^bodyshock: (gun|entity)"
+log=$(bash $KIT/run.sh $AGENT -Script "$EG;impulse 186;wait3;$HANDS;impulse 214;wait3;+offhandattack;wait3;-offhandattack;wait30;vr_shock_info;wait2;$DROPOFF;wait60;vr_shock_info;wait2;wait400;toggleconsole;quit" -Filter "$FE" 2>&1)
+st=$(echo "$log" | grep -o "cues over after [0-9.]* s: [0-9]* wisps" | awk '{print $4, $6}')
+check $(echo "$log" | grep -q "spent gun: enforcer's rifle (hand 0) empty: smoking 5 s, crackling 2.5 s" && echo "$log" | grep -q "bodyshock: gun in hand 0 arcs=[1-9]" && echo "$log" | grep -q "spent gun: lying about" && echo "$log" | grep -q "bodyshock: entity=[0-9]* kind=4 .* arcs=[1-9]" && echo "$st" | awk '{print ($1 >= 4.9 && $1 <= 5.3 && $2 >= 15) ? 1 : 0}') "the enforcer's rifle spent: it crackles in the hand and dropped, and smokes 5 s (after, wisps: ${st:-none})"
+log=$(bash $KIT/run.sh $AGENT -Script "$EG;vr_enemygun_spent_smoke 2;vr_enemygun_spent_crackle 1;impulse 165;wait3;$HANDS;impulse 214;wait3;+attack;wait3;-attack;wait20;vr_shock_info;wait300;toggleconsole;quit" -Filter "$FE" 2>&1)
+st=$(echo "$log" | grep -o "cues over after [0-9.]* s" | awk '{print $4}')
+check $(echo "$log" | grep -q "spent gun: grunt's burst rifle (hand 1) empty: smoking 2 s, crackling 1 s" && echo "$log" | grep -q "bodyshock: gun in hand 1 arcs=[1-9]" && awk -v t="$st" 'BEGIN { print (t != "" && t >= 1.9 && t <= 2.3) ? 1 : 0 }') "the grunt's burst rifle spent in the main hand: crackling; Spent Smoke 2, Spent Crackle 1: over after 2 s ($st)"
+# The ammo pouch's shells (the author's typed note: overly big, not symmetric): a held shell's width (0.66-0.8 units
+# across the middle one's rim; they were 1.07) and the row its own mirror image (they leaned and stood out at random).
+ps=$($PY Misc/quakevr/reload/ssg_checks.py pouchshells)
+check $(echo "$ps" | awk '{print ($3 >= 0.6 && $3 <= 0.8 && $5 <= 0.02) ? 1 : 0}') "the pouch's shells a held shell's size, the row symmetric ($ps)"
+# 12. Reloading on the move (the author's note, 2026-10-08 14:00: walking forward, the load point was a hand's reach ahead
+# of the receiver as drawn): a shell held 12 units off the drawn port is 12 units off the server's port at every frame,
+# standing, running forward, strafing and turning (it was tested where the last frame left it: 12.8 running).
+for MV in "+forward" "+moveright" "+back;+moveleft;+left"; do
+  log=$(bash $KIT/run.sh $AGENT -Script "$PRE;$POUCH;$GRIP;vr_mock_hand_to main lport 12;wait5;vr_mock_hand_to main lport 12;wait10;vr_reload_debug 2;wait5;$MV;wait40;vr_reload_debug 1;toggleconsole;quit" -Filter "held round" 2>&1)
+  ds=$(echo "$log" | grep -o "held round [0-9.]* units" | awk '{print $3}' | sort -u | tr '
+' ' ')
+  check $([ "$(echo "$log" | grep -c "held round")" -ge 40 ] && [ "$ds" = "12.0 " ] && echo 1 || echo 0) "on the move ($MV): the held shell 12 units off the port every frame ($ds)"
+done
 exit $fail

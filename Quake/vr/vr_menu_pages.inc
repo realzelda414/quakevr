@@ -17,6 +17,7 @@
         slider("Menu Distance", "vr_menu_distance", 24.f, 256.f, 1.f, "%.0f").extend(8.f, 600.f).help("Distance of the menu from the anchor point."),
         toggle("Status Box", "vr_menu_status").help("A small box in the menus' top right corner: VR, mock VR or flat screen, the runtime (SteamVR, VDXR), the resolution rendered, the target rate, fps, the CPU's and GPU's milliseconds a frame (and their share of the frame's budget), RAM and VRAM."),
         toggle("Version Label", "vr_menu_version").help("The game's name, version and author, small, in the menus' bottom right corner (where the page leaves room for it). A build not made for a release says \"dev\" after the version."),
+        toggle("Check for Updates", "vr_update_check").help("At start-up (at most once an hour) the game asks the release page whether a newer Quake VR is out, and says so above the version label: point at it and press to open its page in your desktop's browser. Only the release list is read; nothing about you or your game is sent. Off: never asked, no notice."),
         toggle("Corner Buttons on a Flat Screen", "vr_menu_flat_shortcuts").help("With VR off: the buttons at the menus' top left (Back to Game, Search, Console, Advanced VR, Levels, Map Library) on the desktop menus too, for the mouse."),
         toggle("Mods on the Main Menu", "vr_menu_main_mods").help("The main menu's Mods row (Ironwail's mods list). Off: only in Options > Mods."),
         slider("Fine Step", "vr_menu_fine_step", 0.01f, 0.5f, 0.01f, "%.2fx").help("A slider's step while you hold a grip (Shift on a flat screen), over its own: 0.1, a tenth, for placing things precisely."),
@@ -70,11 +71,23 @@
     };
 }
 
+// Explosion chunks in multiplayer (vr_explosion_debris_mp_max), its leftmost step -1: as many as in single player.
+[[nodiscard]] Item explosionDebrisMultiplayerSlider()
+{
+    Item i = slider("Most in Multiplayer", "vr_explosion_debris_mp_max", -1.f, 96.f, 1.f, "%.0f")
+                 .extend(-1.f, 256.f)
+                 .help("The most at once in a multiplayer game (yours as the host). They are the server's: each one in sight "
+                       "costs every player's network packets (about 26 bytes a frame while it lives). Single Player's: as "
+                       "many as Maximum Active Chunks. 0: none.");
+    i.negativeLabel = "Single Player's";
+    return i;
+}
+
 // A separate tuning page for the physical blast fragments and their trails/glows.
 [[nodiscard]] za::Vector<Item> pageExplosionDebris()
 {
     return {
-        toggle("Physical Explosion Debris", "vr_explosion_debris").help("Small incandescent model objects from every ordinary, coloured or tarbaby explosion. They collide with the level and moving doors/platforms, pass through characters, and never cause damage."),
+        toggle("Physical Explosion Debris", "vr_explosion_debris").help("Small incandescent chunks from every ordinary, coloured or tarbaby explosion: physics objects of the game (the host's) that bounce off the level, doors, lifts, monsters and props, ride lifts, are thrown by later blasts, pass through your hands, and never cause damage."),
         slider("Chunks per Explosion", "vr_explosion_debris_count", 0.f, 32.f, 1.f, "%.0f").extend(0.f, 64.f),
         slider("Minimum Speed", "vr_explosion_debris_speed_min", 0.f, 20.f, 0.25f, "%.2f m/s").extend(0.f, 40.f),
         slider("Maximum Speed", "vr_explosion_debris_speed_max", 0.f, 20.f, 0.25f, "%.2f m/s").extend(0.f, 40.f).help("Speed chosen between Minimum and Maximum; swapped endpoints are accepted."),
@@ -85,6 +98,7 @@
         slider("Maximum Lifetime", "vr_explosion_debris_life_max", 0.1f, 10.f, 0.1f, "%.1f s").extend(0.1f, 30.f).help("Lifetime chosen independently for each chunk; fades out at the end, even when resting."),
         slider("Bounciness", "vr_explosion_debris_bounce", 0.f, 1.f, 0.05f, "%.2f").help("Share of speed retained away from the surface. 0: no rebound, 1: full rebound. Surface friction also slows sliding."),
         slider("Maximum Active Chunks", "vr_explosion_debris_max", 0.f, 128.f, 1.f, "%.0f").extend(0.f, 256.f).help("Oldest chunks go first when a blast needs room. Reducing this or disabling the effect removes the excess immediately."),
+        explosionDebrisMultiplayerSlider(),
         slider("Fire and Smoke Trail", "vr_explosion_debris_trail", 0.f, 3.f, 0.1f, "%.1fx").help("Trail density (0: off). Needs Quake VR Particles. Physical chunks and their lights work with particles off."),
         slider("Maximum Glowing Lights", "vr_explosion_debris_lights", 0.f, 16.f, 1.f, "%.0f").help("Only the nearest chunks emit dynamic light, to keep many blasts inexpensive. Their model skins remain incandescent. These lights do not cast shadows."),
         slider("Glow Light Radius", "vr_explosion_debris_light_radius", 0.f, 120.f, 4.f, "%.0f units").extend(0.f, 200.f),
@@ -195,7 +209,7 @@ void resetSwimming()
         "vr_swim_stick_speed", "vr_swim_stroke", "vr_swim_stroke_min", "vr_swim_palm", "vr_swim_stroke_assist",
         "vr_swim_max_speed", "vr_swim_look", "vr_swim_recovery", "vr_swim_glide", "vr_swim_power_threshold",
         "vr_swim_power_knee", "vr_swim_power_whole", "vr_swim_intent_memory", "vr_swim_reverse_damp", "vr_swim_reverse_speed",
-        "vr_swim_flat_exp", "vr_swim_speed_exp", "vr_swim_palm_dir", "vr_swim_against_palm", "vr_swim_stroke_pitch", "vr_air_supply"};
+        "vr_swim_flat_exp", "vr_swim_speed_exp", "vr_swim_palm_dir", "vr_swim_against_palm", "vr_swim_stroke_pitch", "vr_air_supply", "vr_water_jump"};
     for(const char* name : names)
     {
         if(cvar_t* var = Cvar_FindVar(name))
@@ -214,6 +228,8 @@ void resetSwimming()
         slider("Stick Swimming", "vr_swim_stick_speed", 0.f, 1.f, 0.05f, "%.2f").help("Under water or off the bottom: swim with your hands."),
         slider("Air Supply", "vr_air_supply", 1.f, 4.f, 0.25f, "%.2fx")
             .help("How long you can stay under water before you start drowning: times Quake's 12 seconds (1.5x: 18 s). Once drowning, the damage comes as ever. The Biosuit's air is unchanged."),
+        toggle("Jump Out of Water", "vr_water_jump")
+            .help("On (Quake's): swimming against an edge with room above it lifts you out. Off: you climb out with your hands, grabbing the edge (needs Climbing on; with Climbing off, Quake's jump out stays)."),
         header("Strokes"),
         slider("Stroke Strength", "vr_swim_stroke", 0.f, 30.f, 1.f, "%.0f").extend().help("How far a stroke of your hand moves you."),
         slider("Speed Curve", "vr_swim_speed_exp", 1.f, 3.f, 0.25f, "%.2f").extend()
@@ -448,6 +464,8 @@ void resetHandMoves()
         slider("Pommel Strike Wait", "vr_melee_pommel_wait", 0.f, 0.2f, 0.01f, "%.2f s").extend().help("How long the touch of a pommel, a handle's end or a gun's butt waits for the blade or head to reach the same thing, so a cut from close by counts as a cut. Only pommel and butt strikes wait: punches and blades land at once. Lower: pommel strikes land sooner, but close cuts count as pommel strikes more often."),
         slider("Gun Butt Travel", "vr_melee_butt_run", 0.2f, 0.8f, 0.05f, "%.2f m").extend(0.f, 1.5f).help("How far a gun must be carried at something within 0.3 s for its butt to strike: a gun wiggled in place flings its butt fast without going anywhere. 0.2: as any blow."),
         slider("Punch Damage Mult.", "vr_melee_punch_mult", 1.f, 3.f, 0.05f, "%.2f").extend().help("Damage of every punch: straight, hook, uppercut or overhead alike."),
+        toggle("Slaps", "vr_melee_slap").help("Swing an open hand across into an enemy to slap it: weaker than a punch, it never pops a head, cuts a limb or draws blood. Pushing an open palm out ahead is still a shove (one hand or both). Off: an open hand never strikes."),
+        slider("Slap Damage Mult.", "vr_melee_slap_mult", 0.f, 1.f, 0.05f, "x%.2f").extend(0.f, 3.f).help("A slap's damage, times a punch's."),
         slider("Damage Multiplier", "vr_melee_dmg_multiplier", 0.25f, 15.f, 0.25f, "%.1f").extend().help("Damage multiplier for melee attacks."),
         slider("Range Multiplier", "vr_melee_range_multiplier", 0.25f, 15.f, 0.25f, "%.1f").extend().help("Range multiplier for melee attacks."),
         slider("Quad: Extra Melee Damage", "vr_quad_melee_damage", 1.f, 4.f, 0.05f, "x%.2f").extend().help("With Quad Damage, melee does this much more on top of the x4 every weapon gets. 1: like any weapon (x4 in all); the old Quake VR had 2.75 (x11 in all)."),
@@ -458,7 +476,7 @@ void resetHandMoves()
             .help("Each weapon's base damage: the fist, the axe, the crowbar, Mjolnir, the swords..."),
         header("Swing Through Enemies"),
         toggle("Swing Through Enemies", "vr_melee_phase").help("While your hand swings fast, your fist and the weapon in it pass through enemies instead of being drawn stopped at their bodies (Hands Stop at Models). Walls and things lying about still stop them. The blow is tested where your real hand goes either way: this shows the swing where it is tested. After the swing the hand is eased back out of the enemy. Off: stopped at enemies however fast (as before)."),
-        slider("Swing Through Speed", "vr_melee_phase_speed", 1.f, 6.f, 0.25f, "%.2f m/s").extend(0.25f, 10.f).help("How fast the hand must move to pass through. 2.25: a stab's least speed at Swing Speed 3 (a punch 3, a weapon's swing 3.75). Lower: slower pushes pass through too; higher: only hard blows."),
+        slider("Swing Through Speed", "vr_melee_phase_speed", 1.f, 6.f, 0.25f, "%.2f m/s").extend(0.25f, 10.f).help("How fast the hand must move to pass through. 4 (the default): a hard blow's speed; 2.25: a stab's least speed at Swing Speed 3 (a punch 3, a weapon's swing 3.75). Lower: slower pushes pass through too; higher: only hard blows."),
         slider("Swing Through Follow-Through", "vr_melee_phase_time", 0.f, 0.5f, 0.01f, "%.2f s").extend(0.f, 2.f).help("How long the hand still passes through after it slowed down, so a blow's end isn't stopped inside the enemy."),
         toggle("Swing Through: Guns and Props", "vr_melee_phase_hold").help("Also a gun or a prop held in one hand, swung as a club. Off: only fists and melee weapons (the axe, Mjolnir, the swords, the crowbar, the chainsaw)."),
         header("Headbutt"),
@@ -643,6 +661,9 @@ void resetHandMoves()
                   "as before."),
         slider("Open Angle", "vr_reload_ssg_open_angle", 0.f, 90.f, 1.f, "%.0f deg")
             .help("How far its barrels drop about the hinge when it is open (looks; its load point goes with them)."),
+        slider("Firing Animation Speed", "vr_ssg_fire_anim_speed", 0.5f, 3.f, 0.1f, "%.1fx").extend(0.25f, 5.f)
+            .help("How fast its firing animation plays (1: id's, 0.6 s). It breaks open only once the animation is over: "
+                  "faster, it opens sooner after a shot."),
         header("Open by"),
         toggle("Open by Flick", "vr_reload_ssg_open_flick").help("A flick of the wrist (the muzzle snapped up) breaks it open."),
         slider("Flick Open Speed", "vr_reload_ssg_flick_open_speed", 200.f, 1500.f, 25.f, "%.0f deg/s")
@@ -904,7 +925,8 @@ void resetHandMoves()
         slider("Contact Sparks", "vr_reload_battery_sparks", 0.f, 40.f, 1.f, "%.0f").extend(0.f, 200.f)
             .help("Sparks a cell throws as it makes or breaks contact: seated in the gun, or taken out (0: none)."),
         slider("Spent Cell Smoke", "vr_reload_battery_smoke_time", 0.f, 20.f, 0.5f, "%.1f s").extend(0.f, 120.f)
-            .help("Seconds a spent cell (taken out empty) smokes from its top, in the hand or lying about (0: never)."),
+            .help("Seconds a spent cell (taken out empty) smokes from its top, in the hand or lying about; a spent "
+                  "magazine of lava nails too (0: never)."),
         slider("Smoke Opacity", "vr_reload_battery_smoke_alpha", 0.f, 1.f, 0.05f, "%.2f")
             .help("How thick each wisp of a spent cell's smoke is as it leaves it."),
         open("Cell Pose in the Hand: Held Object Offsets", pageIndex(pageHeldObjectOffsets))
@@ -967,6 +989,83 @@ void resetHandMoves()
     };
 }
 
+// Weapons > Reloading > Launchers: the grenade, proximity and rocket launchers loaded at the muzzle (QC vr_reload.qc,
+// "Front-loaded launchers"), each muzzle's load point.
+[[nodiscard]] za::Vector<Item> pageReloadLaunchers()
+{
+    return {
+        toggle("Load at the Muzzle", "vr_reload_front")
+            .help("Immersive: the grenade, proximity and rocket launchers take a round at a time from the ammo pouch (a "
+                  "grenade, a proximity grenade, a rocket; in their other ammo mode the multi-grenade or multi-rocket), "
+                  "put butt first into the muzzle, or thrown in, or the launcher brought to one lying about. Off: they "
+                  "reload at the hip holsters."),
+        slider("Round Angle", "vr_reload_front_angle", 5.f, 80.f, 5.f, "%.0f deg")
+            .help("How far off the barrel a rocket or grenade may lie and still go in, butt first (its nose out of the "
+                  "muzzle). The wrong way round never loads: a dull tap. A proximity grenade goes in any way round."),
+        open("Round Pose: Held Object Offsets", pageIndex(pageHeldObjectOffsets))
+            .help("How a rocket or grenade sits in the hand: take one from the pouch, then tune it there (its Grip)."),
+        slider("Grenade Size", "vr_grenade_scale", 0.5f, 1.f, 0.01f, "%.2f").extend(0.25f, 2.f)
+            .help("The grenades' size (Quake's grenade, the multi-grenade): the same in the hand, in the pouches, going "
+                  "into a launcher and in flight, their hit boxes with them. 1: Quake's size."),
+        slider("Proximity Mine Size", "vr_prox_scale", 0.3f, 1.f, 0.01f, "%.2f").extend(0.2f, 2.f)
+            .help("The proximity grenade's own size, the same everywhere (in the hand, the pouches, its launcher, in flight "
+                  "and stuck), its hit boxes with it. 1: Quake's size; the other grenades' 0.78."),
+        slider("Rocket Size in Flight", "vr_rocket_scale", 0.5f, 1.f, 0.01f, "%.2f").extend(0.25f, 2.f)
+            .help("The rocket launcher's rocket in flight, nearer the size of the ammo pouch's rocket. 1: Quake's size."),
+        toggle("Show Load Points", "vr_reload_show_ports")
+            .help("Draws each held gun's load point (yellow) and its radius (green), to tune the offsets live."),
+        header("Grenade Launcher"),
+        slider("Muzzle X", "vr_reload_port_gl_x", -10.f, 10.f, 0.1f, "%.1f").extend()
+            .help("Moves the grenade launcher's load point forward (the gun's model units; negative: back into the barrel). "
+                  "The multi-grenade launcher's too."),
+        slider("Muzzle Y", "vr_reload_port_gl_y", -10.f, 10.f, 0.1f, "%.1f").extend().help("Left (negative: right)."),
+        slider("Muzzle Z", "vr_reload_port_gl_z", -10.f, 10.f, 0.1f, "%.1f").extend().help("Up (negative: down)."),
+        slider("Muzzle Radius", "vr_reload_port_gl_radius", 0.f, 10.f, 0.25f, "%.2f units").extend(0.f, 40.f)
+            .help("How near the muzzle's load point a grenade's butt must come to go in."),
+        header("Proximity Launcher"),
+        slider("Muzzle X", "vr_reload_port_prox_x", -10.f, 10.f, 0.1f, "%.1f").extend()
+            .help("Moves the proximity launcher's load point forward (the gun's model units; negative: back)."),
+        slider("Muzzle Y", "vr_reload_port_prox_y", -10.f, 10.f, 0.1f, "%.1f").extend().help("Left (negative: right)."),
+        slider("Muzzle Z", "vr_reload_port_prox_z", -10.f, 10.f, 0.1f, "%.1f").extend().help("Up (negative: down)."),
+        slider("Muzzle Radius", "vr_reload_port_prox_radius", 0.f, 10.f, 0.25f, "%.2f units").extend(0.f, 40.f)
+            .help("How near the muzzle's load point a proximity grenade's middle must come to go in."),
+        header("Rocket Launcher"),
+        slider("Muzzle X", "vr_reload_port_rl_x", -10.f, 10.f, 0.1f, "%.1f").extend()
+            .help("Moves the rocket launcher's load point forward (the gun's model units; negative: back). The "
+                  "multi-rocket launcher's too."),
+        slider("Muzzle Y", "vr_reload_port_rl_y", -10.f, 10.f, 0.1f, "%.1f").extend().help("Left (negative: right)."),
+        slider("Muzzle Z", "vr_reload_port_rl_z", -10.f, 10.f, 0.1f, "%.1f").extend().help("Up (negative: down)."),
+        slider("Muzzle Radius", "vr_reload_port_rl_radius", 0.f, 10.f, 0.25f, "%.2f units").extend(0.f, 40.f)
+            .help("How near the muzzle's load point a rocket's butt must come to go in."),
+    };
+}
+
+// Weapons > Reloading > Cord Points: where the cell cords leave their weapons (vr_cellcord.cpp).
+[[nodiscard]] za::Vector<Item> pageReloadCellCords()
+{
+    return {
+        command("Cell Cord Info", "vr_cellcord_info")
+            .help("vr_cellcord_info: in the console, each cord's weapon, its ends (the weapon's, the cell's), loose or "
+                  "plugged in, its length and rings."),
+        header("Laser Cannon"),
+        slider("Forward", "vr_cellcord_laser_x", -40.f, 40.f, 0.5f, "%.1f").extend()
+            .help("Moves where the cord leaves the laser cannon forward (the gun's model units; negative: back). 0: the "
+                  "middle of its lowest points."),
+        slider("Left", "vr_cellcord_laser_y", -20.f, 20.f, 0.5f, "%.1f").extend(),
+        slider("Up", "vr_cellcord_laser_z", -20.f, 20.f, 0.5f, "%.1f").extend(),
+        header("Mjolnir"),
+        slider("Forward", "vr_cellcord_hammer_x", -40.f, 40.f, 0.5f, "%.1f").extend()
+            .help("Moves where the cord leaves Mjolnir (0: the end of its handle)."),
+        slider("Left", "vr_cellcord_hammer_y", -20.f, 20.f, 0.5f, "%.1f").extend(),
+        slider("Up", "vr_cellcord_hammer_z", -20.f, 20.f, 0.5f, "%.1f").extend(),
+        header("Super Axe"),
+        slider("Forward", "vr_cellcord_superaxe_x", -40.f, 40.f, 0.5f, "%.1f").extend()
+            .help("Moves where the cord leaves the Super Axe (0: the end of its handle)."),
+        slider("Left", "vr_cellcord_superaxe_y", -20.f, 20.f, 0.5f, "%.1f").extend(),
+        slider("Up", "vr_cellcord_superaxe_z", -20.f, 20.f, 0.5f, "%.1f").extend(),
+    };
+}
+
 // Weapons > Reloading (General): the mode, a page per gun, the ammo pouch, what is the same for every gun
 // (docs/vr-port/RELOAD_PLAN.md; QC vr_reload.qc).
 [[nodiscard]] za::Vector<Item> pageReloading()
@@ -977,14 +1076,27 @@ void resetHandMoves()
                   "reloads. Immersive: guns are loaded by hand from the ammo pouch on the front of your belt (it gives "
                   "what the gun in your other hand takes): the shotgun a shell at a time into the port under it; the "
                   "nailgun, the super nailgun and the thunderbolt a magazine into its well (out by B/Y, a hard pull, or "
-                  "bumped out by the next); the other guns reload at the hip holsters for now. Needs Weapon Mode "
-                  "Immersive."),
+                  "bumped out by the next); the grenade, proximity and rocket launchers a round at a time butt first into "
+                  "the muzzle; the other guns reload at the hip holsters for now. Needs Weapon Mode Immersive."),
         header("Weapons"),
         open("Shotgun", pageIndex(pageReloadShotgun)).help("Its shells (pairs, their pose) and its loading port."),
         open("Super Shotgun", pageIndex(pageReloadSuperShotgun)).help("Broken open: each way to open and close it, their thresholds; its breech."),
         open("Nailgun", pageIndex(pageReloadNailgun)).help("Its well, its magazine's top, its receiver, the hand holding the magazine, pulling it out."),
         open("Super Nailgun", pageIndex(pageReloadSuperNailgun)).help("Its well, its magazine's top, its receiver, the hand holding the magazine, pulling it out."),
         open("Thunderbolt", pageIndex(pageReloadThunderbolt)).help("Its well, its cell's top, its receiver, the hand holding the cell, pulling it out."),
+        open("Launchers", pageIndex(pageReloadLaunchers)).help("The grenade, proximity and rocket launchers loaded at the muzzle: on or off, the round's angle, each muzzle's load point."),
+        header("Cell Cords"),
+        toggle("Laser Cannon Cord", "vr_cellcord_laser")
+            .help("The laser cannon held, a coiled cord (the flashlight's Coiled) from its bottom into a cell in the ammo "
+                  "pouch, as if it drew on the pouch's cells (the pouch gives and shows cells while it is held). No cells "
+                  "left: the cord comes off and hangs loose off the gun; pick up cells and it plugs back in. A laser "
+                  "cannon in each hand: two cords. Needs Reloading Immersive (the pouch)."),
+        toggle("Mjolnir Cord", "vr_cellcord_hammer")
+            .help("The same cord on Mjolnir (Hipnotic's hammer), from the end of its handle: it draws cells too."),
+        toggle("Super Axe Cord", "vr_cellcord_superaxe")
+            .help("The same cord on the Super Axe (MG3), from the end of its handle: it draws cells too."),
+        open("Cord Points", pageIndex(pageReloadCellCords))
+            .help("Where each cord leaves its weapon (off its lowest point), to tune."),
         header("All Guns"),
         slider("Shell Slide In", "vr_reload_insert_time", 0.f, 0.5f, 0.01f, "%.2f s")
             .help("A shell (the super shotgun's pair) let go of at a gun's load point is drawn sliding into it for this "
@@ -1160,7 +1272,8 @@ void resetHandMoves()
             .help("Room for all shadows at once: smaller fits fewer or coarser ones (64 MB at 4096)."),
         slider("Shadow Bias", "vr_shadow_bias", 0.f, 4.f, 0.25f, "%.2f").extend()
             .help("Higher: fewer speckles on lit surfaces; lower: shadows start closer to what casts them."),
-        toggle("Shadow Statistics", "vr_shadow_stats").help("Print what is shadowed and its GPU time, once a second, to the console."),
+        cycle("Shadow Statistics", "vr_shadow_stats", {{0.f, "Off"}, {1.f, "Each Second"}, {2.f, "Each Frame, Per Light"}})
+            .help("Print what is shadowed and its GPU time, once a second, to the console. Each frame: also every shadowed light and its shadow's strength (+ chosen, - fading out), to check shadows fade rather than pop."),
         header("Ambient Occlusion"),
         slider("Contact Shadows", "vr_ao_dynamic", 0.f, 2.f, 0.1f, "%.1f").extend()
             .help("Monsters, items, gibs and your body darken the floor and walls close to them, and each other: soft shadows where things touch (0 off)."),
@@ -1537,11 +1650,19 @@ void retroAllUncheckCategories()
         toggle("Slipgates", "vr_slipgates").help("Gates show where they lead in VR, flat screen and the spectator camera. Movement, shots and dynamic light go through them. Off: Quake's teleporters and starry surfaces. Takes effect at once, no map reload."),
         slider("Slipgate Views", "vr_portals", 0.f, 1.f, 0.1f, "%.1f").extend().help("Slipgates show where they lead, like Portal's portals: the place they take you to, live, through their shimmer (the scene is drawn again for the visible gates). 0: Quake's plain shimmer."),
         toggle("Seamless Slipgates", "vr_portals_walk").help("With Slipgate Views on, you walk through slipgates into the place you saw, keeping your speed and the way you face (no flash, no pause), and rockets, grenades, nails, thrown props and gunfire go through them. Off: Quake's teleport."),
+        toggle("Monsters Walk Through", "vr_portals_monsters").help("With Seamless Slipgates on, monsters walk through a slipgate that comes out of another gate's face as you do, coming out of that face. Off (and at other gates, or for a monster too big for the opening): Quake's teleport, which puts them at the destination marker, a step out."),
         toggle("Enemies See and Shoot Through", "vr_portals_ai").help("Ranged enemies spot players through an active aperture and aim through it. The gate and both rooms must be clear; closing it cancels delayed shots. One gate per sight line. Melee and navigation stay local."),
-        slider("Visible Gates", "vr_portals_maxviews", 1.f, 8.f, 1.f, "%.0f").help("Maximum destination views drawn per camera (default 4). Each visible gate renders another scene; lower this for VR performance. Gates inside a destination view do not recurse."),
+        toggle("Exits On Paired Gates", "vr_slipgate_pair_exits").help("A slipgate whose destination stands in front of another gate of its size (a two-way pair) brings you, props and the view out of that gate's face, so you are halfway through both as you cross. Off: out at the destination marker, which can stand a step out from the gate."),
+        toggle("Your Head In Gates", "vr_slipgate_self_head").help("Seeing yourself through a slipgate (the loop room's gates show your back), your body has its head. Your own eyes never draw it. Off: headless there too."),
+        slider("Visible Gates", "vr_portals_maxviews", 1.f, 8.f, 1.f, "%.0f").help("Maximum destination views drawn per camera (default 4). Each visible gate renders another scene; lower this for VR performance."),
+        slider("Gates Within Gates", "vr_portals_recursion", 0.f, 3.f, 1.f, "%.0f").help("A slipgate seen through a slipgate shows where it leads too, this many gates deep (the loop room's gates: you, again and again). Each costs another scene, drawn smaller. 0: gates seen through a gate are left out."),
+        slider("Gates In A Gate's View", "vr_portals_recursion_views", 1.f, 8.f, 1.f, "%.0f").help("How many of the gates seen through a gate show where they lead (the nearest and largest). Deeper, only the best one does."),
+        slider("Most Gates Within Gates", "vr_portals_recursion_max", 0.f, 16.f, 1.f, "%.0f").help("At most this many gates seen through gates show where they lead, for each eye: the gate you look at most first. Each costs another scene."),
+        slider("Deeper Gates' Resolution", "vr_portals_recursion_scale", 1.f, 4.f, 1.f, "1/%.0f").help("Each gate deeper is drawn with this many times fewer pixels a side (2: a quarter of the pixels, then a sixteenth). 1: all at full resolution."),
         header("Portal Stars"),
         slider("Size", "vr_slipgate_surface_size", 1.f, 2.f, 0.02f, "%.2fx").help("Enlarges the single star layer on the entrance plane. No extra star quads are drawn inside the destination view. The collision opening keeps its size."),
         slider("Opacity", "vr_slipgate_surface_opacity", 0.f, 1.f, 0.05f, "%.2f").help("How much entrance shimmer covers the destination view. 0: a clear view; 1: the original shimmer."),
+        slider("Fade Up Close", "vr_slipgate_surface_fade", 0.f, 1.f, 0.05f, "%.2f m").help("The shimmer over the destination view fades out as your eyes come this close to the gate, and is gone as you cross, so the room does not brighten in a step as you arrive. 0: it stays to the end."),
     };
 }
 

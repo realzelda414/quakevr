@@ -444,8 +444,9 @@ vector    org;
     if(other.health <= 0 || other.solid != SOLID_SLIDEBOX)
         return;
 
-    // QVR: the engine walks players through slipgates (vr_portals.cpp, vr_portals_walk; VR_Portal_Crossed below)
-    if(other.classname == "player" && portal_handles(self, other))
+    // QVR: the engine walks players through slipgates (vr_portals.cpp, vr_portals_walk; VR_Portal_Crossed below), and
+    // monsters through paired ones that their box goes into (vr_portals_monsters)
+    if(portal_handles(self, other))
         return;
 
     SUB_UseTargets();
@@ -495,11 +496,15 @@ vector    org;
 // QVR: the engine has just walked `other` through the slipgate of trigger `self` (vr_portals.cpp, vr_portals_walk),
 // keeping where he was and how he moved relative to the gate: what Quake's teleport does besides moving him (its
 // targets, what his hands carry; no flash, no sound, no pause: he walked through).
-void(vector xFrom, float xReturning) VR_Portal_Crossed =
+// `xYaw` the gate's turn, `xFace` the gate's face it went into and `xBack` the face in its new room that leads back
+// (portal_ai_gateinfo's numbering: the stealth AI's points go through with a monster, VR_Stealth_Crossed).
+void(vector xFrom, float xReturning, float xYaw, float xFace, float xBack) VR_Portal_Crossed =
 {
+    entity who = other;
     activator = other;
     if(!xReturning) { SUB_UseTargets(); }
-    VR_Carry_Teleported(other, xFrom);
+    VR_Carry_Teleported(who, xFrom);
+    VR_Stealth_Crossed(who, xFrom, xYaw, xFace, xBack);
 };
 
 /*QUAKED info_teleport_destination (.5 .5 .5) (-8 -8 -8) (8 8 32)

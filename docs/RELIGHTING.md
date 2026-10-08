@@ -239,8 +239,9 @@ uses `vr_relight_tool` (the full path of a `light.exe`), the `ERICW_LIGHT` envir
 `PATH`. The page's Tool line says which one it found.
 
 When it finds none, the page offers **Download ericw-tools (27.5 MB)** (the console: `vr_relight_get_tool`). The game
-downloads ericw-tools 2.0.0-alpha11's Windows release zip from
-[its GitHub release](https://github.com/ericwa/ericw-tools/releases/tag/2.0.0-alpha11), always that exact file:
+downloads ericw-tools 2.0.0-alpha11's Windows release zip from Quake VR's
+[support-files release](https://github.com/vittorioromeo/quakevr/releases/tag/assets-2026-10-08), then, if that
+fails, from [ericw-tools' own release](https://github.com/ericwa/ericw-tools/releases/tag/2.0.0-alpha11); always that exact file:
 it checks its size and SHA-256 (`4e5ea11b...0745f`) and unpacks nothing from a file that does not match. It keeps
 only what `light` needs and the licence texts (`light.exe`, `embree4.dll`, `tbb12.dll`, `tbbmalloc.dll`,
 `gpl_v3.txt`, `LICENSE-embree.txt`, `README.md`) plus a `NOTICE.txt`, in `quakevr\tools\ericw-tools\` of the folder
@@ -251,8 +252,8 @@ build ericw-tools and set `vr_relight_tool`). `vr_relight_get_tool status` print
 goes and the pinned file; `vr_relight_get_tool force` downloads it again even when a `light.exe` is found.
 
 For testing, `vr_relight_tool_dir <folder>` makes that folder the only place looked in (after `vr_relight_tool`) and
-the place the download goes, and `vr_relight_tool_url <url>` downloads from elsewhere (the file must still match the
-pinned SHA-256). The author's own copy (`C:/OHWorkspace/ericw-tools-2.0.0-alpha11-win64`, as `relight_maps.py`'s
+the place the download goes, and `vr_relight_tool_url "<url> [<url>...]"` downloads from elsewhere, the mirrors in order (the file must still match
+the pinned SHA-256). The author's own copy (`C:/OHWorkspace/ericw-tools-2.0.0-alpha11-win64`, as `relight_maps.py`'s
 default) is looked in last, and only at Menu Detail: Developer (`vr_menu_level 2`).
 
 1. Load the map, open the page, set the sliders.
@@ -302,7 +303,9 @@ The page's **Many Maps** part relights a whole set with the same settings, in th
    Dissolution of Eternity, Dimension of the Past, Dimension of the Machine, Dawn of the Machine under **Game**, when
    installed), *Map Library's* (every map of the packages installed from the Map Library) or *Every Map* (all of them).
    Only maps you can play are taken (a game folder's brush models in `maps/`, the ammo boxes and Quake VR's buttons, are
-   not).
+   not). An episode, a game, the Map Library's or every map passes over Quake VR's own maps (`vrstart`, `vrtutorial`,
+   `vrfiringrange`, `vrcalibration`...: they ship lit as they are meant to be, and `vrstart`'s light takes half an
+   hour); the console lists them as `skipped: already lit`. *This Map* relights one of them when you ask.
 2. Choose **Relight These Maps**. The page shows a bar: how far the whole batch is (each map weighed by its size, the
    one being lit by its stage), the time left, the maps done of how many and each map being lit with its stage. Outside
    the menu the wrist gadget's screen shows a line in place of the kills and secrets (`RELIGHT 3/8 45% 0:27`, a thin bar
@@ -328,6 +331,8 @@ four; with Bounced Light 34, 33, 33 and 42 s. A map's texture lights are made on
 | `vr_relight_batch episode e2`, `game hipnotic`, `library`, `everything`, `map` | That set. |
 | `vr_relight_batch e1m1 dm4 start` | These maps (as the game finds them). |
 | `... -force`, `... -list` | Relight unchanged maps too; only list the maps (their files and sizes). |
+| `... -own` | Quake VR's own maps too (a set passes over them: lit already). |
+| `vr_relight_whendone <commands>` | Run these when the batch ends (at once when none runs): a script's wait. |
 | `vr_relight_status` | The batch: maps done, each `light` running (stage, process id), progress and time left. |
 
 **Where the result goes:** `quakevr\relit_custom\<game>\maps\` (in the folder the game saves into), with a

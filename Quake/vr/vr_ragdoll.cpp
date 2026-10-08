@@ -94,6 +94,8 @@ struct SeedTable
     bool wholePieces{false}; // every piece but the body (welded meshes of their own) one bone's, the seed nearest its
                              // middle, and the clusters only the body's: the centroid's six legs, arms and pincers move
                              // so alike that the motion clusters mix them (rig.py's "wholepieces", "pN")
+    bool looseWeapons{false}; // every piece but the body loose (one loose bone, hidden in the ragdoll: Rig::hideLoose):
+                              // the player's axe and gun, in his hands or on his back by the frame (rig.py LOOSE_PIECES)
 };
 
 // Quake VR's grunt (quakevr/progs/soldier.mdl: 555 vertices, 120 frames). The rest pose: x forward, y left, z up; he
@@ -405,8 +407,10 @@ constexpr Seed scorSeeds[] = {
 
 // Dawn of the Machine's rocket ogre (owned/mg3/progs/ogre_rocket.mdl, read from MG3's pack in place: 982 vertices, 147
 // frames in id's ogre's order: its death frames checked against Quake VR's ogre's, ROUND21.md "Dawn of the Machine (MG3):
-// monsters"). The rest pose ($stand1): x forward, y left, z up; upright, his left arm down, his rocket launcher (a box
-// and a long barrel behind him) in his right hand, kept on the hand (he does not drop it). Measured on his frames
+// monsters"). The rest pose ($stand1): x forward, y left, z up; upright, his left arm down (his rocket launcher on its
+// forearm), his chainsaw (a box and a long bar behind him) in his right hand: collapsed in his death frames (he drops
+// it: vr_monstermods.cpp), the loose bone, hidden; his right hand's bone on his fist (rig.py had it on the chainsaw).
+// Measured on his frames
 // (Misc/quakevr/ragdoll/rig.py ogre_rocket ogre_rocket_bones.json, RIG_PAK MG3's pak0.pak): clusters 1.06 units rms,
 // bones 1.19. Death frames 112-125 ($death1-14) and 126-135 ($bdeath1-10), as the ogre's.
 constexpr Seed ogreRocketSeeds[] = {
@@ -418,7 +422,7 @@ constexpr Seed ogreRocketSeeds[] = {
     {"hand_l", 4, Joint::Ball, {10.3f, 17.4f, -13.7f}, {3.1f, 17.7f, 1.7f}, {17.5f, 17.1f, -29.1f}, 0.f, 40.f, 30.f, 0.f, {}},
     {"upperarm_r", 1, Joint::Ball, {2.8f, -16.5f, 17.3f}, {3.6f, -13.5f, 21.5f}, {0.f, -20.6f, 11.3f}, 0.f, 85.f, 45.f, 0.f, {}},
     {"forearm_r", 6, Joint::Hinge, {0.4f, -19.7f, 7.2f}, {0.f, -20.6f, 11.3f}, {1.9f, -20.5f, 0.3f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
-    {"hand_r", 7, Joint::Ball, {-7.9f, -21.6f, -7.4f}, {1.9f, -20.5f, 0.3f}, {-17.8f, -22.7f, -15.f}, 0.f, 40.f, 30.f, 0.f, {}},
+    {"hand_r", 7, Joint::Ball, {0.2f, -20.4f, -2.f}, {1.9f, -20.5f, 0.3f}, {-0.9f, -20.6f, -5.f}, 0.f, 40.f, 30.f, 0.f, {}},
     {"thigh_l", 0, Joint::Ball, {2.9f, 6.9f, -5.8f}, {-3.2f, 5.7f, 4.4f}, {4.7f, 12.7f, -10.4f}, 4.5f, 70.f, 30.f, 0.f, {}},
     {"shin_l", 9, Joint::Hinge, {4.f, 7.4f, -20.9f}, {4.7f, 12.7f, -10.4f}, {4.f, 7.7f, -20.4f}, 4.f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
     {"thigh_r", 0, Joint::Ball, {1.3f, -8.6f, -10.6f}, {-0.4f, -11.6f, -2.1f}, {-2.3f, -12.8f, -19.5f}, 4.5f, 70.f, 30.f, 0.f, {}},
@@ -495,6 +499,27 @@ constexpr Seed shamblerBloodSeeds[] = {
     {"shin_r", 11, Joint::Hinge, {5.2f, -15.7f, -18.f}, {7.1f, -12.6f, -9.3f}, {4.6f, -16.6f, -20.7f}, 5.f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
 };
 
+// The player (Quake VR's progs/player.mdl: 733 vertices, 144 frames; ROUND21.md, "Player ragdolls"). The rest pose
+// ($axrun1, frame 0): x forward, y left, z up; mid-stride, his left leg forward, his right one back, his left arm swung
+// back, the axe in his right hand and the gun on his back. His axe and gun are pieces of their own (each in his hands or
+// on his back by the frame: rigid with no bone): loose, hidden in his ragdoll (looseWeapons). Measured with
+// Misc/quakevr/ragdoll/rig.py (player_bones.json; 18 clusters: 0.70 units rms; bones 0.82). The chest's seed centre moved
+// by hand 2 units back and down (cluster 15, the left shoulder blade's, is the chest's: rig.py had it nearer the upper
+// arm's). Death frames 50-60 ($deatha1-11) and 61-69 ($deathb1-9) of his six.
+constexpr Seed playerSeeds[] = {
+    {"pelvis", -1, Joint::Root, {-6.8f, 0.4f, 2.7f}, {-6.8f, 0.4f, 2.7f}, {-3.8f, 0.f, 7.4f}, 0.f, 0.f, 0.f, 0.f, {}},
+    {"chest", 0, Joint::Ball, {-1.5f, 0.5f, 13.f}, {-3.8f, 0.f, 7.4f}, {3.f, -0.6f, 19.8f}, 0.f, 35.f, 25.f, 0.f, {}},
+    {"head", 1, Joint::Ball, {7.5f, 0.1f, 22.1f}, {3.f, -0.6f, 19.8f}, {12.1f, 0.8f, 24.4f}, 0.f, 45.f, 50.f, 0.f, {}},
+    {"upperarm_l", 1, Joint::Ball, {-4.6f, 9.7f, 15.2f}, {-0.2f, 6.f, 18.f}, {-8.1f, 12.f, 10.8f}, 0.f, 85.f, 45.f, 0.f, {}},
+    {"forearm_l", 3, Joint::Hinge, {-11.9f, 14.2f, 4.5f}, {-8.1f, 12.f, 10.8f}, {-15.6f, 16.3f, -1.8f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
+    {"upperarm_r", 1, Joint::Ball, {2.3f, -10.3f, 12.f}, {3.1f, -8.f, 16.7f}, {2.5f, -11.7f, 5.1f}, 0.f, 85.f, 45.f, 0.f, {}},
+    {"forearm_r", 5, Joint::Hinge, {6.3f, -11.6f, 1.f}, {2.5f, -11.7f, 5.1f}, {10.2f, -11.6f, -3.2f}, 0.f, 0.f, 0.f, 145.f, {0.f, -1.f, 0.f}},
+    {"thigh_l", 0, Joint::Ball, {6.1f, 4.2f, -6.8f}, {-2.8f, 5.1f, -0.4f}, {7.8f, 5.7f, -14.3f}, 3.2f, 70.f, 30.f, 0.f, {}},
+    {"shin_l", 7, Joint::Hinge, {10.3f, 4.3f, -19.f}, {7.8f, 5.7f, -14.3f}, {10.f, 4.5f, -18.5f}, 2.8f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
+    {"thigh_r", 0, Joint::Ball, {-11.4f, -4.8f, -10.5f}, {-8.1f, -6.7f, 0.4f}, {-19.4f, -4.7f, -11.9f}, 3.2f, 70.f, 30.f, 0.f, {}},
+    {"shin_r", 9, Joint::Hinge, {-22.4f, -4.5f, -16.3f}, {-19.4f, -4.7f, -11.9f}, {-24.6f, -4.4f, -19.4f}, 2.8f, 0.f, 0.f, 150.f, {0.f, 1.f, 0.f}},
+};
+
 constexpr SeedTable seedTables[] = {
     {modelmeta::Id::Soldier, 555, gruntSeeds, static_cast<int>(sizeof(gruntSeeds) / sizeof(gruntSeeds[0])), 2, {8, 18}, {17, 28}},
     {modelmeta::Id::Knight, 655, knightSeeds, static_cast<int>(sizeof(knightSeeds) / sizeof(knightSeeds[0])), 2, {76, 86}, {85, 96}},
@@ -514,6 +539,7 @@ constexpr SeedTable seedTables[] = {
     {modelmeta::Id::Mg3Rknight, 1155, rknightSeeds, static_cast<int>(sizeof(rknightSeeds) / sizeof(rknightSeeds[0])), 2, {42, 54}, {53, 62}},
     {modelmeta::Id::Mg3OgreRocket, 982, ogreRocketSeeds, static_cast<int>(sizeof(ogreRocketSeeds) / sizeof(ogreRocketSeeds[0])), 2, {112, 126}, {125, 135}},
     {modelmeta::Id::Mg3ShamblerBlood, 1076, shamblerBloodSeeds, static_cast<int>(sizeof(shamblerBloodSeeds) / sizeof(shamblerBloodSeeds[0])), 1, {83, 0}, {93, 0}, 24},
+    {modelmeta::Id::Player, 733, playerSeeds, static_cast<int>(sizeof(playerSeeds) / sizeof(playerSeeds[0])), 2, {50, 61}, {60, 69}, 18, false, true},
 };
 
 [[nodiscard]] const SeedTable* tableOf(const qmodel_t* model)
@@ -988,7 +1014,7 @@ bool derive(qmodel_t* model, const aliashdr_t* hdr, const SeedTable& table, Rig&
             }
             hidden = za::max(hi.x - lo.x, za::max(hi.y - lo.y, hi.z - lo.z)) < 0.5f;
         }
-        if(hidden)
+        if(hidden || table.looseWeapons)
         {
             isLoose[static_cast<za::SizeT>(id)] = 1;
             loosePieces.pushBack(id);
@@ -1269,6 +1295,7 @@ bool derive(qmodel_t* model, const aliashdr_t* hdr, const SeedTable& table, Rig&
         }
     }
     const SeedTable& tb = table;
+    rig.hideLoose = tb.looseWeapons;
     rig.deaths = tb.deaths;
     for(int i = 0; i < tb.deaths; i++)
     {
@@ -1371,6 +1398,9 @@ struct MotionTest
     int frames{0};
 };
 MotionTest motionTest;
+
+// The death view's (Immersive: hideHeadOf): the ragdoll drawn headless, the camera in its head (0 none).
+int hiddenHeadNum = 0;
 
 // vr_knockdown_debug 2 (Combat > Knockdowns, Print Rolls: "And Get-Ups' Motion"): a get-up as the client draws it,
 // frame by frame from the moment the monster starts getting up (its ragdoll blended into its animation, then its
@@ -1554,9 +1584,11 @@ void animatedVertices(const entity_t* e, za::Vector<glm::vec3>& out, int& pose1,
         // (A monster's steps lerped as R_SetupEntityTransform does, without changing the entity.)
         const bool changed = !VectorCompare(e->origin, e->currentorigin) || !VectorCompare(e->angles, e->currentangles);
         const float t = changed ? 0.f : R_MoveLerpBlend(e);
-        const float* from = changed ? e->currentorigin : e->previousorigin;
+        vec3_t start, startA;
+        R_MoveLerpStart(e, start, startA); // (a move starting: where the last one is drawn)
+        const float* from = changed ? start : e->previousorigin;
         const float* to = e->currentorigin;
-        const float* fromA = changed ? e->currentangles : e->previousangles;
+        const float* fromA = changed ? startA : e->previousangles;
         const float* toA = e->currentangles;
         for(int i = 0; i < 3; i++)
         {
@@ -2307,11 +2339,12 @@ void swapModels()
         s.skinned = skinned;
         s.ref = p.drawPos[0];
         s.bones = p.rig->numBones;
+        const uint32_t viewHidden = num == hiddenHeadNum ? headBones(*p.rig) : 0u; // (the death view's camera in it)
         for(int b = 0; b < s.bones; b++)
         {
             // (A hidden bone: all its vertices at the pelvis, its triangles gone; a cut-off one's at the neck.)
-            const bool cut = b < p.bodies && (p.cut & (1u << b));
-            const bool shown = b < p.bodies && !cut;
+            const bool cut = b < p.bodies && (p.cut & (1u << b)) && !(viewHidden & (1u << b));
+            const bool shown = b < p.bodies && !cut && !(viewHidden & (1u << b));
             glm::mat3 r = shown ? glm::mat3_cast(p.drawRot[static_cast<za::SizeT>(b)]) * p.scale : glm::mat3{0.f};
             glm::vec3 t = shown ? p.drawPos[static_cast<za::SizeT>(b)] - s.ref : glm::vec3{0.f};
             if(cut)
@@ -2539,6 +2572,11 @@ void motionTest_f()
     }
     motionTest.left = za::clamp(Q_atoi(Cmd_Argv(1)), 3, 2000);
     Con_Printf("vr_drawn_motion_test: ragdoll %d, prop %d, %d frames\n", motionTest.rag, motionTest.prop, motionTest.left);
+}
+
+void hideHeadOf(int num)
+{
+    hiddenHeadNum = num;
 }
 
 void info_f()

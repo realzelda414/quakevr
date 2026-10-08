@@ -6,9 +6,16 @@
 # the belt, with no strap over its open top (a hand dips in and out of it all through a fight), and shotgun shells
 # standing in it brass up in a loose row, their heads and a hand's width of red hull out of the rim, so that it reads as
 # the shotgun's ammo when you look down. Two frames: 0 full (you have ammo for the gun in your other hand), 1 empty (the
-# shells gone down out of sight, the front fallen in flat); the engine picks the frame.
+# shells gone down out of sight, the front fallen in flat); the engine picks the frame. Since: frames by ammo and count
+# (vr_view.cpp ammoPouchFrame): shells, magazines, cells, and the launchers' rounds (make_rounds.py's rockets, standing
+# nose up, as many as the reserve has up to 3, spaced evenly about the middle; skin 1 the multi-rockets). The grenades'
+# and proximity grenades' frames (17-24) are the full pouch with none in it: the engine draws Quake's own grenades
+# standing in it (vr_view.cpp setupAmmoPouchGrenades: progs/grenade.mdl, mervup.mdl, proxbomb.mdl, the user's game's
+# models, at vr_grenade_scale; ROUND21.md, "Grenades back to the original models"). --generated-rounds: make_rounds.py's
+# grenades in those frames instead, as before 2026-10-08 (to switch back; the engine's then drawn too: its
+# pouchGrenades table).
 #
-# Usage: python Misc/quakevr/make_ammo_pouch.py [output progs folder]
+# Usage: python Misc/quakevr/make_ammo_pouch.py [output progs folder] [--generated-rounds]
 #
 # Model space as make_pouch.py's: +x out of the body (the back against it at x 0), +y to its left, +z up, world units at
 # scale 1 (vr_ammo_pouch_scale scales it as drawn). The skin is make_pouch.py's (its leather, iron and stitching), its
@@ -29,10 +36,12 @@ pouch.Z_BOTTOM, pouch.Z_TOP = -2.3, 1.5
 pouch.Z_FLOOR = 0.6
 pouch.BULGE_P = 3.0
 
-# The shells standing in it: their middles (y), their lean (degrees, about x), how far their tops stand out.
-SHELLS = [(-2.55, -9.0, 1.05), (-1.3, 4.0, 1.25), (0.0, -3.0, 1.15), (1.3, 7.0, 1.3), (2.55, -6.0, 1.0)]
-SHELL_R = 0.52   # the hull's radius, world units (a 12-gauge shell at the shells' drawn size, a little larger to read)
-RIM_R = 0.58
+# The shells standing in it: their middles (y), their lean (degrees, about x), how far their tops stand out. A tidy row,
+# mirror-symmetric about the middle (the author: they looked overly big and not symmetric; they were 0.52 across the
+# hull, leaning and standing out at random): evenly spaced, fanning out a little to the sides, the middle one highest.
+SHELLS = [(-1.9, -6.0, 1.0), (-0.95, -3.0, 1.12), (0.0, 0.0, 1.2), (0.95, 3.0, 1.12), (1.9, 6.0, 1.0)]
+SHELL_R = 0.33   # the hull's radius, world units: a held shell's as drawn (make_shell.py's 0.99 cm at its 1.25 Size)
+RIM_R = 0.37     # its rim's (1.12 cm)
 BRASS = 0.55     # how much of the top is brass
 
 
@@ -72,13 +81,30 @@ KINDS = [  # (kind, its frames' first, how many it shows at most)
     (2, 6, 3),   # nailgun magazines
     (3, 9, 2),   # super nailgun magazines
     (4, 11, 3),  # thunderbolt cells
+    (5, 14, 3),  # rockets
+    (6, 17, 4),  # grenades
+    (7, 21, 4),  # proximity grenades
 ]
-FRAMES = 14
+FRAMES = 25
 SHELL_ORDER = [2, 1, 3, 0, 4]  # which of SHELLS show first (the middle out)
 # The magazines standing in it, feed end up, from make_mags.py (their skins below the pouch's, 64 x 64 each).
 MAGS = {2: ("nail", 0.66, (-2.45, 0.0, 2.45)), 3: ("snail", 0.5, (-1.75, 1.75)), 4: ("cell", 0.56, (-2.6, 0.0, 2.6))}
 MAG_TOP = 2.9       # their tops (the pouch's rim at 1.5; lower, the nailgun's base plates show through its rounded bottom)
 MAG_SKIN_T = 128    # the row the magazines' skins start at (each 64 wide: nail, snail, cell)
+
+
+# The launchers' rounds standing in it, nose up (make_rounds.py's meshes; their skins in the skin's last rows, 64 x 32
+# each): kind: (name, scale, its top, the gap between their middles, its skin's column).
+ROUNDS = {5: ("rocket", 0.55, 3.5, 2.2, 0), 6: ("grenade", 0.75, 3.0, 1.95, 64), 7: ("prox", 0.7, 2.85, 2.0, 128)}
+ROUND_SKIN_T = 192  # the row their skins start at
+GENERATED_ROUNDS = "--generated-rounds" in sys.argv  # make_rounds.py's grenades baked in (as before 2026-10-08)
+if GENERATED_ROUNDS:
+    sys.argv.remove("--generated-rounds")
+
+
+def round_meshes():
+    import make_rounds
+    return {"rocket": make_rounds.build_rocket(), "grenade": make_rounds.build_grenade(), "prox": make_rounds.build_prox()}
 
 
 def frame_spec(frame):
@@ -89,14 +115,14 @@ def frame_spec(frame):
     return 0, 0
 
 
-def add_part(m, part, rot, at, s_off):
-    """`part`'s triangles (a make_mags.py mesh) into `m`: turned (rows: where its x, y, z go), scaled into place at `at`,
-    its skin coordinates moved to its own square of the skin. The new vertices' range."""
+def add_part(m, part, rot, at, s_off, t_off=MAG_SKIN_T):
+    """`part`'s triangles (a make_mags.py or make_rounds.py mesh) into `m`: turned (rows: where its x, y, z go), scaled
+    into place at `at`, its skin coordinates moved to its own square of the skin. The new vertices' range."""
     first = len(m.verts)
     for p, n, (s, t) in part.verts:
         q = mdlgen.add(mdlgen.add(mdlgen.add(mdlgen.mul(rot[0], p[0]), mdlgen.mul(rot[1], p[1])), mdlgen.mul(rot[2], p[2])), at)
         nn = mdlgen.norm(mdlgen.add(mdlgen.add(mdlgen.mul(rot[0], n[0]), mdlgen.mul(rot[1], n[1])), mdlgen.mul(rot[2], n[2])))
-        m.verts.append((q, nn, (s + s_off, t + MAG_SKIN_T)))
+        m.verts.append((q, nn, (s + s_off, t + t_off)))
     m.tris.extend((a + first, b + first, c + first) for a, b, c in part.tris)
     return first, len(m.verts)
 
@@ -133,6 +159,21 @@ def build(frame):
             at = (sx, y, MAG_TOP - top * scale)
             rng = add_part(m, part, rot, at, {2: 0, 3: 64, 4: 128}[mk])
             if not (kind == mk and j < count):
+                collapse(m, rng, hidden)
+    # The launchers' rounds: nose up (their +x up), as many as this frame shows spaced evenly about the middle.
+    meshes = round_meshes()
+    for rk, (name, scale, top, gap, s_off) in ROUNDS.items():
+        if rk != 5 and not GENERATED_ROUNDS:
+            continue  # (the grenades: Quake's own, drawn by the engine)
+        part = meshes[name]
+        hi = max(p[0] for p, _, _ in part.verts)
+        rot = ((0.0, 0.0, scale), (0.0, scale, 0.0), (-scale, 0.0, 0.0))
+        most = next(k[2] for k in KINDS if k[0] == rk)
+        n = count if kind == rk else 0
+        for j in range(most):
+            y = (j - (n - 1) / 2.0) * gap if j < n else 0.0
+            rng = add_part(m, part, rot, (sx, y, top - hi * scale), s_off, ROUND_SKIN_T)
+            if j >= n:
                 collapse(m, rng, hidden)
     # Rivets at the front's top corners and a pair on its middle, where a belt loop is sewn on behind.
     for y in (-pouch.HALF_W * 0.82, pouch.HALF_W * 0.82):
@@ -179,6 +220,12 @@ def paint_skin(variant=False):
         for t in range(make_mags.SKIN_H):
             row = (MAG_SKIN_T + t) * w + k * 64
             px[row:row + 64] = mag[t * make_mags.SKIN_W:(t + 1) * make_mags.SKIN_W]
+    import make_rounds
+    for name, (s_off, special) in {"rocket": (0, variant), "grenade": (64, variant), "prox": (128, False)}.items():
+        rp = make_rounds.paint(name, 1 if special else 0)
+        for t in range(make_rounds.SKIN_H):
+            row = (ROUND_SKIN_T + t) * w + s_off
+            px[row:row + make_rounds.SKIN_W] = rp[t * make_rounds.SKIN_W:(t + 1) * make_rounds.SKIN_W]
     for c in px:
         assert c < 224 or variant, "no fullbright texels (but the lava nails' and plasma's glow)"
     return bytes(px)
@@ -192,7 +239,8 @@ def main():
         assert len(f.verts) == len(frames[0].verts) and f.tris == frames[0].tris, "frames of the same mesh"
     path = os.path.join(out, "vrpouch_ammo.mdl")
     guard = genguard.Guard("make_ammo_pouch.py", [path])
-    # Skin 1: the lava nails' magazines and the plasma cells (STAT_QVR_POUCHKIND's 8: vr_view.cpp ammoPouchFrame).
+    # Skin 1: the lava nails' magazines and the plasma cells, the multi-rockets and multi-grenades (STAT_QVR_POUCHKIND's
+    # 8: vr_view.cpp ammoPouchFrame).
     mdlgen.write_mdl(path, frames[0], [paint_skin(), paint_skin(True)], "pouch", frames=frames[1:])
     print("vrpouch_ammo.mdl: %d vertices, %d triangles, %d frames -> %s" % (len(frames[0].verts), len(frames[0].tris),
                                                                            FRAMES, os.path.normpath(path)))

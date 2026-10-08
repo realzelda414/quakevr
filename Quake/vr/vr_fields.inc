@@ -30,6 +30,7 @@ QVR_FIELD(offmuzzlepos)
 QVR_FIELD(loadportpos)
 QVR_FIELD(vr_pouch_kind)
 QVR_FIELD(vr_pouch_count)
+QVR_FIELD(stl_hud) // the stealth gem's readings (QC vr_stealth.qc; STAT_QVR_STEALTH)
 QVR_FIELD(offloadportpos)
 QVR_FIELD(loadportaxis) // the way a round lies going in at each gun's port (vr_reload.qc VR_Reload_LooseFrame)
 QVR_FIELD(offloadportaxis)
@@ -37,6 +38,7 @@ QVR_FIELD(loadportface) // and the way its opening faces
 QVR_FIELD(offloadportface)
 QVR_FIELD(vr_ammo_pass) // a loose round passing through a player's guns to their ports: the hands (vr_reload.qc; vr_box3d.cpp reachSkips)
 QVR_FIELD(vr_ammo_passer) // and the player
+QVR_FIELD(vr_ammo_passgun) // a loose round passing through a gun lying about to its port: that gun (vr_reload.qc VR_Reload_PropsFrame; vr_box3d.cpp preSolve)
 QVR_FIELD(magboxpos) // the main hand's gun's attached magazine, a box: its middle and half-axes (vr_reload.qc)
 QVR_FIELD(magboxx)
 QVR_FIELD(magboxy)
@@ -154,10 +156,15 @@ QVR_FIELD(vr_stamina_time)
 QVR_FIELD(vr_stamina_said)
 QVR_FIELD(vr_climb_drain) // 1 while a hang drains the pool (the gadget shows it: VR_Melee_Hud)
 QVR_FIELD(vr_climb_knockoff) // set by the QC: a blast or a shove knocks the player off its holds (vr_climb.cpp lets go, keeps the velocity)
+QVR_FIELD(vr_foegrab_hands) // set by the engine on a player: the hands holding an enemy (vr_foegrab.cpp), bit 1 the off hand, 2 the main: no melee blows from them
+QVR_FIELD(vr_foegrab_hold) // set by the engine on a monster: how firmly hands hold it now, 0..1 (0 not held): its shoves are resisted (QC vr_enemyshove.qc)
+QVR_FIELD(vr_foegrab_letgo) // set by the QC on a monster: every hand holding it lets go (a shove breaking free, vr_foegrab_shove 1)
+QVR_FIELD(vr_eshove_speed) // a player's slide from an enemy's shove, units/s (QC vr_enemyshove.qc; 0 none): what his hands hold is carried along (vr_foegrab.cpp)
 QVR_FIELD(vr_sgib) // a small gib: when it was made (QC vr_smallgibs.qc; vr_box3d.cpp: its blow grace, vr_smallgibs_blow_grace)
 QVR_FIELD(vr_sgib_id) // its serial (vr_smallgibs_trace's lines)
 QVR_FIELD(vr_monster_drop) // a weapon or backpack a monster dropped: when (QC vr_carry.qc; vr_box3d.cpp: made inside a body it passes through it, vr_prop_drop_pass_inside)
 QVR_FIELD(vr_prop_mass) // a prop's own mass, kg (0: its model's, Held Object Offsets): a small gib (QC vr_smallgibs.qc; vr_box3d.cpp massSetting)
+QVR_FIELD(vr_xdebris) // an explosion's chunk (vr_explosiondebris.cpp): when it was made (its entry's check; 0: not one)
 QVR_FIELD(attack_finished) // slow motion with the player in its own time (vr_timescale.cpp: vr_sandevistan, vr_timescale_move_realtime): its timers set in its frame run in its time
 QVR_FIELD(offhand_attack_finished)
 QVR_FIELD(mainhand_melee_attack_finished)
@@ -166,6 +173,8 @@ QVR_FIELD(vr_corpse) // 1 dying, 2 a corpse lying still (QC combat.qc VR_Corpse_
 QVR_FIELD(vr_gib) // a gib or head (QC): not a corpse (vr_box3d.cpp)
 QVR_FIELD(vr_headless) // its head cut off (QC vr_decap.qc): its ragdoll is made headless, a saved game's too (vr_box3d.cpp)
 QVR_FIELD(vr_limbcut) // the ragdoll bones cut off (bits; QC vr_limbs.qc, ROUND21.md "Limb gore"): made so again in a saved game (vr_box3d.cpp)
+QVR_FIELD(vr_deathdoll) // a player's ragdoll body's player (an entity; QC vr_deathdoll.qc) (vr_deathview.cpp: the camera follows its head)
+QVR_FIELD(vr_deathdoll_body) // a dead player's ragdoll body (an entity; QC vr_deathdoll.qc): he is not sent to the others while it is (sv_main.c)
 QVR_FIELD(vr_knockdown) // a monster knocked down by a shove (QC vr_knockdown.qc): 1 a ragdoll while alive (vr_box3d.cpp), 2 getting up
 QVR_FIELD(vr_shock_until) // lightning killed it or struck it dead (QC vr_shock.qc): its ragdoll convulses until then (vr_box3d.cpp, "Shocked ragdolls")
 QVR_FIELD(vr_shock_len) // ... the shock's length (s): the convulsions fade over it
@@ -176,3 +185,7 @@ QVR_FIELD(vr_dummy_kind)
 // When the entity was made (ED_Alloc: VR_OnEdictAlloc, vr_cheats.cpp): the map's own and those placed as it loads
 // before its first second is out; vr_scene_clean props (QC VR_Scene_Clean) removes the loose props made later.
 QVR_FIELD(vr_born)
+
+// Quake's drawing extensions, set by the engine on what it makes (vr_explosiondebris.cpp: a chunk's size and its fade).
+QVR_FIELD(alpha)
+QVR_FIELD(scale)

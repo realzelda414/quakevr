@@ -53,6 +53,7 @@
 
 #include "vr_modelmetadata.hpp"
 #include "vr_box3d.hpp"
+#include "vr_convex.hpp"
 #include "vr_main.hpp"
 #include "vr_portals.hpp"
 #include "vr_axestick.hpp"
@@ -146,6 +147,11 @@ constexpr uint64_t catReachWeapon = 1024; // a held weapon's body (vr_box3d_weap
 constexpr uint64_t catReach = catReachHand | catReachWeapon;
 constexpr uint64_t catCorpse = 2048; // a corpse's body (vr_corpse_collide): what meets it is its own mask's (corpseMask)
 constexpr uint64_t propMask = catWorld | catMover | catActor | catPlayer | catProp | catHeld | catFixture | catCorpse;
+// An explosion's chunk (vr_explosiondebris.cpp; isChunk), as well as catProp: it meets the level, doors and lifts,
+// monsters, players, props and corpses (its few grams knock them, barely), never the hands or what they hold; a contact
+// with one makes no sound, touch or impact (chunkPair).
+constexpr uint64_t catChunk = 4096;
+constexpr uint64_t chunkMask = catWorld | catMover | catActor | catPlayer | catProp | catFixture | catCorpse;
 
 enum class Kind : uint8_t
 {
@@ -273,26 +279,69 @@ constexpr float sinkDensity = 0.5f;
     return gib && !wood ? sinkDensity : floatDensity; // (a taken wall torch, a crate's piece are wood: they float)
 }
 
-[[nodiscard]] bool wetAt(float x, float y, float z)
+// The deepest node of the world's hull 0 above every point (x, y, z), z from `zlo` to `zhi`: SV_HullPointContents
+// from it gives what it gives from the root, for any point of that column. Each plane's distance is the expression
+// SV_HullPointContents works out, a monotone function of z (x and y fixed), so the ends on one side put the whole
+// column there. (A leaf's contents, below 0, when the column is in one leaf.)
+[[nodiscard]] int columnNode(float x, float y, float zlo, float zhi)
+{
+    hull_t* hull = &sv.worldmodel->hulls[0];
+    vec3_t a{x, y, zlo}, b{x, y, zhi};
+    int num = 0;
+    while(num >= 0)
+    {
+        const mclipnode_t* node = hull->clipnodes + num;
+        const mplane_t* plane = hull->planes + node->planenum;
+        float da, db;
+        if(plane->type < 3)
+        {
+            da = a[plane->type] - plane->dist;
+            db = b[plane->type] - plane->dist;
+        }
+        else
+        {
+            da = DoublePrecisionDotProduct(plane->normal, a) - plane->dist;
+            db = DoublePrecisionDotProduct(plane->normal, b) - plane->dist;
+        }
+        if((da < 0) != (db < 0))
+        {
+            break;
+        }
+        num = node->children[da < 0 ? 1 : 0];
+    }
+    return num;
+}
+
+// Whether (x, y, z) is in water, slime or lava (SV_PointContents' answer), the hull walked from `node`
+// (columnNode's, for a point of its column).
+[[nodiscard]] bool wetFrom(int node, float x, float y, float z)
 {
     vec3_t p{x, y, z};
-    const int contents = SV_PointContents(p);
+    int contents = SV_HullPointContents(&sv.worldmodel->hulls[0], node, p); // (SV_PointContents' steps)
+    if(contents <= CONTENTS_CURRENT_0 && contents >= CONTENTS_CURRENT_DOWN)
+    {
+        contents = CONTENTS_WATER;
+    }
+    contents = VR_LiquidContents(sv.worldmodel, p, contents);
     return contents <= CONTENTS_WATER && contents >= CONTENTS_LAVA;
 }
 
-// The part of the column from `lo` to `hi` (z) at `c` under water (0 to 1), by the BSP's liquid leaves.
+// The part of the column from `lo` to `hi` (z) at `c` under water (0 to 1), by the BSP's liquid leaves. Every point
+// it tries is on one column: the hull's walk down to that column's node is done once (MG3_PLAN.md M3-28: a body's
+// 2 to 15 point tests each step, 0.26 ms a frame of secret2's fight).
 [[nodiscard]] float submerged(const glm::vec3& c, float lo, float hi)
 {
+    const int node = columnNode(c.x, c.y, za::min(lo, c.z), za::max(hi, c.z));
     float under = lo;
-    if(!wetAt(c.x, c.y, lo))
+    if(!wetFrom(node, c.x, c.y, lo))
     {
-        if(!wetAt(c.x, c.y, c.z))
+        if(!wetFrom(node, c.x, c.y, c.z))
         {
             return 0.f;
         }
         under = c.z; // the bottom in a floor
     }
-    if(wetAt(c.x, c.y, hi))
+    if(wetFrom(node, c.x, c.y, hi))
     {
         return 1.f;
     }
@@ -300,7 +349,7 @@ constexpr float sinkDensity = 0.5f;
     for(int i = 0; i < 12; i++)
     {
         const float mid = (under + above) * 0.5f;
-        (wetAt(c.x, c.y, mid) ? under : above) = mid;
+        (wetFrom(node, c.x, c.y, mid) ? under : above) = mid;
     }
     return CLAMP(0.f, ((under + above) * 0.5f - lo) / za::max(hi - lo, 0.01f), 1.f);
 }
@@ -313,11 +362,12 @@ constexpr float sinkDensity = 0.5f;
 }
 
 // A live grenade that can be caught (QC vr_grenade.qc: an ogre's, a multi-grenade ogre's, or the player's with
-// vr_grenade_catch 2) as a rigid body: Quake's grenade models. Hard and heavy, it bounces as Quake's grenades did, and
-// never meets its thrower's own body (Quake's rule for a missile and its owner: it leaves the ogre it is thrown from).
+// vr_grenade_catch 2) as a rigid body, or a pouch grenade (the proximity grenade too): Quake's grenade models. Hard and
+// heavy, it bounces as Quake's grenades did, and never meets its thrower's own body (Quake's rule for a missile and its
+// owner: it leaves the ogre it is thrown from).
 [[nodiscard]] bool isGrenade(const qmodel_t* model)
 {
-    return model->type == mod_alias && (modelmeta::is(model, modelmeta::Id::Grenade) || modelmeta::is(model, modelmeta::Id::Mervup));
+    return model->type == mod_alias && modelmeta::isQuakeGrenade(model);
 }
 
 constexpr float smallPropSleepThreshold = 0.15f; // m/s: a prop with its own mass (a small gib) sleeps under it (Box3D's: 0.05)
@@ -344,7 +394,7 @@ constexpr float grenadeRestitution = 0.45f; // (Quake's bounce: 0.5; a steel bal
     {
         return 1300.f; // a shotgun shell: plastic, lead shot, a brass head (its slot's Mass sets it: 40 g)
     }
-    if(modelmeta::has(model, modelmeta::Trait::Magazine))
+    if(modelmeta::has(model, modelmeta::Trait::Magazine) || modelmeta::has(model, modelmeta::Trait::LiveRound))
     {
         return 1500.f; // a magazine: a steel box of nails, a cell (its slot's Mass sets it)
     }
@@ -394,7 +444,7 @@ constexpr float grenadeRestitution = 0.45f; // (Quake's bounce: 0.5; a steel bal
 {
     return model->type == mod_alias && !isWeaponLike(ent) && !modelmeta::has(model, modelmeta::Trait::ContainsArmor) && !isGrenade(model) &&
         !modelmeta::has(model, modelmeta::Trait::LiveShell) && !modelmeta::has(model, modelmeta::Trait::Magazine) &&
-        props::stoneDensity(model) <= 0.f; // (rocks and bricks are hard; a shell bounces and rolls)
+        !modelmeta::has(model, modelmeta::Trait::LiveRound) && props::stoneDensity(model) <= 0.f; // (rocks and bricks are hard; a shell bounces and rolls)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -424,6 +474,7 @@ struct Slot // what one edict is in the world (by its number)
     bool sleepless{false}; // Box3D's sleep off: floating (it bobs), or sinking through the water (beforeStep)
     float lift{0.f};       // N up: its lift in water this frame (beforeStep), given again in each piece of the step
     bool bullet{false};   // fast: continuous collision against other props too
+    bool chunk{false};    // an explosion's chunk (isChunk)
     bool soft{false};     // isSoft
     bool brush{false};    // angles as a brush model's
     bool spins{false};    // a fixture drawn spinning (an EF_ROTATE model: the map's pickups): its shape turns with it
@@ -442,6 +493,10 @@ struct Slot // what one edict is in the world (by its number)
     bool corpseFitted{false};
     float corpseFriction{0.f};
     int ragdoll{-1}; // a ragdoll (vr_ragdoll): its parts in World::ragdolls (body: its pelvis); -1 none
+    // A pushable corpse's middle after the last step (carryCorpses: through a slipgate; its body made again as its
+    // frame changes is the same corpse).
+    glm::vec3 lastMid{0.f};
+    bool midKnown{false};
 
     // Props, held and fixtures: the settings (shapeGeneration) and the entity's box its drawn box and Mass were last
     // found the same at (stale): looked at again only when one of them changes.
@@ -482,6 +537,9 @@ struct RagdollBodies
     za::Array<glm::quat, ragdoll::maxBones> struggleRest{};
     bool struggleReady{false};
     int shockJerk{-1}; // shocked (shockRagdoll): the jerk it last bucked or not at
+    // Its pelvis after the last step (carryRagdolls: the step it goes in through a slipgate carries it whole).
+    glm::vec3 lastPelvis{0.f};
+    bool pelvisKnown{false};
 };
 
 // A knocked-down monster getting up ("Knockdowns"): its ragdoll's last pose blended into its animation as it plays.
@@ -517,6 +575,9 @@ struct Recovery
     return n;
 }
 
+// The most shapes a body has (a gun's convex pieces: vr_box3d_gun_pieces, at most this).
+constexpr int maxBodyShapes = 32;
+
 // The hulls made for models, by what they were made from (and the world's scale).
 struct PropHullKey
 {
@@ -539,6 +600,26 @@ struct PropHullKeyHash
         return h;
     }
 };
+
+// The guns' convex pieces (gunPieces) as made, in model units, kept from map to map (made again only when the models'
+// slots or the VR models change: their pointers are the keys): a gun first picked up on a map took 35 to 60 ms to cut
+// (vr_convex.cpp). The main thread's.
+struct GunShapeCache
+{
+    struct Entry
+    {
+        PropHullKey key;
+        int most{0};       // vr_box3d_gun_pieces as made
+        int firstPiece{0}; // in pieceEnds
+        int pieces{0};     // 0: none made (one hull)
+        convex::Report report;
+    };
+    za::Vector<Entry> entries;
+    za::Vector<int> pieceEnds;      // each piece's end in points
+    za::Vector<glm::vec3> points;   // the pieces' hulls' points, model units
+    auto members() { return mem::list(entries, pieceEnds, points); }
+};
+mem::Cache<GunShapeCache> gunShapes{"box3d gun shapes", mem::GameDirChange | mem::ModelReload};
 
 // A prop's hardest hit in a frame, for its .vr_impact (an explosive box dropped or thrown).
 struct Shock
@@ -666,6 +747,7 @@ struct World
         int held{0};             // the prop the hand carried last frame (0: none)
         float weaponMass{0.f};   // the held weapon's own mass (kg: Weapon Weights' Mass; 0: none, or not a weapon)
         za::Vector<glm::vec4> fist; // the push body's spheres (the drawn fist, in the hand's frame; empty: the one sphere)
+        za::Vector<b3Vec3> outline; // a weapon in convex pieces: their hull's points (its frame, m: sweepReach's sweep)
     };
     za::Vector<za::Array<HandBody, 2>> hands;
     za::Vector<glm::vec3> walkOrigins; // physical walking also nudges nonblocking corpses
@@ -730,6 +812,10 @@ struct World
     za::Vector<Bump> bumps;
     ankerl::unordered_dense::map<PropHullKey, b3HullData*, PropHullKeyHash> propHulls; // nullptr: no hull (a box instead)
     ankerl::unordered_dense::map<const qmodel_t*, za::Vector<b3HullData*>> moverHulls;
+    // The guns' convex pieces (gunPieces; empty: one hull), by model and frame (a held gun's: frame -2, -3 mirrored).
+    ankerl::unordered_dense::map<PropHullKey, za::Vector<b3HullData*>, PropHullKeyHash> gunPieces;
+    ankerl::unordered_dense::map<PropHullKey, convex::Report, PropHullKeyHash> gunReports; // (vr_physics_shapes)
+    int gunPiecesMost{-1}; // the vr_box3d_gun_pieces they were made with
     // Corpses' hulls fitted to their pose (corpseHulls): by model, frame and scale.
     ankerl::unordered_dense::map<PropHullKey, za::Vector<b3HullData*>, PropHullKeyHash> corpseHulls;
     // By edict: a dead monster's frame and model, and since when (the server's time) it has had them (watchCorpses: a
@@ -1549,6 +1635,130 @@ constexpr float hullTolerance = 0.2f;
     return hull;
 }
 
+// A gun in convex pieces that follow its drawn shape (vr_convex.hpp: its shell port, its well, the gaps between its
+// parts left open; one hull spanned them, and a round lying on it rested on air), from its drawn triangles (`corners`,
+// units), as hulls in metres; empty: one hull instead (vr_box3d_gun_pieces 0 or 1, or no pieces made). Made once for
+// each key; `corners(out)` gives the triangles, asked only then.
+template <typename Corners>
+[[nodiscard]] const za::Vector<b3HullData*>& gunPieces(const PropHullKey& key, Corners&& corners)
+{
+    const int most = za::min(static_cast<int>(vr_box3d_gun_pieces.value), maxBodyShapes);
+    if(most != world->gunPiecesMost) // (the setting changed: made again, for the guns made from now on)
+    {
+        for(auto& [made, hulls] : world->gunPieces)
+        {
+            for(b3HullData* hull : hulls)
+            {
+                b3DestroyHull(hull);
+            }
+        }
+        world->gunPieces.clear();
+        world->gunReports.clear();
+        world->gunPiecesMost = most;
+    }
+    auto it = world->gunPieces.find(key);
+    if(it != world->gunPieces.end())
+    {
+        return it->second;
+    }
+    za::Vector<b3HullData*> hulls;
+    if(most < 2)
+    {
+        return world->gunPieces.emplace(key, ZA_MOVE(hulls)).first->second;
+    }
+    // Made once a session (gunShapes), its hulls once a world (in metres).
+    const GunShapeCache::Entry* made = nullptr;
+    for(const GunShapeCache::Entry& e : gunShapes.entries)
+    {
+        if(e.key == key && e.most == most)
+        {
+            made = &e;
+        }
+    }
+    za::Vector<glm::vec3>& triangles = scratch.propVerts;
+    if(!made && corners(triangles))
+    {
+        convex::Settings settings;
+        settings.maxPieces = most;
+        settings.verbose = vr_debug_box3d.value >= 2.f;
+        za::Vector<convex::Piece> pieces;
+        GunShapeCache::Entry entry{key, most, static_cast<int>(gunShapes.pieceEnds.size()), 0, {}};
+        if(!convex::decompose(triangles, settings, pieces, &entry.report))
+        {
+            pieces.clear();
+        }
+        for(const convex::Piece& piece : pieces)
+        {
+            gunShapes.points.emplaceBackRange(piece.points.data(), piece.points.size());
+            gunShapes.pieceEnds.pushBack(static_cast<int>(gunShapes.points.size()));
+        }
+        entry.pieces = static_cast<int>(pieces.size());
+        gunShapes.entries.pushBack(entry);
+        made = &gunShapes.entries.back();
+        if(vr_debug_box3d.value)
+        {
+            Con_Printf("box3d: %s: %d convex pieces in %.1f ms; the most a hull lies off the gun %.2f units (one hull: "
+                       "%.2f)\n",
+                key.model->name, entry.pieces, entry.report.ms, entry.report.gap, entry.report.wholeGap);
+        }
+    }
+    if(made)
+    {
+        za::Vector<b3Vec3> points;
+        for(int i = made->firstPiece; i < made->firstPiece + made->pieces; i++)
+        {
+            points.clear();
+            for(int k = i > 0 ? gunShapes.pieceEnds[static_cast<size_t>(i - 1)] : 0; k < gunShapes.pieceEnds[static_cast<size_t>(i)]; k++)
+            {
+                points.pushBack(world->toM(gunShapes.points[static_cast<size_t>(k)]));
+            }
+            if(b3HullData* hull = convex::hull(points.data(), static_cast<int>(points.size()), static_cast<int>(points.size())))
+            {
+                hulls.pushBack(hull);
+            }
+        }
+        world->gunReports[key] = made->report;
+    }
+    return world->gunPieces.emplace(key, ZA_MOVE(hulls)).first->second;
+}
+
+// A held gun's pieces mirrored (the off hand's: y negated), from the main hand's (`base`, `baseKey`).
+[[nodiscard]] const za::Vector<b3HullData*>& mirroredPieces(const PropHullKey& baseKey, const za::Vector<b3HullData*>& base)
+{
+    const PropHullKey key{baseKey.model, -3, {}};
+    auto it = world->gunPieces.find(key);
+    if(it != world->gunPieces.end())
+    {
+        return it->second;
+    }
+    za::Vector<b3HullData*> hulls;
+    za::Vector<b3Vec3> points;
+    for(const b3HullData* piece : base)
+    {
+        points.clear();
+        for(int i = 0; i < piece->vertexCount; i++)
+        {
+            const b3Vec3 p = b3GetHullPoints(piece)[i];
+            points.pushBack(b3Vec3{p.x, -p.y, p.z});
+        }
+        if(b3HullData* hull = convex::hull(points.data(), static_cast<int>(points.size()), static_cast<int>(points.size())))
+        {
+            hulls.pushBack(hull);
+        }
+    }
+    if(const auto report = world->gunReports.find(baseKey); report != world->gunReports.end())
+    {
+        world->gunReports[key] = report->second;
+    }
+    return world->gunPieces.emplace(key, ZA_MOVE(hulls)).first->second;
+}
+
+[[nodiscard]] bool isGun(edict_t* ent)
+{
+    const char* name = PR_GetString(ent->v.classname);
+    return !strcmp(name, "thrown_weapon") || !strncmp(name, "weapon_", 7);
+}
+
 // The prop's hull: the convex hull of its drawn surface (an alias model's frame, a brush model's faces: the ammo and
 // health boxes as drawn, not Quake's padded box), or none (nullptr: its box).
 [[nodiscard]] b3HullData* propHull(edict_t* ent, qmodel_t* model, const glm::vec3& lo, const glm::vec3& hi)
@@ -1646,9 +1856,45 @@ constexpr float hullTolerance = 0.2f;
     return def;
 }
 
+// An explosion's chunk (vr_explosiondebris.cpp: progs/vr_explosion_debris.mdl, its size its box).
+[[nodiscard]] bool isChunk(const qmodel_t* model)
+{
+    return model && modelmeta::is(model, modelmeta::Id::VrExplosionDebris);
+}
+
+// Whether a contact's shapes are a chunk's: its sounds, touches and impacts are left out (a chunk at 9 m/s would
+// knock a crate's sound, touch a door, set off an explosive box's hard hit).
+[[nodiscard]] bool chunkPair(b3ShapeId a, b3ShapeId b)
+{
+    return ((b3Shape_GetFilter(a).categoryBits | b3Shape_GetFilter(b).categoryBits) & catChunk) != 0;
+}
+
+// A chunk's shape: a sphere as wide as its box (its entity's size), its own mass (.vr_prop_mass), bouncing as
+// vr_explosion_debris_bounce, no events or filtering of its own (made inside a monster, Box3D pushes it out).
+void addChunkShape(edict_t* ent, int num, b3BodyId body)
+{
+    b3ShapeDef def = shapeDef(num, catProp | catChunk, chunkMask);
+    const float radius = za::max(ent->v.maxs[0], 0.25f) / world->m2u;
+    const float volume = 4.18879f * radius * radius * radius;
+    def.density = za::max(massSetting(ent, nullptr), 1e-4f) / za::max(volume, 1e-9f);
+    def.baseMaterial.restitution = CLAMP(0.f, vr_explosion_debris_bounce.value, 1.f);
+    def.baseMaterial.rollingResistance = 0.2f; // (a sphere: it settles instead of rolling across the floor)
+    def.enableContactEvents = false;
+    def.enableHitEvents = false;
+    def.enablePreSolveEvents = false;
+    def.enableCustomFiltering = false;
+    const b3Sphere sphere{b3Vec3{0.f, 0.f, 0.f}, radius};
+    b3CreateSphereShape(body, &def, &sphere);
+}
+
 // The prop's shapes on `body`: its hull or its box.
 void addPropShapes(edict_t* ent, int num, qmodel_t* model, const glm::vec3& lo, const glm::vec3& hi, b3BodyId body, bool held)
 {
+    if(!held && isChunk(model))
+    {
+        addChunkShape(ent, num, body);
+        return;
+    }
     b3ShapeDef def = shapeDef(num, held ? catHeld : catProp, held ? catProp | catCorpse : propMask);
     if(!held && isSolidProp(ent))
     {
@@ -1684,6 +1930,28 @@ void addPropShapes(edict_t* ent, int num, qmodel_t* model, const glm::vec3& lo, 
     else
     {
         def.density *= props::massScale(model); // its estimate's Mass x (Held Object Weights)
+    }
+    // A gun: its convex pieces, as dense as its one hull would weigh (its mass as before, its shape as drawn).
+    if(hull && isGun(ent) && model->type == mod_alias)
+    {
+        const PropHullKey key{model, static_cast<int>(ent->v.frame), {lo.x, lo.y, lo.z, hi.x, hi.y, hi.z}};
+        const za::Vector<b3HullData*>* pieces =
+            &gunPieces(key, [&](za::Vector<glm::vec3>& out) { return held::drawnVertices(ent, out); });
+        if(!pieces->empty())
+        {
+            float volume = 0.f;
+            for(const b3HullData* piece : *pieces)
+            {
+                volume += piece->volume;
+            }
+            b3ShapeDef pieceDef = def;
+            pieceDef.density = def.density * hull->volume / za::max(volume, 1e-9f);
+            for(const b3HullData* piece : *pieces)
+            {
+                b3CreateHullShape(body, &pieceDef, piece);
+            }
+            return;
+        }
     }
     if(hull)
     {
@@ -2052,7 +2320,7 @@ void noteCorpseInside(int num, const Slot& s)
     filter.categoryBits = catCorpse;
     filter.maskBits = catProp;
     constexpr float sink = 0.01f; // m
-    za::Array<b3ShapeId, 8> shapes;
+    za::Array<b3ShapeId, maxBodyShapes> shapes;
     const int count = b3Body_GetShapes(s.body, shapes.data(), static_cast<int>(shapes.size()));
     const b3WorldTransform xf = b3Body_GetTransform(s.body);
     za::Array<b3Vec3, B3_MAX_SHAPE_CAST_POINTS> points;
@@ -2351,7 +2619,7 @@ void blastRagdoll(const RagdollBodies& r, const glm::vec3& at, float damage); //
     for(int b = 0; b < r.count && !q.found; b++)
     {
         const b3BodyId body = r.body[static_cast<za::SizeT>(b)];
-        za::Array<b3ShapeId, 4> shapes;
+        za::Array<b3ShapeId, maxBodyShapes> shapes;
         const int count = b3Body_GetShapes(body, shapes.data(), static_cast<int>(shapes.size()));
         const b3WorldTransform xf = b3Body_GetTransform(body);
         for(int k = 0; k < count && !q.found; k++)
@@ -2620,7 +2888,7 @@ bool createRagdoll(edict_t* ent, int num, Slot& s, bool now = false)
     r.count = rig->numBones;
     const bool headless = fieldFloatOr(ent, fields().vr_headless, 0.f) != 0.f || fieldFloatOr(ent, fields().vr_limbcut, 0.f) != 0.f;
     while(r.count > 1 && rig->bones[r.count - 1].joint == ragdoll::Joint::Loose &&
-          (now || headless || ragdoll::collapsed(*rig, pose, r.count - 1)))
+          (now || headless || rig->hideLoose || ragdoll::collapsed(*rig, pose, r.count - 1)))
     {
         r.count--;
     }
@@ -4355,8 +4623,8 @@ void writeProp(edict_t* ent, Slot& s);
 [[nodiscard]] float floorDepth(edict_t* ent, b3BodyId body)
 {
     const b3WorldTransform xf = b3Body_GetTransform(body);
-    b3ShapeId shapes[4];
-    const int n = b3Body_GetShapes(body, shapes, 4);
+    b3ShapeId shapes[maxBodyShapes];
+    const int n = b3Body_GetShapes(body, shapes, maxBodyShapes);
     za::Vector<glm::vec3>& corners = scratch.corners;
     corners.clear();
     float lo = 1e9f, hi = -1e9f;
@@ -4439,6 +4707,7 @@ void createBody(edict_t* ent, int num, Slot& s, Kind kind, bool resized = false)
     s.massSetting = massSetting(ent, model);
     s.massScale = props::massScale(model);
     s.soft = model && isSoft(ent, model);
+    s.chunk = isChunk(model);
     s.sound = physsound::materialOf(ent, model);
     s.origin = vec(ent->v.origin);
     s.angles = vec(ent->v.angles);
@@ -4781,7 +5050,7 @@ void noteBornInside(int num, const Slot& s, bool corpsesOnly = false)
         double born;
     } context{num, s.born};
     constexpr float sink = 0.01f; // m (reachSink's)
-    za::Array<b3ShapeId, 4> shapes;
+    za::Array<b3ShapeId, maxBodyShapes> shapes;
     const int count = b3Body_GetShapes(s.body, shapes.data(), static_cast<int>(shapes.size()));
     const b3WorldTransform xf = b3Body_GetTransform(s.body);
     za::Array<b3Vec3, B3_MAX_SHAPE_CAST_POINTS> points;
@@ -5290,7 +5559,7 @@ constexpr float restUp = 0.3f;         // a prop rests on a hand where their con
 void ignoreInside(World::HandBody& hb, uint64_t category, int letGo)
 {
     hb.ignore.clear();
-    za::Array<b3ShapeId, 4> shapes;
+    za::Array<b3ShapeId, maxBodyShapes> shapes;
     const int count = b3Body_GetShapes(hb.reach, shapes.data(), static_cast<int>(shapes.size()));
     const b3WorldTransform xf = b3Body_GetTransform(hb.reach);
     za::Array<b3Vec3, B3_MAX_SHAPE_CAST_POINTS> points;
@@ -5372,6 +5641,7 @@ void makeReach(
         hb.reach = b3_nullBodyId;
     }
     hb.ignore.clear();
+    hb.outline.clear();
     if(key.what == Key::None)
     {
         return;
@@ -5408,7 +5678,36 @@ void makeReach(
     case Key::Weapon:
     {
         za::Vector<glm::vec3>& vertices = scratch.propVerts;
-        if(held::modelVertices(key.model, key.mirrored, vertices) && vertices.size() >= 4)
+        // Its convex pieces (gunPieces), else its one hull.
+        // (The off hand's mirrored from the main hand's.)
+        const PropHullKey pieceKey{key.model, -2, {}};
+        const za::Vector<b3HullData*>* pieces = &gunPieces(
+            pieceKey, [&](za::Vector<glm::vec3>& out) { return held::modelTriangles(key.model, false, out); });
+        if(key.mirrored && !pieces->empty())
+        {
+            pieces = &mirroredPieces(pieceKey, *pieces);
+        }
+        if(!pieces->empty())
+        {
+            za::Vector<b3Vec3> all;
+            for(const b3HullData* piece : *pieces)
+            {
+                b3CreateHullShape(hb.reach, &shape, piece);
+                all.emplaceBackRange(b3GetHullPoints(piece), static_cast<size_t>(piece->vertexCount));
+            }
+            // (Swept as one: the pieces' hull, sweepReach.)
+            if(b3HullData* outline = b3CreateHull(all.data(), static_cast<int>(all.size()), 64))
+            {
+                hb.outline.emplaceBackRange(b3GetHullPoints(outline), static_cast<size_t>(outline->vertexCount));
+                b3DestroyHull(outline);
+            }
+            if(vr_debug_box3d.value)
+            {
+                Con_Printf("box3d: %s hand's weapon %s: %d convex pieces\n", h ? "main" : "off", key.model->name,
+                    static_cast<int>(pieces->size()));
+            }
+        }
+        else if(held::modelVertices(key.model, key.mirrored, vertices) && vertices.size() >= 4)
         {
             za::Vector<b3Vec3> points;
             points.reserve(vertices.size());
@@ -5548,16 +5847,22 @@ struct ReachPose
 void sweepReach(const World::HandBody& hb, int player, const ReachPose& from, const ReachPose& to, float dt)
 {
     constexpr float piece = 0.015f; // m
-    za::Array<b3ShapeId, 1> shapes;
-    if(b3Body_GetShapes(hb.reach, shapes.data(), 1) < 1)
+    za::Array<b3ShapeId, maxBodyShapes> shapes;
+    const int shapeCount = b3Body_GetShapes(hb.reach, shapes.data(), static_cast<int>(shapes.size()));
+    if(shapeCount < 1)
     {
         return;
     }
-    // The shape's points (its frame, m) and radius.
+    // The shape's points (its frame, m) and radius (a weapon in convex pieces: their hull's).
     za::Array<b3Vec3, 64> local;
     int count = 0;
     float radius = 0.f;
-    if(b3Shape_GetType(shapes[0]) == b3_hullShape)
+    if(!hb.outline.empty())
+    {
+        count = za::min(static_cast<int>(hb.outline.size()), static_cast<int>(local.size()));
+        za::copy(hb.outline.data(), hb.outline.data() + count, local.begin());
+    }
+    else if(b3Shape_GetType(shapes[0]) == b3_hullShape)
     {
         const b3HullData* hull = b3Shape_GetHull(shapes[0]);
         count = za::min(hull->vertexCount, static_cast<int>(local.size()));
@@ -5659,7 +5964,15 @@ void sweepReach(const World::HandBody& hb, int player, const ReachPose& from, co
             const glm::vec3 centre = glmv(b3Body_GetWorldCenter(prop));
             const glm::vec3 inBody = glm::inverse(a.rot) * (centre - pa);
             const glm::vec3 target0 = p0 + rot0 * inBody;
-            const glm::vec3 near0 = glmv(b3Shape_GetClosestPoint(shapes[0], b3v(target0)));
+            glm::vec3 near0 = glmv(b3Shape_GetClosestPoint(shapes[0], b3v(target0)));
+            for(int i = 1; i < shapeCount; i++) // (the nearest of its pieces)
+            {
+                const glm::vec3 q = glmv(b3Shape_GetClosestPoint(shapes[i], b3v(target0)));
+                if(glm::distance(q, target0) < glm::distance(near0, target0))
+                {
+                    near0 = q;
+                }
+            }
             const glm::quat back = a.rot * glm::inverse(rot0);
             const glm::vec3 at = pa + back * (near0 - p0);
             const glm::vec3 point = linear + glm::cross(spin, at - pa);
@@ -6240,7 +6553,10 @@ void beforeStep(float dt)
                 destroyBody(s);
                 continue;
             }
-            touchNearby(ent, com, com + vel * dt);
+            if(!s.chunk) // (a chunk touches nothing: its box along its flight is only a cost)
+            {
+                touchNearby(ent, com, com + vel * dt);
+            }
             if(ent->free || kindOf(ent, num, {}) != Kind::Prop)
             {
                 destroyBody(s); // gone, or no longer a prop (the next frame sees what it is)
@@ -6593,8 +6909,8 @@ void writeProp(edict_t* ent, Slot& s)
     s.velocity = velocity;
     s.spin = spin;
     s.asleep = asleep;
-    SV_LinkEdict(ent, true); // (its triggers)
-    if(!ent->free && origin != was)
+    SV_LinkEdict(ent, !s.chunk); // (its triggers; an explosion's chunk has none to touch, nor splashes: silent, as before)
+    if(!ent->free && origin != was && !s.chunk)
     {
         SV_CheckWaterTransition(ent);
     }
@@ -6615,7 +6931,7 @@ void soundHits(const b3ContactEvents& events)
     for(int i = 0; i < events.hitCount; i++)
     {
         const b3ContactHitEvent& e = events.hitEvents[i];
-        if(e.approachSpeed < least || !b3Shape_IsValid(e.shapeIdA) || !b3Shape_IsValid(e.shapeIdB))
+        if(e.approachSpeed < least || !b3Shape_IsValid(e.shapeIdA) || !b3Shape_IsValid(e.shapeIdB) || chunkPair(e.shapeIdA, e.shapeIdB))
         {
             continue;
         }
@@ -6665,7 +6981,7 @@ void touches(za::Vector<za::Pair<int, int>>& out)
     for(int i = 0; i < events.beginCount; i++)
     {
         const b3ContactBeginTouchEvent& e = events.beginEvents[i];
-        if(!b3Shape_IsValid(e.shapeIdA) || !b3Shape_IsValid(e.shapeIdB))
+        if(!b3Shape_IsValid(e.shapeIdA) || !b3Shape_IsValid(e.shapeIdB) || chunkPair(e.shapeIdA, e.shapeIdB))
         {
             continue;
         }
@@ -6683,7 +6999,8 @@ void touches(za::Vector<za::Pair<int, int>>& out)
     for(int i = 0; i < events.hitCount; i++)
     {
         const b3ContactHitEvent& e = events.hitEvents[i];
-        if(!b3Shape_IsValid(e.shapeIdA) || !b3Shape_IsValid(e.shapeIdB) || e.approachSpeed * world->m2u < 60.f)
+        if(!b3Shape_IsValid(e.shapeIdA) || !b3Shape_IsValid(e.shapeIdB) || e.approachSpeed * world->m2u < 60.f ||
+            chunkPair(e.shapeIdA, e.shapeIdB))
         {
             continue;
         }
@@ -6733,7 +7050,7 @@ void touches(za::Vector<za::Pair<int, int>>& out)
     for(int i = 0; i < events.hitCount; i++)
     {
         const b3ContactHitEvent& e = events.hitEvents[i];
-        if(!b3Shape_IsValid(e.shapeIdA) || !b3Shape_IsValid(e.shapeIdB) || e.approachSpeed < 2.f)
+        if(!b3Shape_IsValid(e.shapeIdA) || !b3Shape_IsValid(e.shapeIdB) || e.approachSpeed < 2.f || chunkPair(e.shapeIdA, e.shapeIdB))
         {
             continue;
         }
@@ -6851,6 +7168,19 @@ void callShocks()
     return !(s.kind == Kind::Prop && (b3Shape_GetFilter(reach).categoryBits & catReachHand) && isGrenade(s.model));
 }
 
+// Whether `round` passes through the gun lying about as `gun` to its load point (QC .vr_ammo_passgun: vr_reload.qc
+// VR_Reload_PropsFrame), as a loose round passes through a held gun (reachSkips).
+[[nodiscard]] bool passesGun(int round, int gun)
+{
+    const FieldOffsets& f = fields();
+    if(f.vr_ammo_passgun < 0 || round <= svs.maxclients || gun <= svs.maxclients || round >= qcvm->num_edicts ||
+        gun >= qcvm->num_edicts)
+    {
+        return false;
+    }
+    return fieldInt(EDICT_NUM(round), f.vr_ammo_passgun) == EDICT_TO_PROG(EDICT_NUM(gun));
+}
+
 bool shouldCollide(b3ShapeId a, b3ShapeId b, void*)
 {
     if(((b3Shape_GetFilter(a).categoryBits & catHeld) && smallGibSpared(numOf(b))) ||
@@ -6946,6 +7276,10 @@ bool shouldCollide(b3ShapeId a, b3ShapeId b, void*)
 // kinematic spheres, wedged it into the wall: Box3D threw it off at 10 to 15 m/s. ROUND21.md, "Props regressions".)
 bool preSolve(b3ShapeId a, b3ShapeId b, b3Pos point, b3Vec3 normal, void*)
 {
+    // The level's mesh asks too, point by point (a local change to Box3D's mesh contacts: a prop passing through a
+    // slipgate must not meet the wall behind it): only the portal copies' clip planes concern it.
+    const bool level = B3_ID_EQUALS(a, world->worldShape) || B3_ID_EQUALS(b, world->worldShape);
+    if(level && world->portalCopies.empty()) { return true; }
     for(const World::PortalCopy& copy : world->portalCopies)
     {
         for(const b3ShapeId shape : {a, b})
@@ -6955,6 +7289,7 @@ bool preSolve(b3ShapeId a, b3ShapeId b, b3Pos point, b3Vec3 normal, void*)
             if(clip && glm::dot(*clip, glm::vec4{world->toU(point), 1.f}) < -0.03125f) { return false; }
         }
     }
+    if(level) { return true; }
 
     const bool aPlayer = (b3Shape_GetFilter(a).categoryBits & catPlayer) != 0;
     if(aPlayer || (b3Shape_GetFilter(b).categoryBits & catPlayer) != 0)
@@ -6981,7 +7316,7 @@ bool preSolve(b3ShapeId a, b3ShapeId b, b3Pos point, b3Vec3 normal, void*)
     const b3ShapeId reach = aReach ? a : b, other = aReach ? b : a;
     if((b3Shape_GetFilter(reach).categoryBits & catReach) == 0)
     {
-        return true;
+        return !passesGun(numOf(a), numOf(b)) && !passesGun(numOf(b), numOf(a));
     }
     const World::HandBody* hb = reachOf(b3Shape_GetBody(reach), numOf(reach));
     if(hb && reachSkips(*hb, numOf(reach), numOf(other)))
@@ -7010,6 +7345,9 @@ bool preSolve(b3ShapeId a, b3ShapeId b, b3Pos point, b3Vec3 normal, void*)
 // The crossing half has a body in the other room. Both shapes are clipped
 // by their contact points, so the wall behind the aperture cannot catch it.
 // Dynamic copies return their contact impulses, rotated, to their owner.
+// A ragdoll's parts are copied together, through the gate its parts' box goes into (a corpse falling or thrown into a
+// gate: its limbs past the plane meet the far room, not the wall behind the gate), until its pelvis crosses and it is
+// carried whole (carryRagdolls).
 void syncPortalCopies(float dt)
 {
     for(const World::PortalCopy& c : world->portalCopies)
@@ -7017,17 +7355,16 @@ void syncPortalCopies(float dt)
         if(b3Body_IsValid(c.copy)) { b3DestroyBody(c.copy); }
     }
     world->portalCopies.clear();
-    const auto add = [&](b3BodyId body) {
-        if(B3_IS_NULL(body) || !b3Body_IsValid(body)) { return; }
-        // Its box over this step too (where its motion takes it: a thrown prop goes from short of the gate to the wall
-        // behind it in one step, and continuous collision met that wall before any copy was made: it bounced off), with
-        // a few units' slack for a tumbling box's corners round the aperture.
+    // Its box over this step too (where its motion takes it: a thrown prop goes from short of the gate to the wall
+    // behind it in one step, and continuous collision met that wall before any copy was made: it bounced off), with
+    // a few units' slack for a tumbling box's corners round the aperture.
+    const auto sweptBox = [dt](b3BodyId body, glm::vec3& lo, glm::vec3& hi) {
         const b3AABB box = b3Body_ComputeAABB(body);
         const glm::vec3 step = glmv(b3Body_GetLinearVelocity(body)) * (1.5f * dt);
-        const glm::vec3 lo = glm::min(glmv(box.lowerBound), glmv(box.lowerBound) + step);
-        const glm::vec3 hi = glm::max(glmv(box.upperBound), glmv(box.upperBound) + step);
-        portals::LightGate gate;
-        if(!portals::splitBounds(world->toU(b3v(lo)), world->toU(b3v(hi)), gate, 4.f)) { return; }
+        lo = glm::min(lo, glm::min(glmv(box.lowerBound), glmv(box.lowerBound) + step));
+        hi = glm::max(hi, glm::max(glmv(box.upperBound), glmv(box.upperBound) + step));
+    };
+    const auto addThrough = [&](b3BodyId body, const portals::LightGate& gate) {
         World::PortalCopy c;
         c.original = body;
         c.turn = gate.turn;
@@ -7068,13 +7405,161 @@ void syncPortalCopies(float dt)
         }
         world->portalCopies.pushBack(c);
     };
+    const auto add = [&](b3BodyId body) {
+        if(B3_IS_NULL(body) || !b3Body_IsValid(body)) { return; }
+        glm::vec3 lo{1e30f}, hi{-1e30f};
+        sweptBox(body, lo, hi);
+        portals::LightGate gate;
+        const glm::vec3 velocity = world->toU(b3Body_GetLinearVelocity(body));
+        if(!portals::splitBounds(world->toU(b3v(lo)), world->toU(b3v(hi)), gate, 4.f, &velocity)) { return; }
+        addThrough(body, gate);
+    };
     for(const Slot& slot : world->slots)
     {
-        if(slot.kind == Kind::Held || slot.kind == Kind::Prop) { add(slot.body); }
+        // (A dead monster's body (vr_corpse_collide) too; a ragdoll's parts below.)
+        if(slot.kind == Kind::Held || slot.kind == Kind::Prop || (slot.kind == Kind::Corpse && slot.ragdoll < 0))
+        {
+            add(slot.body);
+        }
+    }
+    // A ragdoll: the gate one of its parts goes into (its box across the plane, over the aperture), and a copy through it
+    // of each of its parts over that aperture, in front of the plane or past it (one against the frame beside it has
+    // none: the frame stops it, as it would a prop).
+    for(const RagdollBodies& r : world->ragdolls)
+    {
+        if(r.num == 0 || r.count == 0 || B3_IS_NULL(r.body[0]) || !b3Body_IsValid(r.body[0])) { continue; }
+        // A part's box over the step, in units, a few units in (lying on the floor its box reaches a little into it,
+        // under a gate's bottom edge).
+        const auto partBox = [&](int b, glm::vec3& ulo, glm::vec3& uhi) {
+            const b3BodyId body = r.body[static_cast<za::SizeT>(b)];
+            if(partCut(r, b) || B3_IS_NULL(body) || !b3Body_IsValid(body)) { return false; }
+            glm::vec3 lo{1e30f}, hi{-1e30f};
+            sweptBox(body, lo, hi);
+            ulo = world->toU(b3v(lo));
+            uhi = world->toU(b3v(hi));
+            const glm::vec3 inset = glm::min(glm::vec3{4.f}, (uhi - ulo) * 0.25f);
+            ulo += inset;
+            uhi -= inset;
+            return true;
+        };
+        portals::LightGate gate;
+        const glm::vec3 velocity = world->toU(b3Body_GetLinearVelocity(r.body[0]));
+        bool found = false;
+        for(int b = 0; b < r.count && !found; b++)
+        {
+            glm::vec3 ulo, uhi;
+            found = partBox(b, ulo, uhi) && portals::splitBounds(ulo, uhi, gate, 4.f, &velocity);
+        }
+        if(!found) { continue; }
+        for(int b = 0; b < r.count; b++)
+        {
+            glm::vec3 ulo, uhi;
+            if(!partBox(b, ulo, uhi)) { continue; }
+            bool over = true;
+            for(int c = 0; c < 8 && over; c++)
+            {
+                const glm::vec3 p{(c & 1) ? uhi.x : ulo.x, (c & 2) ? uhi.y : ulo.y, (c & 4) ? uhi.z : ulo.z};
+                const glm::vec3 onPlane = p - gate.normal * (glm::dot(gate.normal, p) - gate.dist);
+                over = !glm::any(glm::lessThan(onPlane, gate.mins - 4.f)) && !glm::any(glm::greaterThan(onPlane, gate.maxs + 4.f));
+            }
+            if(over) { addThrough(r.body[static_cast<za::SizeT>(b)], gate); }
+        }
     }
     for(const auto& pair : world->hands)
     {
         for(const World::HandBody& hand : pair) { add(hand.body); add(hand.reach); }
+    }
+}
+
+// After the step: a ragdoll whose pelvis went in through a slipgate's aperture is carried whole, every part by the gate's
+// mapping (where, how turned, how it moves), as VR_PortalToss carries what flies: its joints stay as they were, and its
+// parts still behind the plane meet the room they are in through their portal copies (syncPortalCopies).
+void carryRagdolls()
+{
+    for(RagdollBodies& r : world->ragdolls)
+    {
+        if(r.num == 0 || r.count == 0 || B3_IS_NULL(r.body[0]) || !b3Body_IsValid(r.body[0]))
+        {
+            r.pelvisKnown = false;
+            continue;
+        }
+        glm::vec3 pelvis = world->toU(b3Body_GetTransform(r.body[0]).p);
+        portals::LightGate gate;
+        if(r.pelvisKnown && portals::crossedGate(r.lastPelvis, pelvis, gate))
+        {
+            const glm::vec3 shift = gate.to - gate.turn * gate.from;
+            const glm::quat q = glm::quat_cast(gate.turn);
+            for(int b = 0; b < r.count; b++)
+            {
+                const za::SizeT i = static_cast<za::SizeT>(b);
+                const b3BodyId body = r.body[i];
+                if(partCut(r, b) || B3_IS_NULL(body) || !b3Body_IsValid(body)) { continue; }
+                const b3WorldTransform pose = b3Body_GetTransform(body);
+                b3Body_SetTransform(body, world->toM(gate.turn * world->toU(pose.p) + shift), toB3(glm::normalize(q * fromB3(pose.q))));
+                b3Body_SetLinearVelocity(body, b3v(gate.turn * glmv(b3Body_GetLinearVelocity(body))));
+                b3Body_SetAngularVelocity(body, b3v(gate.turn * glmv(b3Body_GetAngularVelocity(body))));
+                r.ownLin[i] = gate.turn * r.ownLin[i];
+                r.ownAng[i] = gate.turn * r.ownAng[i];
+            }
+            r.turn = glm::normalize(q * r.turn);
+            r.headMid = gate.turn * r.headMid + shift;
+            r.headVel = gate.turn * r.headVel;
+            r.headSpin = gate.turn * r.headSpin;
+            r.headRot = glm::normalize(q * r.headRot);
+            edict_t* ent = r.num > 0 && r.num < qcvm->num_edicts ? EDICT_NUM(r.num) : nullptr;
+            if(ent && !ent->free)
+            {
+                ent->v.angles[YAW] = anglemod(ent->v.angles[YAW] + glm::degrees(std::atan2(gate.turn[0][1], gate.turn[0][0])));
+            }
+            const glm::vec3 to = gate.turn * pelvis + shift;
+            Con_DPrintf("ragdoll: %d carried through a slipgate: pelvis %.1f %.1f %.1f -> %.1f %.1f %.1f\n", r.num, pelvis.x,
+                pelvis.y, pelvis.z, to.x, to.y, to.z);
+            pelvis = to;
+        }
+        r.lastPelvis = pelvis;
+        r.pelvisKnown = true;
+    }
+}
+
+// After the step: a dead monster's own body (vr_corpse_collide's pushable kinds, not a ragdoll) whose middle went in
+// through a slipgate's aperture is carried whole by the gate's mapping, as carryRagdolls carries a ragdoll; until then
+// its portal copy kept the wall behind the gate from stopping it (syncPortalCopies). writeCorpse then moves its entity.
+void carryCorpses()
+{
+    for(za::SizeT num = 0; num < world->slots.size(); num++)
+    {
+        Slot& s = world->slots[num];
+        if(s.kind != Kind::Corpse || s.ragdoll >= 0 || !s.corpseDynamic || B3_IS_NULL(s.body) || !b3Body_IsValid(s.body))
+        {
+            s.midKnown = false;
+            continue;
+        }
+        glm::vec3 mid = world->toU(b3Body_GetWorldCenter(s.body));
+        portals::LightGate gate;
+        if(s.midKnown && portals::crossedGate(s.lastMid, mid, gate))
+        {
+            const glm::vec3 shift = gate.to - gate.turn * gate.from;
+            const glm::quat q = glm::quat_cast(gate.turn);
+            const b3WorldTransform pose = b3Body_GetTransform(s.body);
+            // (A box, not fitted to its pose, stays square to the world: rotationOf; its yaw turns below.)
+            const glm::quat turned = s.corpseFitted ? glm::normalize(q * fromB3(pose.q)) : fromB3(pose.q);
+            b3Body_SetTransform(s.body, world->toM(gate.turn * world->toU(pose.p) + shift), toB3(turned));
+            b3Body_SetLinearVelocity(s.body, b3v(gate.turn * glmv(b3Body_GetLinearVelocity(s.body))));
+            b3Body_SetAngularVelocity(s.body, b3v(gate.turn * glmv(b3Body_GetAngularVelocity(s.body))));
+            b3Body_SetAwake(s.body, true);
+            edict_t* ent = static_cast<int>(num) < qcvm->num_edicts ? EDICT_NUM(static_cast<int>(num)) : nullptr;
+            if(ent && !ent->free && !s.corpseFitted)
+            {
+                ent->v.angles[YAW] = anglemod(ent->v.angles[YAW] + glm::degrees(std::atan2(gate.turn[0][1], gate.turn[0][0])));
+            }
+            s.asleep = false; // (written this frame: writeCorpse)
+            const glm::vec3 to = gate.turn * mid + shift;
+            Con_DPrintf("corpse: %d carried through a slipgate: middle %.1f %.1f %.1f -> %.1f %.1f %.1f\n", static_cast<int>(num),
+                mid.x, mid.y, mid.z, to.x, to.y, to.z);
+            mid = to;
+        }
+        s.lastMid = mid;
+        s.midKnown = true;
     }
 }
 
@@ -7384,6 +7869,13 @@ void destroyWorld()
             b3DestroyHull(hull);
         }
     }
+    for(auto& [key, hulls] : world->gunPieces)
+    {
+        for(b3HullData* hull : hulls)
+        {
+            b3DestroyHull(hull);
+        }
+    }
     for(auto& [model, hulls] : world->moverHulls)
     {
         for(b3HullData* hull : hulls)
@@ -7645,6 +8137,7 @@ edict_t* spawnStressProp(func_t fn, const char* classname, const char* model, co
     edict_t* e = ED_Alloc();
     store(at, e->v.origin);
     e->v.classname = PR_SetEngineString(classname);
+    VR_EdictIndex_Touch(e); // (the edict index: a classname set in C)
     if(model)
     {
         e->v.model = PR_SetEngineString(model);
@@ -8436,7 +8929,7 @@ void list_f()
 // inside them (the most negative plane distance: > 0 inside; < 0 outside, roughly how far).
 bool hullExtents(b3BodyId body, glm::vec3& lo, glm::vec3& hi, const glm::vec3* point, float* depth)
 {
-    za::Array<b3ShapeId, 4> shapes;
+    za::Array<b3ShapeId, maxBodyShapes> shapes;
     const int count = b3Body_GetShapes(body, shapes.data(), static_cast<int>(shapes.size()));
     const b3WorldTransform xf = b3Body_GetTransform(body);
     const glm::vec3 at = world->toU(xf.p);
@@ -8494,6 +8987,20 @@ void shapes_f()
         Con_Printf("    %s %.2f x %.2f x %.2f units (%.1f x %.1f x %.1f cm)\n", what, s.x, s.y, s.z, s.x * cm, s.y * cm,
             s.z * cm);
     };
+    // A gun's convex pieces (gunPieces): how many, and the most their hulls (and its one hull) lie off the drawn gun.
+    const auto pieces = [&](const PropHullKey& key, b3BodyId body) {
+        const auto it = world->gunReports.find(key);
+        if(it == world->gunReports.end())
+        {
+            Con_Printf("    convex pieces: none (one hull: vr_box3d_gun_pieces %g)\n", vr_box3d_gun_pieces.value);
+            return;
+        }
+        const convex::Report& r = it->second;
+        Con_Printf("    convex pieces: %d shapes, made in %.1f ms (cell %.2f units, %d cells); the most a hull lies off the "
+                   "gun %.2f units (%.1f cm), one hull %.2f (%.1f cm); volume %.1f, one hull %.1f, the gun %.1f\n",
+            b3Body_GetShapeCount(body), r.ms, r.cell, r.cells, r.gap, r.gap * cm, r.wholeGap, r.wholeGap * cm, r.volume,
+            r.wholeVolume, r.solid);
+    };
     for(int arg = 1; arg < za::max(Cmd_Argc(), 2); arg++)
     {
         for(edict_t* e : entitiesNamed(Cmd_Argc() > arg ? Cmd_Argv(arg) : "props"))
@@ -8529,6 +9036,13 @@ void shapes_f()
             }
             box("Quake box      ", glm::vec3{e->v.mins[0], e->v.mins[1], e->v.mins[2]},
                 glm::vec3{e->v.maxs[0], e->v.maxs[1], e->v.maxs[2]});
+            if(model && isGun(e))
+            {
+                const Slot& slot = world->slots[num];
+                pieces(PropHullKey{model, static_cast<int>(e->v.frame),
+                           {slot.mins.x, slot.mins.y, slot.mins.z, slot.maxs.x, slot.maxs.y, slot.maxs.z}},
+                    slot.body);
+            }
         }
     }
     if(world->hands.size() < 2)
@@ -8576,6 +9090,7 @@ void shapes_f()
         }
         Con_Printf("    its loading port %s the hull: %.2f units (%.1f cm)\n", depth > 0.f ? "inside" : "outside",
             za::fabs(depth), za::fabs(depth) * cm);
+        pieces(PropHullKey{hb.key.model, hb.key.mirrored ? -3 : -2, {}}, hb.reach);
     }
 }
 
@@ -8641,6 +9156,7 @@ void spawn_f()
     const int s = PR_AllocString(static_cast<int>(strlen(Cmd_Argv(1))) + 1, &name);
     strcpy(name, Cmd_Argv(1));
     e->v.classname = s;
+    VR_EdictIndex_Touch(e); // (the edict index: a classname set in C)
     pr_global_struct->time = qcvm->time;
     pr_global_struct->self = EDICT_TO_PROG(e);
     PR_ExecuteProgram(fn);
@@ -8683,6 +9199,16 @@ void fling_f()
     {
         store(glm::vec3{za::cos(yaw) * speed, za::sin(yaw) * speed, up}, e->v.velocity);
         setFlag(e, FL_ONGROUND, false);
+        // A pushable corpse (not a ragdoll): its body moves it, not its entity's velocity.
+        const int n = NUM_FOR_EDICT(e);
+        if(world && n < static_cast<int>(world->slots.size()) && world->slots[n].kind == Kind::Corpse &&
+            world->slots[n].ragdoll < 0 && world->slots[n].corpseDynamic && B3_IS_NON_NULL(world->slots[n].body) &&
+            b3Body_IsValid(world->slots[n].body))
+        {
+            b3Body_SetLinearVelocity(world->slots[n].body, world->toM(vec(e->v.velocity)));
+            b3Body_SetAwake(world->slots[n].body, true);
+            world->slots[n].asleep = false;
+        }
         Con_Printf("vr_physics_fling: %d %s at %.0f %.0f %.0f u/s\n", NUM_FOR_EDICT(e), PR_GetString(e->v.classname),
             e->v.velocity[0], e->v.velocity[1], e->v.velocity[2]);
     }
@@ -8752,8 +9278,8 @@ void sink_f()
         {
             const b3BodyId body = world->slots[num].body;
             const b3WorldTransform xf = b3Body_GetTransform(body);
-            b3ShapeId shapes[8];
-            const int n = b3Body_GetShapes(body, shapes, 8);
+            b3ShapeId shapes[maxBodyShapes];
+            const int n = b3Body_GetShapes(body, shapes, maxBodyShapes);
             for(int i = 0; i < n; i++)
             {
                 const b3HullData* hull = b3Shape_GetType(shapes[i]) == b3_hullShape ? b3Shape_GetHull(shapes[i]) : nullptr;
@@ -9380,7 +9906,7 @@ float heldRay(int num, const glm::vec3& start, const glm::vec3& end)
     {
         return 1.f;
     }
-    za::Array<b3ShapeId, 8> shapes;
+    za::Array<b3ShapeId, maxBodyShapes> shapes;
     const int n = b3Body_GetShapes(s.body, shapes.data(), static_cast<int>(shapes.size()));
     float nearest = 1.f;
     for(int i = 0; i < n; i++)
@@ -9414,7 +9940,7 @@ int heldBox(int num, const glm::vec3& lo, const glm::vec3& hi, float reach)
         corners[k] = b3InvRotateVector(xf.q, b3Sub(world->toM(c), xf.p));
     }
     const b3ShapeProxy proxy{corners, 8, za::max(reach, 0.f) / world->m2u};
-    za::Array<b3ShapeId, 8> shapes;
+    za::Array<b3ShapeId, maxBodyShapes> shapes;
     const int n = b3Body_GetShapes(s.body, shapes.data(), static_cast<int>(shapes.size()));
     for(int i = 0; i < n; i++)
     {
@@ -9442,6 +9968,77 @@ int heldBox(int num, const glm::vec3& lo, const glm::vec3& hi, float reach)
         }
     }
     return 0;
+}
+
+bool shapeNearest(int num, const glm::vec3& a, const glm::vec3& b, glm::vec3& out)
+{
+    if(!world || num <= 0 || num >= static_cast<int>(world->slots.size()))
+    {
+        return false;
+    }
+    const Slot& s = world->slots[num];
+    if((s.kind != Kind::Held && s.kind != Kind::Prop) || B3_IS_NULL(s.body) || !b3Body_IsValid(s.body))
+    {
+        return false;
+    }
+    // The segment in the body's frame (its shapes' own); the nearest of its shapes by GJK (b3ShapeDistance). A held one
+    // where the hand holds it now (its body follows it at the next step: a fast blow's frame would ask where it was).
+    b3WorldTransform xf = b3Body_GetTransform(s.body);
+    if(s.kind == Kind::Held)
+    {
+        edict_t* ent = EDICT_NUM(num);
+        xf.p = world->toM(vec(ent->v.origin));
+        xf.q = rotationOf(ent, s);
+    }
+    const glm::vec3 at = world->toU(xf.p);
+    const b3Vec3 segment[2]{b3InvRotateVector(xf.q, world->toM(a - at)), b3InvRotateVector(xf.q, world->toM(b - at))};
+    const b3ShapeProxy proxyB{segment, glm::distance(a, b) > 1e-4f ? 2 : 1, 0.f};
+    za::Array<b3ShapeId, maxBodyShapes> shapes;
+    const int n = b3Body_GetShapes(s.body, shapes.data(), static_cast<int>(shapes.size()));
+    float best = 1e9f;
+    b3Vec3 nearest{0.f, 0.f, 0.f};
+    for(int i = 0; i < n; i++)
+    {
+        b3ShapeProxy proxyA{nullptr, 0, 0.f};
+        b3Capsule capsule;
+        b3Sphere sphere;
+        switch(b3Shape_GetType(shapes[i]))
+        {
+            case b3_hullShape:
+            {
+                const b3HullData* hull = b3Shape_GetHull(shapes[i]);
+                proxyA = b3ShapeProxy{b3GetHullPoints(hull), za::min(hull->vertexCount, B3_MAX_SHAPE_CAST_POINTS), 0.f};
+                break;
+            }
+            case b3_capsuleShape:
+                capsule = b3Shape_GetCapsule(shapes[i]);
+                proxyA = b3ShapeProxy{&capsule.center1, 2, capsule.radius};
+                break;
+            case b3_sphereShape:
+                sphere = b3Shape_GetSphere(shapes[i]);
+                proxyA = b3ShapeProxy{&sphere.center, 1, sphere.radius};
+                break;
+            default: break;
+        }
+        if(proxyA.count == 0)
+        {
+            continue;
+        }
+        const b3DistanceInput input{proxyA, proxyB, b3Transform_identity, true};
+        b3SimplexCache cache{};
+        const b3DistanceOutput result = b3ShapeDistance(&input, &cache, nullptr, 0);
+        if(result.distance < best)
+        {
+            best = result.distance;
+            nearest = result.pointA;
+        }
+    }
+    if(best >= 1e9f)
+    {
+        return false;
+    }
+    out = at + world->toU(b3RotateVector(xf.q, nearest));
+    return true;
 }
 
 bool isBox3DProp(int num)
@@ -11570,6 +12167,8 @@ extern "C" void VR_PhysicsFrameEnd(void)
             traceGibContacts();
         }
     }
+    carryRagdolls(); // (through slipgates)
+    carryCorpses();
     const double t2 = Sys_DoubleTime();
     world->stepTime += t2 - t1;
     world->stepTimeMax = za::max(world->stepTimeMax, t2 - t1);

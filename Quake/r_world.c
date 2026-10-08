@@ -233,6 +233,18 @@ static void R_BModelMatrix (entity_t *ent, float mat[16]) // QVR: (R_PaintBrushW
 		VR_BrushTransform (ent, mat); // QVR
 }
 
+// QVR: a brush prop (not a map's door or lift) drawn split by a slipgate (vr/vr_portals.cpp): R_SortEntities keeps it
+// though its own place is out of view, for its half drawn through the gate may be in view (a box sticking out of the
+// gate seen from the destination's side, its middle still at the entrance: its frustum cull dropped both halves).
+qboolean R_BModelPortalSplit (entity_t *ent)
+{
+	float mat[16], mapped[16], source[4], dest[4];
+	if (ent == &cl_entities[0] || !ent->model || ent->model->name[0] == '*')
+		return false;
+	R_BModelMatrix (ent, mat);
+	return VR_PortalAlias (ent, mat, mat, mapped, source, dest) != 0;
+}
+
 static void R_InitBModelInstance (bmodel_gpu_instance_t *inst, entity_t *ent)
 {
 	float mat[16];
@@ -801,7 +813,7 @@ static qboolean R_EntHasWater (entity_t *ent, qboolean translucent)
 	for (i = TEXTYPE_FIRSTLIQUID; i < TEXTYPE_LASTLIQUID+1; i++)
 	{
 		int numtex = ent->model->texofs[i+1] - ent->model->texofs[i];
-		if (i == TEXTYPE_TELE && VR_PortalDrawing ()) // only the entrance overlays stars
+		if (i == TEXTYPE_TELE && VR_PortalHideTeleport ()) // QVR: only the entrance overlays stars (views within views: theirs too)
 			continue;
 		if (numtex && (GL_WaterAlphaForEntityTextureType (ent, (textype_t)i) < 1.f) == translucent)
 			return true;
@@ -898,7 +910,7 @@ void R_DrawBrushModels_Water (entity_t **ents, int count, qboolean translucent)
 		{
 			texture_t *t = model->textures[model->usedtextures[j]];
 			if ((isworld && VR_WaterMeshActive () && t->type != TEXTYPE_TELE) ||
-				(t->type == TEXTYPE_TELE && VR_PortalDrawing ()))
+				(t->type == TEXTYPE_TELE && VR_PortalHideTeleport ()))
 				continue;
 			if ((GL_WaterAlphaForEntityTextureType (e, t->type) < 1.f) != translucent)
 				continue;

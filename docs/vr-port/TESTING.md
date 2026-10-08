@@ -194,6 +194,15 @@ prints it.
     holster. Hold that hand's **B/Y** as you grip there: the mission pack's **multi-grenade** (Dissolution of
     Eternity's, from your multi-rockets; a grenade if you have none), muted until armed, held, armed and thrown as the
     grenade is; on its fuse it bursts into five mini-grenades.
+    **One grenade from either pouch** (ROUND21.md, same title): the back pouch's grenade is now the grenade
+    launcher's round (a 40 mm grenade: brass case, olive body, a yellow stripe that glows red once armed; the
+    multi-grenade red, its stripe amber). With the grenade launcher in the other hand (Immersive reloading), turn it
+    butt first to the muzzle: it loads. With the proximity launcher in the other hand the back pouch gives a
+    proximity grenade (B/Y with no multi-rockets too, if you have that launcher): load it, or pull its pin (its lenses
+    light) and let go of it: it is a mine (sticks where it lands, watches after 2 s). The ammo pouch's grenades and
+    proximity grenades arm by the trigger the same way; armed, neither loads. Either pouch's goes back into either
+    pouch unarmed. The ammo pouch shows the launcher's rounds standing in it, as many as you have (up to 3 rockets,
+    4 grenades, 4 proximity grenades; multi-rounds in their colours).
     holster.
   - **Shooting grenades** (ROUND21.md, same title): shoot a grenade and it goes off where it is: an ogre's while it
     flies at you, your own (launcher or hand grenade) in the air or lying on the ground, or a hand grenade's dud you
@@ -253,12 +262,29 @@ prints it.
     your hands follow your controllers as fast as the slowed world allows. Try moving at a quarter speed while
     recording, then speed the footage up 4x: does it look and sound natural? Try a real-speed swing in slow motion
     (Hand Speed Limit), Slow Sounds off, Ease In and Out.
+  - **Bullet time and Sandevistan** (ROUND21.md, "Slow motion: bullet time and Sandevistan"): tap your wrist gadget's
+    screen hard and straight with your other hand (or the butt of the gun it holds): the world slows for as long as the
+    TIME meter on the gadget's screen lasts (6 s), the view drained and darkened at its edges; tap again to stop. Melee
+    swings across the gadget, soft touches and resting hands must never start it (Combat > Bullet Time > Screen Tap:
+    Tap Force, Tap Straightness). Try **Sandevistan: You at Full Speed** (you move, turn, swing, shoot at full speed in
+    the slowed world). Is the look too strong? Graphics > Recording: **Turn in Real Time**, **Move in Real Time**.
+  - **Gear lights: the gadget's side button** (ROUND21.md, "The gadget's side button: gear lights"): press the inner
+    button on the gadget's lower edge with your other hand's fingertip: a click, and the gadget's and your guns'
+    screens dim (their cast light and glow nearly gone, the text dimmer); press again to bring them back. Easy to find
+    and press, never pressed by a screen tap? HUD and Menus > Screens > Gear Lights: Button Size, Across/Up/Out, Show the
+    Button (its hit volume drawn). Headless: `Misc/quakevr/gadget_tap_test.sh <agent>`.
+
   - **Bullet time and Sandevistan** (ROUND21.md, "Slow motion: bullet time and Sandevistan"): press the inner button
     on your wrist gadget's lower edge with your other hand's fingertip: the world slows for as long as the TIME meter on
     the gadget's screen lasts (6 s), the view drained and darkened at its edges; press again to stop. Combat > Bullet
     Time: try **Sandevistan: You at Full Speed** (you move, turn, swing, shoot at full speed in the slowed world). Is
     the button easy to find and press (Button Size, Fingertip Reach)? Is the look too strong? Graphics > Recording:
     **Turn in Real Time**, **Move in Real Time**.
+  - **Bullet time's distortion trails** (ROUND21.md, same title): in bullet time, shoot the shotgun, the nailgun and
+    the rocket launcher, and let monsters shoot at you: a rippling glass-rod wake behind each bullet, nail, rocket and
+    monster's shot, fading along its length, gone soon after bullet time ends. Same in both eyes? Strong enough, too
+    strong? Combat > Bullet Time > Distortion Trails: Bend, Trail Life, Longest Trail, Trail Width, which projectiles;
+    Always shows them in normal time. Debug > Distortion Trails Test fires test shots across the view.
   - **Grappling hook: rope, reel on demand, props and monsters** (ROUND21.md, same title): the hook bites and the rope
     just holds you at its length (swing on it, walk closer; nothing pulls). Hold that hand's **B** (right) or **Y**
     (left) with the trigger to reel in; let go and the rope keeps its length. Walls and ceilings, heavy props (100 kg
@@ -777,6 +803,23 @@ Options > Debug > Profiling and Memory.
   in `qconsole.log` too).
 - **Detail**: *Every Trace and Builtin* also times each collision trace and each QuakeC builtin call apart (dearer).
 
+**QuakeC's time by function** (Debug > Profiling and Memory > *Time QuakeC Functions*, *QuakeC Time Report*):
+`vr_qcprofile 1`, play, then `profile_qc [n]` (default 15; `profile_qc 0` only zeroes) prints, a frame (host frames
+since the last report): the server QuakeC's whole time; the n functions with the most time of their own (`self`: their
+statements and the builtins they call, their QuakeC callees out), with their time callees in (`incl`) and calls; the n
+builtins (`b`), and the n caller > builtin pairs (`p`: which function's calls of which builtin cost the most). TSC
+ticks round each call (one test a call while off); the totals include the timer's own cost, so compare runs with it
+on both sides. A scenario's split: insert `vr_qcprofile 1; profile_qc 0` before a scenario's `vr_bench_begin` and
+`profile_qc 40` after its `vr_bench_end` (`qvrbench.py script <name> --out x.cfg`). `profile [n]` (Quake's) still
+counts instructions.
+
+**The edict index** (`vr_edictindex`, on; vr_edictindex.cpp, ROUND21.md "QuakeC's scans through an index"): `find()`
+by classname and `findflags()` on .flags (QuakeC's bits: monsters, clients, items), lit wall torches, noticeable bodies
+and three more QuakeC fields step through an index instead of every edict. `vr_edictindex_verify 1` walks as well on
+every search and prints `vr_edictindex ERROR: ...` for any difference (the walk's answer is used); `vr_edictindex_stats`
+prints the searches, rebuilds, edicts read again and differences since the last. A feature test run with
+`vr_edictindex_verify 1` that prints no ERROR line found the index exact for everything it did.
+
 In the console: `vr_profile_overlay 1` / `2`, `vr_profile_csv 1` / `0` (or `vr_profile_csv_toggle`, to bind to a key),
 `vr_profile_hitch 1.5`, `vr_profile_detail 2`, `vr_profile_gpu 4` (the GPU's times on one frame in 4: each timer query
 stalls the GPU a little; 1 every frame, 0 none). All are off again after a restart.
@@ -805,7 +848,9 @@ shadows`) are drawn once, in the left eye's `setup view`. `self` columns leave o
 **Shadow maps, layered or a face at a time** (LIGHTING.md, "Layered shadow casters"): `vr_shadow_layered_check 20`
 (Debug > Profiling and Memory > Check Layered Shadows) draws the frame's shadow maps both ways 20 times (draw calls,
 faces, model draws, CPU and GPU ms each), then reads both atlases back and compares them texel by texel: `0 texels
-differ` in both is the pass. `vr_shadow_layered 0` draws a face at a time (the old way).
+differ` in both is the pass. `vr_shadow_layered 0` draws a face at a time (the old way). `vr_shadow_layered_check 20
+cache` (Debug > Profiling and Memory > Check Shadow Caster Set-up) compares the casters set up again for each light with
+the set-up kept for the pass (r_alias.c, R_AliasDepthCacheBegin): the set-ups made and reused, and `0 texels differ`.
 
 **Benchmark scenarios** ([BENCHMARKS.md](BENCHMARKS.md)): the kit's `bench.sh` runs a set of fixed scenarios (idle,
 slipgates, combat, physics, effects, lights, liquids, custom maps, flat) and compares a baseline with new results;
@@ -924,7 +969,8 @@ the script crashes at the culprit instead (ROUND21.md, "Map load crash: the cach
 
 `quit` in a test run (`QVR_TEST_BACKGROUND`, which the kit sets) quits at once, whatever has the keys: without a map
 the console is up, so a script's `toggleconsole` closed it and `quit` opened the quit confirmation and waited there
-until the kit's timeout (so did `quit` after `menu_vr ...`). A player's `quit` outside the console still asks.
+until the kit's timeout (so did `quit` after `menu_vr ...`). A player's `quit` outside the console still asks. A test run
+uses no network: no add-on list download, the map index read from its cache only (`maps_fetch` fetches).
 
 Menus (ROUND21.md, "Menu: scroll memory and shortcuts"): `menu_vr pos` prints the layout (ROUND21.md, "The menus' corner column moved left": where the menu's text starts, the corner buttons' right edge and bottom, beside or over the menu; on a VR page the rows' top and count), then the menu shown and, on a VR page, its
 selected row (with the header above it), its scroll and the page Back goes to. While a drop-down list is open (ROUND21.md, "Drop-down lists in the VR menus") a second line gives its row, highlighted choice, scroll and box (menu coordinates, for `vr_mock_laser`). `menu_vr rows` (Debug > Tools > Menu Rows) prints the VR page's rows as drawn (MROW: row, top y, label) and MROWS: rows shown, scroll and its most, the section gap (`vr_menu_section_gap`) and whether the mouse finds each row where it is drawn (`rowAt agrees`). `menu_vr pos` also prints where Back goes (`back to <page>, menu <m_state>` for a menu outside the VR pages), the main menu's row spacing and group gap, Single Player's row, the flat banner's place, the corner's version label (ROUND21.md, "Versions and the menus' version label": its text, box, what the menu draws right to under it, or why it was left out), and the selected slider's setting, its value as shown and its step (`(fine)` while the fine modifier is held); `vr_mock_key <key> down|up` holds or lets go of a key (`shift`: fine steps). `menu_vr recent [clear]` prints Search's recent list (SRECENT lines, each row's middle in menu coordinates while Search is shown) or clears it (quakevr/search_recent.txt). `menu_vr list`: every page's number
@@ -933,7 +979,7 @@ and place in the tree. `menu_vr dump` prints every page reached from VR Settings
 page, the tree, pages over 30 rows; ROUND21.md, "Menus reorganized"). Page numbers: 13 Grappling Hook, 23 Weapon
 Offsets, 41 Held Object Offsets, 42 Weapon Weights, 43 Held Object Weights, 44 and on the pages added then, 65 Recording. `vr_mock_laser back|search|console|settings|advanced|levels|maps|relighting|checklist|spectator`
 (or `<x> <y>` in menu coordinates; `off`) puts the main hand's laser on a corner button or a spot, whatever the hand's
-pose; then `vr_mock_button main trigger 1` / `0` clicks. `vr_mock_button off stickclick 1` / `0` gives the corner
+pose; then `vr_mock_button main trigger 1` / `0` clicks. `vr_mock_laser kofi` (`vr_mock_mouse kofi click` on a flat screen) points at the version box's Ko-fi link (ROUND21.md, "The menus' Ko-fi link and corner boxes"); with `vr_menu_link_dryrun 1` (and in any hidden kit run) a press prints `menu link: opening <url> (<n>)` instead of opening the browser. `vr_mock_laser update` / `vr_mock_mouse update [click]` point at the update notice above it (shown with `vr_update_test_version 9.9.9`, or a newer feed: `vr_update_url <feed>; vr_update_check_now`; `Misc/quakevr/update_notice_test.py` runs the whole check against a local server). `vr_mock_button off stickclick 1` / `0` gives the corner
 buttons the selection, `vr_mock_stick off 0 -1` (then `0 0`) moves down, `vr_mock_button main primary` presses;
 `vr_mock_stick main 0 -1` scrolls a page. Back to Game: `vr_mock_button main menu 1; wait90; vr_mock_button main menu
 0`, reopened by `togglemenu`. Across a restart: `writeconfig <file>` writes `vr_menu_positions`; exec that line at the
@@ -981,6 +1027,10 @@ stick) does not take you out of the pool's bottom: the player falls through it (
 `vr_swim_debug 1` prints each stroke. Mock hand poses: pitch -20 points the hand down (Gun Angle 70); yaw 90 (main)
 or -90 (off) turns the palm back towards the body. For the air, nothing prints a drowning hit: add a temporary
 `bprint` after `T_Damage` in `WaterMove` for the run (as for ROUND21.md's table).
+Out of the water by hand (ROUND21.md, "Out of the water by hand; ..."): `vr_campaign_native mg3; vr_climb 1; map map1`, `setpos 64
+1000 -160 0 90 0; noclip`, `+jump` (stays at the surface) and `vr_mock_stick off 0 1` for 120 frames: `vr_water_jump 1` lifts you
+onto the lip (z -104), 0 leaves you in the water at y 1080 (but with `vr_climb 0`: Quake's lift). `developer 1` prints
+`waterjump:` lines; a play gripping at hy 1.32, fwd -0.67 and pulling down mantles out.
 Climbing, hand placement and grab leniency (ROUND21.md, "Climbing: hand placement and grab leniency"):
 `vr_fixed_frames 1` makes every frame 1/72 s of game time with a server frame, so a scripted climb logs the same
 numbers every run (compare two settings' `climbtrace` lines with `diff`). `vr_climb_try <x> <y> <z> [off|main] [<vx>
@@ -1167,6 +1217,12 @@ shotguns (none: two spawned ahead), 14 sets the Bloody Nightmare new-game flag (
 bits (`vr_debug_shots 1`: the bloody super shotgun's 28 pellets); developer 1 prints `superaxe:` and `bloody:`
 lines (each blow, each burst). Real swings: `motion_synth.py slash_horizontal_rtl --weapon superaxe --distance 0.85`.
 `vr_anchor_nearest owned/mg3/progs/v_hammer.mdl x y z` finds its anchors; `Misc/quakevr/fit_superaxe.py` its fit.
+Dawn of the Machine's whole campaign (M3-29; EXPANSIONS.md, "Dawn of the Machine route sweep"): `bash
+Misc/quakevr/mg3_route_test.sh <agent> [main] [bn] [exits]` (about 9 min for all three; logs `scratch/mg3route_<leg>.log`
+and `.check`): the entity checker, the language gate, then the normal game start -> credits with a save, load and real
+death in every first visit (main), Bloody Nightmare's two endings (bn) and every exit of the 20 playable BSPs (exits).
+`vr_mg3_test 31` is its carry report (Debug > Tests > Dawn of the Machine Tests > Route Carry Report), 32 seeds hands,
+holsters and masks, 36 gives the four runes, 100 + 2 m + n walks into the exit to map m (`mg3_route_test.py MAPS`).
 The crowbar (ROUND21.md, "The crowbar"): `impulse 167` puts one in the main hand (187: the off hand; hold the grip:
 `+grabright; vr_mock_button main grip 1`, or `vr_weapon_grip_mode 1`), `impulse 217` drops one 48 units ahead, `216`
 takes the one lying nearest into an empty hand (the grip held), `218` prints each lying about and whether your hands
@@ -1649,6 +1705,9 @@ out of the way; punches and throws: `debris/motions/punch2.mock`, `throw.mock` (
 set as `motions/hc.txt`), a grunt from `vr_test_spawn 0; vr_test_spawn_dist 36; impulse 241` on flat ground
 (`setpos 340 1350 -200 0 180 0; noclip` in e1m1). A worldspawn's `_vr_debris` without editing a map: a
 `maps/<map>.ent` override (`external_ents`).
+A plain `maps/<map>.ent` that names a brush model the map lacks (`*N` past its submodels: one left over from an older
+version of the map) is ignored with a warning (`... doesn't match this map (references *36, the map has 28): ignored`);
+the `.ent` files we ship are `<map>@<crc>.ent`, which apply only to their `.bsp` (`Misc/quakevr/entfile.py` prints the names).
 Align Sights to My Aim (ROUND21.md): `vr_sight_align [start [main|off] | apply | cancel | undo]` runs the Weapon Offsets page's capture (the mock hand must be lowered, then raised and held 0.4 s, for each capture; `vr_sight_align_captures`), `vr_sight_check [main|off] [size]` prints the sight line against the dominant eye (`vr_dominant_eye`), where the sights and the laser land in that eye's image, and the laser against the line; `vr_sight_lines` lists every weapon's line; `vr_show_sight_line 1` draws them. Higher eye images: `vr_mock_eye_size 2048; vr_restart`, then `vr_eyeshot 1`.
 Held props' grips (ROUND21.md, "Held props: grip modes, live offsets, palm grip, torch handle"): `vr_grip_frame` prints
 each hand's grip frame (the palm, its normal, the grip channel); `developer 1` prints `grip: taken|placed again ...` (the
@@ -1909,6 +1968,7 @@ the pouch and `vr_mock_hand_to main lport` (the breech, turned with the barrels:
 hand down 10 units in four frames (`ssg: pried open`, `broken open by the pry`), up again (`ssg: the barrels lifted
 shut`); `vr_reload_debug 2` prints the pry's angle every frame and `ssg: hand N open A deg, its breech ...` (the drawn
 barrels against the model's turned breech: `turned 0.00 off`). The self-test's section: `reload: PASS ... super shotgun`.
+The cell cords (ROUND21.md, "Cell cords"): `bash Misc/quakevr/cellcord_test.sh <agent>` (the laser cannon held: the pouch shows cells, its cord plugged into cell 0 with its ends on the weapon's end and the contact; no cells: loose, hanging; cells again: plugging, then plugged; two cannons: cells 0 and 2; the option off: none; Mjolnir and the Super Axe on). `vr_cellcord_info` (Debug, or Weapons > Reloading > Cell Cords > Cord Points) prints each hand's cord: `cellcord main: lasercannon plugged cell=0 gunend=0.00 plug=0.00 below=-13.8`.
 The super shotgun's ways to open and close (reload_test.sh section 7, the author's notes): each switch in a matrix (one
 off: that way does nothing, the other three still work; `vr_reload_ssg_pry_angle 40`, `_lift_angle 40` there: the mock
 hands' reach), the hits (`vr_mock_hand_to main held 0.85 30`, then `held 0.85 0`: a hit from above; `held 0.85 -40`
@@ -1918,3 +1978,15 @@ then `-15`: from below), B/Y (`vr_mock_button off secondary 1`), the flick's spe
 recoloured hue against the painted orange-red; the shotgun's pump parts held back by `vr_autopump_hold 0.4`). Section 8:
 `vr_debug_collect_fx 1` prints a shell's slide into the gun (`collect fx: in gun N t ..., off its port: <model space>,
 world <world>`).
+Stealth AI (ROUND21.md, "Stealth AI"; docs/vr-port/STEALTH_PLAN.md): `map e1m1; god; vr_test_spawn 0; vr_test_spawn_dist 150;
+impulse 241; wait20; vr_stealth_test 1` runs 14 scenes on the grunt (`stealthtest: <name> PASS|FAIL` lines, about 90 s
+of game time); `vr_stealth_test 2` a crate knocked behind it, `32` the flashlight (`vr_flashlight_clip_head right;
+vr_flashlight_toggle; vr_mock_look 12 0` first), `22` your speed, light and crouch, `26` the map's light histogram.
+`vr_stealth_debug 1|2` logs state changes (2: each meter step, noise made and heard); `vr_stealth_light_force <n>` fixes
+the light on you. Debug > Tests > Stealth AI has them. Further scenes with their own grunts (`vr_stealth_test 100`-`108`: a real shot per weapon, explosions by size,
+coop, a horde for the profiler's "stealth" scope, save/load mid-investigation, every monster kind, infighting, lava's
+edge): `bash Misc/quakevr/stealth_tests.sh <agent> [gun|blast|kinds|infight|saveload|liquid|horde|all]` (39 PASS, ~70
+s) and the coop one `bash Misc/quakevr/multiplayer/stealth_mp_test.sh <agent>` (a listen server and a client, ~90 s);
+ROUND21.md, "Stealth AI: the gaps closed". A real shot headless: `vr_weapon_grip_mode 1; impulse 9; impulse 154` (150 +
+the weapon id: into the main hand), then `+attack; vr_mock_button main trigger 1; wait3; -attack; vr_mock_button main
+trigger 0`.

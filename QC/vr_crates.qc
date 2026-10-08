@@ -100,7 +100,7 @@ float(entity e) VR_Crate_Wooden =
         return FALSE;
     }
     return e.vr_cratekind > 0 || e.vr_blocksight > 0 || e.classname == "vr_crate_broken" || e.classname == "vr_crate_piece" ||
-           e.classname == "vr_crate_piece_gone";
+           e.classname == "vr_crate_piece_gone" || e.classname == "func_vr_target"; // (a target board: vr_tutorial.qc)
 };
 
 // Hit material, separate from prop classification: secret doors rename themselves to door. Shootable triggers
@@ -387,12 +387,116 @@ void(float xSpeed) VR_SolidProp_Impact =
     }
 };
 
+// ----------------------------------------------------------------------------
+// Overhead slams (NOTES.md vrfiringrange_2026-10-07_23-08-07; ROUND21.md, "Heavy props thrown and slammed"): a crate or
+// a barrel held in both hands over the head (the hands' middle vr_carry_slam_height cm over the eyes or more), then
+// within vr_carry_slam_window s swung down (the hands at vr_carry_slam_speed m/s or more, mostly downwards) onto
+// something (a monster, a prop, a wall, the floor: its box swept a frame and a little ahead) breaks at once, what it met
+// hurt as by a heavy blow (vr_carry_slam_damage). Let go of from there (thrown down, or dropped), its first landing at
+// vr_crate_slam_throw_speed m/s or more takes vr_crate_slam_throw_damage of its full health: two such throws break it.
+
+// Each frame `xBox` is held in both hands (VR_Carry_TwoHandFrame; self the player).
+void(entity xBox) VR_Crate_SlamFrame =
+{
+    if(!cvar_hget(cvarh_vr_carry_slam) || !VR_Crate_Is(xBox) || xBox.takedamage == DAMAGE_NO || xBox.health <= 0)
+    {
+        return;
+    }
+    float m2u = VRMetersToUnits();
+    vector mid = (VRGetHandPos(cVR_MainHand) + VRGetHandPos(cVR_OffHand)) * 0.5;
+    vector head = VRGetHeadPos(self);
+    if(mid_z >= head_z + cvar_hget(cvarh_vr_carry_slam_height) * 0.01 * m2u)
+    {
+        if(xBox.vr_slam_armed < time)
+        {
+            dprint(sprintf("slam: %s held over the head\n", xBox.model));
+        }
+        xBox.vr_slam_armed = time + max(0, cvar_hget(cvarh_vr_carry_slam_window));
+        return; // (still up: not swung down yet)
+    }
+    if(time > xBox.vr_slam_armed)
+    {
+        return;
+    }
+    vector vel = (VRGetHandVel(cVR_MainHand) + VRGetHandVel(cVR_OffHand)) * 0.5; // m/s
+    float speed = vlen(vel);
+    float need = max(0.1, cvar_hget(cvarh_vr_carry_slam_speed));
+    if(speed < need || vel_z > -0.3 * speed)
+    {
+        return;
+    }
+    tracebox(xBox.origin, xBox.mins, xBox.maxs, xBox.origin + vel * m2u * (frametime + 0.03), FALSE, self);
+    entity struck = trace_ent;
+    if((trace_fraction >= 1 && !trace_startsolid) || struck == xBox)
+    {
+        return;
+    }
+    float dmg = 0;
+    if(struck != world && struck.takedamage && struck.health > 0)
+    {
+        // A heavy blow: a punch's with it in hand (vr_dmg_fist, Held Weapon: Punch x, its Melee Damage x and weight's
+        // curve) times its speed over the least (at most twice) and vr_carry_slam_damage.
+        dmg = cvar_hget(cvarh_vr_dmg_fist) * VR_Carry_PunchMult(self, cVR_MainHand) * VR_Weight_MeleeMult(self, cVR_MainHand) *
+              cvar_hget(cvarh_vr_melee_dmg_multiplier) * min(speed / need, 2) * max(0, cvar("vr_carry_slam_damage"));
+    }
+    dprint(sprintf("slam: %s swung down at %.1f m/s onto %s: %.1f damage to it, broken\n", xBox.model, speed,
+        struck == world ? "the level" : struck.classname, dmg));
+    VR_SoundVaried(xBox, CHAN_AUTO, VR_Prop_Metal(struck) ? VR_Metal_Sound(VR_METAL_BLUNT) : "fisthit.wav", 1, ATTN_NORM);
+    entity crate = xBox;
+    if(dmg > 0)
+    {
+        if(struck.flags & FL_MONSTER)
+        {
+            VR_Blunt_HitLayer(crate, CHAN_AUTO, struck);
+            spawn_touchblood(dmg);
+        }
+        T_Damage(struck, crate, self, dmg);
+    }
+    if(crate.takedamage != DAMAGE_NO && crate.health > 0)
+    {
+        T_Damage(crate, struck, self, crate.health + 1);
+    }
+};
+
+// `xBox` let go of by `xHands` hands (VR_Carry_Release; self the player): from over the head (within the slam's window),
+// its first hard landing hurts it (VR_Crate_Impact).
+void(entity xBox, float xHands) VR_Crate_SlamReleased =
+{
+    xBox.vr_slam_thrown = 0;
+    if(xHands == 2 && VR_Crate_Is(xBox) && time <= xBox.vr_slam_armed && cvar_hget(cvarh_vr_carry_slam))
+    {
+        xBox.vr_slam_thrown = time;
+        dprint(sprintf("slam: %s let go of from over the head\n", xBox.model));
+    }
+    xBox.vr_slam_armed = 0;
+};
+
 // A crate's hardest hit of a frame (Box3D's): what it met thrown or flung (VR_SolidProp_Impact), and itself: from 70% of
 // Breaks On Impact (vr_crate_impact) it takes its health times (speed / that)^2, so at it, it breaks (dropped from about
 // 85 units; the upper crate of a stack falling off the lower lands at about 10 m/s and doesn't).
 void(float xSpeed) VR_Crate_Impact =
 {
     VR_SolidProp_Impact(xSpeed);
+    // Let go of from over the head (VR_Crate_SlamReleased): its first hard landing (within 3 s) hurts it.
+    if(self.vr_slam_thrown && self.carry_player == world && self.takedamage != DAMAGE_NO && self.health > 0)
+    {
+        if(time > self.vr_slam_thrown + 3)
+        {
+            self.vr_slam_thrown = 0;
+        }
+        else if(xSpeed >= cvar("vr_crate_slam_throw_speed"))
+        {
+            self.vr_slam_thrown = 0;
+            float hurt = self.max_health * max(0, cvar("vr_crate_slam_throw_damage"));
+            dprint(sprintf("slam: %s thrown down from over the head hit %s at %.1f m/s: %.1f of its %.1f\n", self.model,
+                other == world ? "the level" : other.classname, xSpeed, hurt, self.health));
+            T_Damage(self, world, world, hurt);
+            if(self.takedamage == DAMAGE_NO || self.health <= 0)
+            {
+                return;
+            }
+        }
+    }
     float threshold = cvar("vr_crate_impact");
     if(threshold <= 0 || xSpeed < threshold * 0.7 || self.takedamage == DAMAGE_NO || self.health <= 0)
     {
@@ -474,10 +578,12 @@ void(vector xA, vector xB) VR_Crate_MonsterShot =
 
 // A monster's bullets at a player in VR (EnemyFireBullets, vr_hull_hit_head): aimed no higher than 70% of his real
 // height (his head's), as Quake's aim at his box's middle is for a player standing: crouched, the shots come lower
-// (into the crate he crouches behind), not all over his head.
+// (into the crate he crouches behind), not all over his head. With a crouched box (vr_crouch_hull: the engine's
+// QVR_VRBITS0_CROUCHED), no higher than 60% of the lowest crouched box (vr_crouch_height) either.
 vector(vector xSrc, vector xDir, entity xEnemy) VR_Crate_ShotAim =
 {
-    if(!cvar_hget(cvarh_vr_hull_hit_head) || xEnemy.classname != "player" || xEnemy.headpos == '0 0 0')
+    float crouched = VRHasBit(xEnemy.vrbits0, QVR_VRBITS0_CROUCHED);
+    if((!cvar_hget(cvarh_vr_hull_hit_head) && !crouched) || xEnemy.classname != "player" || xEnemy.headpos == '0 0 0')
     {
         return xDir;
     }
@@ -491,7 +597,15 @@ vector(vector xSrc, vector xDir, entity xEnemy) VR_Crate_ShotAim =
     {
         return xDir;
     }
-    float most = xEnemy.absmin_z + 0.7 * (xEnemy.headpos_z + VR_SHOT_OVER_HEAD - xEnemy.absmin_z);
+    float most = xEnemy.absmax_z;
+    if(cvar_hget(cvarh_vr_hull_hit_head))
+    {
+        most = xEnemy.absmin_z + 0.7 * (xEnemy.headpos_z + VR_SHOT_OVER_HEAD - xEnemy.absmin_z);
+    }
+    if(crouched)
+    {
+        most = min(most, xEnemy.absmin_z + 0.6 * cvar_hget(cvarh_vr_crouch_height));
+    }
     float passes = xSrc_z + xDir_z * far / along; // the height it passes him at
     if(passes <= most)
     {
@@ -763,6 +877,16 @@ void(entity crate, vector mid, vector dir) VR_Crate_Contents =
 {
     vector at = mid;
     at_z = crate.absmin_z + 1;
+    if(crate.contents != NULLSTR)
+    {
+        // a placed crate's own: what its "contents" names (none at random); "none": nothing
+        if(crate.contents != "none")
+        {
+            entity e = VR_Tut_Make(crate.contents, at, 0, NULLSTR, '0 0 0');
+            dprint(sprintf("crate: holds %s (its contents)%s\n", crate.contents, e == world ? ", not made" : ""));
+        }
+        return;
+    }
     entity player = find(world, classname, "player");
     if(player != world && random() < cvar("vr_crate_ammo"))
     {
@@ -832,6 +956,11 @@ void() VR_Crate_Break =
 
     VR_Crate_Pieces(crate, mid, dir);
     VR_Crate_Contents(crate, mid, dir);
+    if(crate.target != NULLSTR)
+    {
+        activator = damage_attacker;
+        SUB_UseTargets(); // (a placed crate's "target": fired as it breaks)
+    }
 
     crate.vr_cratekind = 0;
     crate.classname = "vr_crate_broken";
@@ -883,7 +1012,8 @@ Quake VR: a wooden crate, placed by hand: a heavy physics prop (pushed, tipped, 
 breaks into light pieces when shot, struck, blown up or hit hard, sometimes holding a small box of ammo or health
 (Crates' settings), and hides the player from monsters behind it. Small: 32 units a side; LARGE: 40 x 40 x 48. "angle":
 its yaw; "skin": 0 pine, 1 brown, 2 weathered. It rests on whatever is below its origin (within 128 units). Placed whatever
-Crates' options are.
+Crates' options are. "contents": what it holds instead of the random box (a classname, as func_vr_restock's: item_key1,
+item_health...; "none": nothing); "target": fired as it breaks (the activator: what broke it).
 */
 void() vr_crate =
 {
@@ -894,6 +1024,7 @@ void() vr_crate =
         remove(self);
         return;
     }
+    VR_Tut_Precache(self.contents, NULLSTR); // (what its "contents" names: vr_tutorial.qc)
     VR_Crate_Setup(self, kind);
 };
 

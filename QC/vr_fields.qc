@@ -202,6 +202,10 @@
 .float alpha;            // how opaque it is drawn (0: wholly; a piece fading away). (Here, not in honey_defs.qc: the
                          // crates' pieces, compiled before it, use it.)
 
+// Explosion chunks (vr_explosiondebris.cpp): the engine makes them (an explosion's temp entity), Box3D moves them, a
+// fade and SUB_Remove end them; nothing here touches them.
+.float vr_xdebris;      // a chunk: when it was made (0: not one)
+
 //
 //
 //
@@ -213,6 +217,13 @@
 .float vr_shot_half;   // its model's half size (the shot box: vr_shot_radius, with vr_grenade_shoot_pad)
 .float vr_shot_off;    // set off (or gone off): no more shots meet it
 .void() vr_shot_boom;  // a Quake grenade set off: its own think (its blast), run by VR_GrenShot_Boom
+.void() vr_ammo_boom;  // a launcher's round lying about (vr_reload.qc): its blast when set off (its think is its fading)
+// The rounds of immersive reloading (vr_reload.qc), here for the pouches' grenades (vr_grenade.qc, "One grenade from
+// either pouch"), which are rounds too while unarmed:
+.float vr_ammo_aid;      // a round: the ammo it is (AID_*)
+.float vr_ammo_count;    // and how many (a taped pair: 2)
+.float vr_ammo_front;    // a launcher's round: the launcher it fits (WID_GRENADE_LAUNCHER, _PROXIMITY_GUN, _ROCKET_LAUNCHER)
+.float vr_ammo_born;     // when it was last in a hand or flying (its time lying about runs from here)
 
 // ----------------------------------------------------------------------------
 // The parry's cooldown (combat.qc VR_Parry) and your own throws hurting you (vr_carry.qc, "Your own throws")
@@ -237,3 +248,13 @@
                          // capped while it lies about, whoever let go of it since (not a map's or a dispenser's)
 
 .float carry_portal; // room mapping of a held object, one-based gate
+
+// The tutorial's scripting (vr_tutorial.qc; vr_crates.qc's contents)
+.string contents;      // vr_crate: what it holds (a classname; "none": nothing); func_vr_restock: what it puts
+.float contentsflags;  // func_vr_restock: what it puts's spawnflags
+.entity vr_spawner;    // a monster a func_vr_spawner made: that spawner
+.float vr_cp_taken;    // info_vr_checkpoint: when it was taken (0: not yet)
+.float vr_spawn_left;  // func_vr_spawner: monsters still to make for its latest use
+.float vr_spawn_armed; // func_vr_spawner: its latest use's monsters not all dead yet (its target not fired)
+.entity vr_spawn_by;   // func_vr_spawner: who used it last (its target's activator)
+.float tip_on;         // func_vr_tip (TRIGGERED): used: shown from now on

@@ -56,6 +56,12 @@ struct ViewEntity
 [[nodiscard]] float ssgOpenAngle(int hand);
 [[nodiscard]] glm::vec3 ssgTurned(const glm::vec3& p, float deg, bool point = true);
 
+// A gun model's loading port in its model space (frame 0; +x forward, +y left, +z up), moved by its Load Point offsets:
+// its point, the way a round goes in (a unit vector) and its opening's outward way (one), the super shotgun's turned down
+// with its barrels `ssgOpen` degrees. False if the model has none. Static data and settings only: the held guns' ports
+// (setupWeapon) and the guns lying about (QC loadportof, the server's).
+[[nodiscard]] bool modelLoadPort(const qmodel_t* model, float ssgOpen, glm::vec3& at, glm::vec3& axis, glm::vec3& face);
+
 // The gun drawn in `hand` this frame (its model's space: as its frames' vertices; none: false): a point of it in the world,
 // a world point in it, and its turn (forward, left, up: its angles', not mirrored). Immersive reloading's shells sliding
 // into it (vr_collectfx.cpp).
@@ -67,6 +73,12 @@ struct ViewEntity
 // (the shotgun: up through its loading port's well, then forward into the tube; the super shotgun: into its chambers).
 // False: no gun there with a load point.
 [[nodiscard]] bool loadPath(int hand, glm::vec3& port, glm::vec3& deep, glm::vec3& end);
+// The same for any gun's `model`, the super shotgun's barrels turned down `ssgOpen` degrees.
+[[nodiscard]] bool modelLoadPath(const qmodel_t* model, float ssgOpen, glm::vec3& port, glm::vec3& deep, glm::vec3& end);
+// The gun lying about as client entity `num` (a weapon prop: QC's thrown_weapon), as it is drawn this frame, in `out`
+// (for modelPoint), and how far its barrels are drawn down (a super shotgun lying open: setupWorldSsgs); false if it is
+// not there or not a gun with a load point. Shells loaded into it sliding in (vr_collectfx.cpp).
+[[nodiscard]] bool propGun(int num, ViewEntity& out, float& ssgOpen);
 
 // World position of a point given in `ve`'s model space (as its frames' vertices).
 [[nodiscard]] glm::vec3 modelPoint(const ViewEntity& ve, const glm::vec3& point);
@@ -114,6 +126,12 @@ struct WeaponFrame
 // which hand an entity belongs to (-1 none): its weapon (or the model a gun morphs out of; `weapon` true) or a part of
 // the hand itself.
 [[nodiscard]] const ViewEntity* heldWeapon(int hand);
+
+// The cells the ammo pouch shows this frame (the lightning gun's, standing in it: 0 when it gives none, or none are left;
+// up to 3), and cell `index`'s copper contact on its top (world) and its up (the cell cords, vr_cellcord.cpp). False: no
+// pouch drawn.
+[[nodiscard]] int ammoPouchCells();
+[[nodiscard]] bool ammoPouchCell(int index, glm::vec3& at, glm::vec3& up);
 [[nodiscard]] int handOf(const entity_t* e, bool& weapon);
 // The weapon drawn in holster `stat` (body::Holster: its STAT_QVR_HOLSTERWEAPON* slot) last frame, the one it holds
 // (null: empty, or a stand-in: the Weapon Offsets preview, a posing session): its blood (vr_wounds.cpp).
@@ -157,6 +175,11 @@ struct WeaponHotspot
 // middle of its drawn points within a unit and a half of the way there), `cm` over it (tests: vr_mock_hand_to <hand>
 // held). False if it has none.
 [[nodiscard]] bool heldWeaponPoint(int hand, float fraction, float cm, glm::vec3& out);
+
+// The butt of the weapon `hand` holds, as drawn last: the middle of its drawn points within a unit of its rearmost end
+// along its line from the muzzle to the handle (a stock's heel, a pistol grip's base). The wrist gadget's screen tap
+// (vr_bullettime_tap_butt). False if it holds none (or a fist).
+[[nodiscard]] bool heldWeaponButt(int hand, glm::vec3& out);
 
 // The weapon in `hand` as drawn last (the local player's): its model, whether mirrored (the off hand's), and its
 // entity's place and turn relative to the hand's pose (hands::State pos and rot: held::axesFromAngles' forward, left,

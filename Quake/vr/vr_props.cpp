@@ -55,8 +55,9 @@ constexpr const char* keyDefaults[numKeys] = {
 // prop in both hands; 57: the gibs' and heads' sizes; 58: the author's lighter gibs and heads (and the gremlin's head);
 // 59: the monsters' heads weigh what a head cut off their ragdoll does (Mass -1); 60: immersive reloading's shells
 // (slots 49-50); 61: reloading's magazines; 62: vrstart's barrel (slot 61); 63: the magazines' sizes; 64: the live
-// shell's grip; 65: the author's gremlin head at Size 0.6.
-constexpr int settingsVersion = 65;
+// shell's grip; 65: the author's gremlin head at Size 0.6; 66: the launchers' rounds (slots 54-56); 67: the proximity
+// grenade's (slot 56: Quake's progs/proxbomb.mdl, the pouches' again); 68: the author's grenade fit of 2026-10-08.
+constexpr int settingsVersion = 68;
 
 za::Array<za::String, numSlots * numKeys> names;
 za::Array<cvar_t, numSlots * numKeys> cvars{};
@@ -548,6 +549,44 @@ void migrate()
     {
         Cvar_SetQuick(&cvarAt(7, Key::Size), cvarAt(7, Key::Size).default_string);
     }
+    // 66: the launchers' rounds (immersive reloading's front loading: slots 54-56, the rocket, the grenade, the
+    // proximity grenade).
+    if(from < 66)
+    {
+        for(const int slot : {53, 54, 55})
+        {
+            takeShippedSlot(slot);
+        }
+    }
+    // 67: the proximity grenade (slot 56: progs/proxbomb.mdl, in the palm; it held make_rounds.py's vr_round_prox.mdl,
+    // no longer drawn: its settings go, not to a free slot).
+    if(from < 67)
+    {
+        if(cvar_t& id = cvarAt(55, Key::ID); !strcmp(id.string, "progs/vr_round_prox.mdl"))
+        {
+            Cvar_SetQuick(&id, id.default_string);
+        }
+        takeShippedSlot(55);
+    }
+    // 68: the author's grenade fit (slot 4, progs/grenade.mdl: note vrfiringrange_2026-10-08_14-16-19, "make them the new
+    // defaults"): a slot still its model's that holds the old value takes the new one.
+    if(from < 68 && !strcmp(cvarAt(3, Key::ID).string, cvarAt(3, Key::ID).default_string))
+    {
+        struct Change
+        {
+            Key key;
+            float before;
+        };
+        constexpr Change changes[] = {{Key::GripX, 0.f}, {Key::GripY, 0.f}, {Key::Overlap, 0.75f}};
+        for(const Change& c : changes)
+        {
+            cvar_t& var = cvarAt(3, c.key);
+            if(atof(var.string) == c.before)
+            {
+                Cvar_SetQuick(&var, var.default_string);
+            }
+        }
+    }
     Cvar_SetValueQuick(&vr_props_version, settingsVersion);
 }
 
@@ -673,9 +712,38 @@ float valueFor(const qmodel_t* model, Key key)
     return value(slotForModel(model), key);
 }
 
+namespace
+{
+
+// A model's own size, as a Size (times its slot's): Quake's grenades (vr_grenade_scale: the grenade, the multi-grenade;
+// vr_prox_scale: the proximity grenade) and the rocket in flight (vr_rocket_scale), by its name.
+[[nodiscard]] float ownScale(const char* name)
+{
+    if(!name)
+    {
+        return 1.f;
+    }
+    if(!strcmp(name, "progs/proxbomb.mdl"))
+    {
+        return za::clamp(vr_prox_scale.value, 0.2f, 2.f);
+    }
+    if(!strcmp(name, "progs/grenade.mdl") || !strcmp(name, "progs/mervup.mdl"))
+    {
+        return za::clamp(vr_grenade_scale.value, 0.25f, 2.f);
+    }
+    if(!strcmp(name, "progs/missile.mdl"))
+    {
+        return za::clamp(vr_rocket_scale.value, 0.25f, 2.f);
+    }
+    return 1.f;
+}
+
+} // namespace
+
 float size(int slot)
 {
-    return za::clamp(value(slot, Key::Size), 0.05f, 10.f);
+    const float own = slot >= 0 && slot < numSlots ? ownScale(cvarAt(slot, Key::ID).string) : 1.f;
+    return za::clamp(value(slot, Key::Size), 0.05f, 10.f) * own;
 }
 
 float drawnSize(const qmodel_t* model)
@@ -685,7 +753,10 @@ float drawnSize(const qmodel_t* model)
     {
         return 1.f;
     }
-    return size(slotForModel(model));
+    // Quake's grenades and the rocket in flight at their own sizes too (ownScale: in size() for a model with a slot):
+    // everything drawn or made from their drawn shape takes it, as a Size.
+    const int slot = slotForModel(model);
+    return slot >= 0 ? size(slot) : size(slot) * ownScale(model->name);
 }
 
 bool lengthKey(Key key)

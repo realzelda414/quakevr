@@ -21,7 +21,7 @@ inline constexpr int U_QVR_SCALE = 1 << 24;        // 3 floats
 inline constexpr int U_QVR_SCALEORIGIN = 1 << 25;  // 3 coords
 inline constexpr int U_QVR_OFFSET = 1 << 26;       // 3 coords
 inline constexpr int U_QVR_NOROTATE = 1 << 27;     // no data: a rigid body, whose EF_ROTATE model keeps its angles
-inline constexpr int U_QVR_WEAPONUID = 1 << 28;    // long: a weapon prop's weapon id (QC vr_weaponinst.qc: its record's)
+inline constexpr int U_QVR_WEAPONUID = 1 << 28;    // long, byte: a weapon prop's weapon id (QC vr_weaponinst.qc: its record's), its clip (0-255)
 inline constexpr int U_QVR_SPIN = 1 << 29;         // no data: drawn spinning as an EF_ROTATE pickup (a weapon pickup drawn as its prop)
 inline constexpr int U_QVR_NOMAG = 1 << 30;        // no data: a weapon prop with no magazine in (QC QVR_WPNFLAG_NOMAG: immersive reloading)
 // The bits above are full (1 << 31 is the sign: sv_main.c's "bits >= 1 << 24" test); this one is the protocol's spare
@@ -119,7 +119,13 @@ enum Stat : int
     STAT_QVR_RELOADMODE,
     STAT_QVR_POUCHKIND,  // what the ammo pouch gives and shows (QC .vr_pouch_kind: 1 shells, 2 nailgun magazines, 3 super nailgun's, 4 cells)
     STAT_QVR_POUCHCOUNT, // and how many of its ammo are left (.vr_pouch_count): its contents as drawn, its counter
-    STAT_QVR_END
+    // The stealth AI's gem on the wrist gadget (QC .stl_hud, vr_stealth.qc): how visible you are (0..100) plus 1000 times
+    // how loud your last noise was (0..100); -1 with the stealth AI off.
+    STAT_QVR_STEALTH,
+    STAT_QVR_FOEGRAB,     // the hands holding an enemy (vr_foegrab.cpp): bit 0 the off hand, 1 the main
+    STAT_QVR_FOEGRABOFFX, // each holding hand's palm's place on the enemy, in eighths of a unit: the drawn hand is put there
+    STAT_QVR_FOEGRABMAINX = STAT_QVR_FOEGRABOFFX + 3,
+    STAT_QVR_END = STAT_QVR_FOEGRABMAINX + 3
 };
 
 inline constexpr int numHolsters = 6;

@@ -191,6 +191,10 @@ void() worldspawn =
     vr_save_packmask = 1 + VR_Pack_Hipnotic() + 2 * VR_Pack_Rogue();
     lastspawn = world;
     vr_fire_spots = 0; // QVR: the map's flames, as they spawn (vr_walltorch.qc)
+    if(mapname == "vrtutorial2")
+    {
+        cvar_set("vr_tutorial_started", "1"); // QVR: the tutorial started once: VR starts in the hub from now on
+    }
 
     // FRIKBOT
     BotInit();
@@ -267,6 +271,11 @@ void() worldspawn =
     precache_sound("vr/pommel1.wav"); // pommel, hilt and butt strikes (VR_Melee_HitSound)
     precache_sound("vr/pommel2.wav");
     precache_sound("vr/pommel3.wav");
+    precache_sound("vr/slap1.wav"); // slaps (VR_Melee_HitSound, vr_melee_slap)
+    precache_sound("vr/slap2.wav");
+    precache_sound("vr/slap3.wav");
+    precache_sound("vr/slap_whoosh1.wav"); // a slap's whoosh, landing or not (VR_Melee_Whoosh)
+    precache_sound("vr/slap_whoosh2.wav");
     precache_sound("zombie/z_miss.wav"); // a thrown gib's splat
     precache_sound("fisthit.wav");
     precache_sound("knight/sword1.wav");
@@ -549,6 +558,8 @@ void() StartFrame =
     teamplay = cvar_hget(cvarh_teamplay);
     skill = cvar_hget(cvarh_skill);
     VR_CVars_Frame();
+    VR_Stealth_Frame(); // QVR: the stealth AI switched off: the monsters back to Quake's AI (vr_stealth.qc)
+    VR_Tutorial_Frame(); // QVR: Debug's Go to a Lesson (vrtutorial2 only: vr_tutorial.qc)
     MG_WorldFrame();
     MG_TestFrame();
     MG_TriggerTestFrame();
@@ -557,6 +568,7 @@ void() StartFrame =
     MGH_TestFrame();
     MG3_Frame();
     MG3_TestFrame();
+    VR_MonstersTest_Frame(); // vr_test_monsters (vr_monsters_test.qc)
     VR_MG3_Weapons_Frame(); // the Super Axe's glow and chain (vr_mg3_weapons.qc)
     MG3_WeaponsTestFrame(); // vr_mg3_wtest (vr_mg3_weapons_test.qc)
     MG3_MonstersTestFrame(); // vr_mg3_mtest (vr_mg3_monsters_test.qc)
@@ -567,8 +579,11 @@ void() StartFrame =
     VR_Wounds_Frame(); // VR: wet up to where the liquid comes (vr_wounds.qc)
     VR_Crates_Frame(); // VR: at a new map's first frame, its crates (vr_crates.qc; before the rocks and bricks: they keep clear)
     VR_Debris_Frame(); // VR: at a new map's first frame, its rocks and bricks (vr_debris.qc)
+    VR_Reload_PropsFrame(); // VR: guns lying about load as held ones do (vr_reload.qc)
     VR_SmallGib_TestFrame(); // VR: the small gibs' tests (vr_smallgibs_test, vr_smallgibs_test.qc)
+    VR_TestDispenser_Frame(); // VR: a map's monster dispenser used from the console (vr_test_dispenser <n>, buttons.qc)
     VR_DropCapTest_Frame(); // VR: the cap on dropped enemy weapons' test (vr_dropcap_test, vr_dropcap_test.qc)
+    VR_CrouchTest_Frame(); // VR: the crouched box's shots test (vr_crouch_test, vr_crouch_test.qc)
     VR_MarksmanTest_Frame(); // VR: the marksman ogre's test aid (vr_marksman_test, vr_marksman_test.qc)
     VR_Decap_TestFrame(); // VR: decapitation's tests (vr_decap_test, vr_decap.qc)
     VR_Limb_TestFrame(); // VR: limb gore's tests (vr_limb_test, vr_limbs_test.qc)
@@ -578,17 +593,16 @@ void() StartFrame =
     VR_Shock_TestFrame(); // VR: lightning's lasting shock's test (vr_shock_hit_test, vr_shock.qc)
     VR_Burn_MapFrame(); // VR: visible mapper flames burn tracked hands/body (vr_burning.qc)
     VR_Burn_NailFrame(); // VR: nails through a torch's flame become lava nails (vr_burning.qc)
+    VR_Burn_LavaFrame(); // VR: wood in lava catches fire (vr_burning.qc)
     VR_Grapple_WorldFrame(); // VR: the grappling hooks whose guns lie about (vr_grapple.qc)
     VR_Throw_SelfFrame(); // VR: things you threw hurt you once vr_throw_self_grace is over (vr_carry.qc)
     framecount = framecount + 1;
 };
 
 /*
-==============================================================================
 
 BODY QUE
 
-==============================================================================
 */
 
 entity    bodyque_head;

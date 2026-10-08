@@ -11,6 +11,7 @@ vr_handgrabutil.qc
 
 vr_portal_ai.qc
 vr_portal_ai_test.qc
+vr_stealth_defs.qc
 ai.qc
 combat.qc
 fight.qc
@@ -56,9 +57,19 @@ vr_mg3_upgrades.qc
 vr_grapple.qc
 // Grunts' and enforcers' shoves (ai.qc calls it; the monsters' files use it).
 vr_enemyshove.qc
+// The stealth AI (ai.qc, combat.qc, weapons.qc call it; vr_stealth_defs.qc before ai.qc has its fields).
+vr_stealth.qc
+vr_ai_props.qc
+vr_stealth_test2.qc
+vr_stealth_test3.qc
+vr_stealth_test4.qc
+vr_stealth_test.qc
+// Holding enemies (the engine calls it; after the stealth AI and the grapple, whose functions it uses).
+vr_foegrab.qc
 
 buttons.qc
 vr_tips.qc
+vr_deathdoll.qc
 client.qc
 doors.qc
 misc.qc
@@ -66,6 +77,7 @@ monsters.qc
 plats.qc
 player.qc
 triggers.qc
+vr_tutorial.qc
 vr_mg3_triggers.qc
 vr_mg3_items.qc
 weapons.qc
@@ -89,6 +101,7 @@ vr_cheats.qc
 vr_smallgibs_test.qc
 vr_marksman_test.qc
 vr_dropcap_test.qc
+vr_crouch_test.qc
 world.qc
 vr_dummy.qc
 vr_motion.qc
@@ -98,6 +111,7 @@ vr_mg_trigger_test.qc
 vr_mg_hub_test.qc
 vr_mg_horde_test.qc
 vr_mg3_test.qc
+vr_monsters_test.qc
 vr_mg3_weapons_test.qc
 
 orig_mon_boss.qc

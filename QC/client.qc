@@ -184,6 +184,7 @@ void() OnLoadGame =
 {
     VR_CVars_InitAllHandles();
     WeaponInst_EnsureAll(); // (a save from before the weapons' records: their weapons get theirs, empty)
+    VR_Tips_Reapply(); // (TRIGGERED tips used before the save: shown again)
 }
 
 void() SetNewParms =
@@ -207,7 +208,7 @@ void() SetNewParms =
 
     parm2 = VR_BaseHealth();
     parm3 = 0;
-    parm4 = 25;
+    parm4 = mapname == "vrtutorial2" ? 0 : 25; // (the tutorial: no shells until its range)
     parm5 = 0;
     parm6 = 0;
     parm7 = 0;
@@ -750,6 +751,13 @@ void() changelevel_touch =
     }
 
     nextmap = self.map;
+    // VR: the first start's calibration room leads to the tutorial (on Easy) until it has been started once
+    // (vr_tutorial_started: vr_tutorial.qc; the engine's startGameCommands does the same at a start)
+    if(mapname == "vrcalibration" && nextmap == "vrstart" && !deathmatch && !coop && !cvar("vr_tutorial_started"))
+    {
+        nextmap = "vrtutorial2";
+        cvar_set("skill", "0");
+    }
     // Dawn of the Machine: the new game Bloody Nightmare starts leaves the hub for Shub (boss2), not secret2.
     if(MG3_Campaign() && mapname == "hub" && nextmap == "secret2"
         && (serverflags & MG3_SF_BN_NEWGAME) && (serverflags & MG3_SF_BN_ACTIVE))
@@ -806,11 +814,17 @@ void() set_suicide_frame;
 // called by ClientKill and DeadThink
 void() respawn =
 {
+    // VR: a map with checkpoints (vrtutorial2: info_vr_checkpoint) brings him back at the latest, the level as it was
+    if(VR_Checkpoint_Respawn())
+    {
+        return;
+    }
+
     if(coop)
     {
         // make a copy of the dead body for appearances sake
         // Unless the player died from falling in a pit!
-        if(!self.enemy) // HONEY
+        if(!self.enemy && !VR_DeathDoll_Has(self)) // HONEY; VR: his ragdoll body is there already
             CopyToBodyQue(self);
 
         // get the spawn parms as they were at level start
@@ -823,7 +837,7 @@ void() respawn =
     {
         // make a copy of the dead body for appearances sake
         // Unless the player died from falling in a pit!
-        if(!self.enemy) // HONEY
+        if(!self.enemy && !VR_DeathDoll_Has(self)) // HONEY; VR: his ragdoll body is there already
             CopyToBodyQue(self);
 
         // set default spawn parms
@@ -923,6 +937,14 @@ entity() SelectSpawnPoint =
     spot = find(world, classname, "testplayerstart");
     if(spot)
         return spot;
+
+    // VR: single player back at the latest checkpoint taken (vr_tutorial.qc), if any
+    if(!coop && !deathmatch)
+    {
+        spot = VR_Checkpoint_Latest();
+        if(spot)
+            return spot;
+    }
 
 // choose a info_player_deathmatch point
     if(coop)
@@ -1059,6 +1081,7 @@ void() PutClientInServer =
     entity spot;
 
     VR_Head_StopFlies(self); // QVR: flies round a gibbed player's head don't follow it back to life
+    self.vr_deathdoll_body = world; // QVR: alive again, his ragdoll body only a body (vr_deathdoll.qc); the others see him
 
     self.classname = "player";
     self.health = 100;
@@ -1574,22 +1597,20 @@ void() WaterMove =
         self.velocity = self.velocity - 0.8*self.waterlevel*frametime*self.velocity;
 };
 
-void() CheckWaterJump =
+// Quake's jump out of the water, along the level `xDir`: solid at the waist within 24 units ahead, open at eye
+// level: the player is lifted out (FL_WATERJUMP; SV_WaterJump carries him over the edge). TRUE if he was.
+float(vector xDir) WaterJumpTry =
 {
     vector start, end;
 
-// check for a jump-out-of-water
-    makevectors(self.angles);
     start = self.origin;
     start_z = start_z + 8;
-    v_forward_z = 0;
-    normalize(v_forward);
-    end = start + v_forward*24;
+    end = start + xDir*24;
     traceline(start, end, TRUE, self);
     if(trace_fraction < 1)
     {    // solid at waist
         start_z = start_z + self.maxs_z - 8;
-        end = start + v_forward*24;
+        end = start + xDir*24;
         self.movedir = trace_plane_normal * -50;
         traceline(start, end, TRUE, self);
         if(trace_fraction == 1)
@@ -1598,9 +1619,74 @@ void() CheckWaterJump =
             self.velocity_z = 225;
             self.flags = self.flags - (self.flags & FL_JUMPRELEASED);
             self.teleport_time = time + 2;    // safety net
-            return;
+            dprint(sprintf("waterjump: out of the water at %v\n", self.origin));
+            return TRUE;
         }
     }
+    return FALSE;
+};
+
+// Climbing out of the water by hand (vr_water_jump 0, vr_climb on): an empty hand gripping on the edge, the
+// ground right under it, pulled down (VR_WATERCLIMB_PULL m/s) lifts the player out as Quake's jump out would, over
+// the edge towards that hand. A bank no ledge of the ledge map is on (a slope, a step: vr_ledges.cpp) climbs so;
+// a ledge's hold takes the climbing's own way (vr_climb.cpp: hang, pull up, mantle).
+float VR_WATERCLIMB_PULL = 0.3;
+float(float xHand) VR_WaterClimb_HandPull =
+{
+    vector vel = VRGetEntHandVel(self, xHand);
+    if(!VR_HandGrabUtil_IsHandGrabbing(self, xHand) || !VRIsHandEmpty(self, xHand) || vel_z > -VR_WATERCLIMB_PULL)
+    {
+        return FALSE;
+    }
+    vector p = VRGetEntHandPos(self, xHand);
+    vector d = p - self.origin;
+    d_z = 0;
+    if(vlen(d) < 8)
+    {
+        return FALSE; // a hand by the body
+    }
+    traceline(p + '0 0 4', p - '0 0 16', TRUE, self);
+    if(trace_fraction == 1 || trace_startsolid || trace_plane_normal_z < 0.7)
+    {
+        return FALSE; // no ground under the hand (a top that could be stood on) to push on
+    }
+    float top = trace_endpos_z;
+    d = normalize(d);
+    if(!WaterJumpTry(d))
+    {
+        return FALSE;
+    }
+    // Lifted high enough to clear the top under the hand (Quake's 225 units/s rise reaches about 31 units: a bank's
+    // top higher than the waist is not climbed so), and carried over the edge a little faster than Quake's.
+    float g = cvar("sv_gravity") * (self.gravity ? self.gravity : 1);
+    float rise = top - (self.origin_z + self.mins_z) + 6;
+    if(rise > 0 && g > 0)
+    {
+        self.velocity_z = max(225, sqrt(2 * g * rise));
+    }
+    self.movedir = self.movedir * 1.6; // (Quake's: away from the edge's face, 50 units/s)
+    dprint(sprintf("waterjump: climbed out by hand %g, the top %.1f above the feet, rising at %.0f\n", xHand, rise - 6,
+        self.velocity_z));
+    VRItemPickupHaptic(self);
+    return TRUE;
+};
+
+void() CheckWaterJump =
+{
+// check for a jump-out-of-water
+    makevectors(self.angles);
+    v_forward_z = 0;
+    // Off (vr_water_jump 0), a player climbs out with the hands: only while climbing is on (else there would be no
+    // way out of a pool whose sides are higher than a stroke lifts him).
+    if(self.ishuman && !cvar_hget(cvarh_vr_water_jump) && cvar_hget(cvarh_vr_climb))
+    {
+        if(!VR_WaterClimb_HandPull(cVR_MainHand))
+        {
+            VR_WaterClimb_HandPull(cVR_OffHand);
+        }
+        return;
+    }
+    WaterJumpTry(v_forward);
 };
 
 /*
@@ -2176,6 +2262,8 @@ void() PlayerPostThink =
         }
         else
             sound(self, CHAN_VOICE, "player/land.wav", 1, ATTN_NORM);
+        if(self.watertype != CONTENT_WATER && time - self.stl_climb_time > 0.5) // QVR: a hard landing's thud is heard (vr_stealth.qc)
+            VR_Stealth_Noise(self.origin, min(500, -self.jump_flag * 0.6), self, STL_N_STEP);
 
         self.jump_flag = 0;
     }
@@ -2185,6 +2273,7 @@ void() PlayerPostThink =
 
     CheckPowerups();
     VR_Grapple_GunFrames(); // QVR: a grappling gun whose hook is out drawn empty (vr_grapple.qc)
+    VR_Stealth_PlayerFrame(); // QVR: his running heard, his touch felt, how lit he is (vr_stealth.qc)
 };
 
 
@@ -2854,6 +2943,7 @@ void(float xHand, float xInMelee, float* xOutMeleeAttackFinished, float* xOutInM
         {
             VR_SetHitKind(QVR_HITKIND_MELEE, xHand, '0 0 0', '0 0 0');
             vr_melee_blunt = b.mh_kind == VR_MKIND_POMMEL; // its own sound (VR_Melee_HitSound)
+            vr_melee_slap = b.mh_kind == VR_MKIND_SLAP; // a slap's sound, no blood or gore (W_FistMelee, vr_smallgibs.qc)
             vr_sgib_at = b.mh_c_pos; // where small gibs are torn out (vr_smallgibs.qc)
             if(!DoXHandMelee(xHand, WID_FIST, "", W_FistMelee))
                 if(!DoXHandMelee(xHand, WID_AXE, "", W_FireAxe))
@@ -2864,6 +2954,7 @@ void(float xHand, float xInMelee, float* xOutMeleeAttackFinished, float* xOutInM
                     if(!DoXHandMelee(xHand, WID_SUPERAXE, "", W_SuperAxeMelee)) // vr_mg3_weapons.qc
                         DoXHandMeleeImpl(xHand, "", W_GunMelee);
             vr_melee_blunt = FALSE;
+            vr_melee_slap = FALSE;
             vr_sgib_at = '0 0 0';
             VR_ClearHitKind();
         }

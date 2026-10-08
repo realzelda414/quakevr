@@ -23,6 +23,7 @@
 #include "vr_ropesim.hpp"
 #include "vr_server.hpp"
 #include "vr_shock.hpp"
+#include "vr_stealth.hpp"
 #include "vr_selfcollide.hpp"
 #include "vr_twohand.hpp"
 #include "vr_cvars.hpp"
@@ -140,6 +141,75 @@ void PF_modelcentre()
     out[0] = c.x;
     out[1] = c.y;
     out[2] = c.z;
+}
+
+// float(entity e, float ssgOpen) loadportof: the loading port of the gun lying about as `e` (its model's:
+// view::modelLoadPort, the super shotgun's barrels turned down `ssgOpen` degrees), as it is drawn where it lies (its
+// drawn transform, angles and origin), into its .loadportpos, .loadportaxis, .loadportface; FALSE (and them zero) if its
+// model has none (vr_reload.qc VR_Reload_PropsFrame: a gun lying about loads as a held one).
+void PF_loadportof()
+{
+    edict_t* ent = G_EDICT(OFS_PARM0);
+    const float open = G_FLOAT(OFS_PARM1);
+    const FieldOffsets& f = fields();
+    G_FLOAT(OFS_RETURN) = 0.f;
+    if(f.loadportpos < 0 || f.loadportaxis < 0 || f.loadportface < 0)
+    {
+        return;
+    }
+    const int index = static_cast<int>(ent->v.modelindex);
+    const qmodel_t* model = index > 0 && index < MAX_MODELS ? sv.models[index] : nullptr;
+    glm::vec3 at{0.f}, axis{0.f}, face{0.f};
+    if(!view::modelLoadPort(model, open, at, axis, face))
+    {
+        setFieldVec(ent, f.loadportpos, glm::vec3{0.f});
+        setFieldVec(ent, f.loadportaxis, glm::vec3{0.f});
+        setFieldVec(ent, f.loadportface, glm::vec3{0.f});
+        return;
+    }
+    const glm::mat3 axes = held::axesFromAngles(ent->v.angles, false);
+    const glm::vec3 origin{ent->v.origin[0], ent->v.origin[1], ent->v.origin[2]};
+    const glm::vec3 p = held::drawnModelPoint(ent, at);
+    const auto way = [&](const glm::vec3& d) {
+        const glm::vec3 w = axes * (held::drawnModelPoint(ent, at + d) - p);
+        return glm::length(w) > 1e-4f ? glm::normalize(w) : glm::vec3{0.f};
+    };
+    setFieldVec(ent, f.loadportpos, origin + axes * p);
+    setFieldVec(ent, f.loadportaxis, way(axis));
+    setFieldVec(ent, f.loadportface, way(face));
+    G_FLOAT(OFS_RETURN) = 1.f;
+}
+
+// vector(entity e, vector a, vector b) shapenearest: the point of `e`'s shape (its Box3D body's, as it lies or a hand
+// holds it: its hull, a gun's convex pieces) nearest the segment `a`..`b`; without a body, its box's (origin + mins ..
+// maxs) nearest, tried at nine points along the segment (vr_reload.qc: a held prop hits a magazine or the super
+// shotgun's barrels with its surface, not its box).
+void PF_shapenearest()
+{
+    edict_t* ent = G_EDICT(OFS_PARM0);
+    const glm::vec3 a{G_VECTOR(OFS_PARM1)[0], G_VECTOR(OFS_PARM1)[1], G_VECTOR(OFS_PARM1)[2]};
+    const glm::vec3 b{G_VECTOR(OFS_PARM2)[0], G_VECTOR(OFS_PARM2)[1], G_VECTOR(OFS_PARM2)[2]};
+    glm::vec3 best{ent->v.origin[0], ent->v.origin[1], ent->v.origin[2]};
+    if(!box3d::shapeNearest(NUM_FOR_EDICT(ent), a, b, best))
+    {
+        const glm::vec3 lo = best + glm::vec3{ent->v.mins[0], ent->v.mins[1], ent->v.mins[2]};
+        const glm::vec3 hi = best + glm::vec3{ent->v.maxs[0], ent->v.maxs[1], ent->v.maxs[2]};
+        float bestDist = 1e9f;
+        for(int i = 0; i <= 8; i++)
+        {
+            const glm::vec3 p = a + (b - a) * (static_cast<float>(i) / 8.f);
+            const glm::vec3 q = glm::clamp(p, lo, hi);
+            if(glm::distance(p, q) < bestDist)
+            {
+                bestDist = glm::distance(p, q);
+                best = q;
+            }
+        }
+    }
+    float* out = G_VECTOR(OFS_RETURN);
+    out[0] = best.x;
+    out[1] = best.y;
+    out[2] = best.z;
 }
 
 // entity(vector org, float rad, vector dir, float mincos) findcone: findradius's chain (the same entities, in the same
@@ -925,21 +995,85 @@ void PF_particle2()
 // entity findflags(entity start, .float field, float flags): the next entity after `start` (in edict order, free ones
 // skipped) whose `field` has any of `flags` set; world when there is none (DP's extension). The frame's loops over the
 // monsters (VR_Liquids_Frame, VR_Wounds_Frame) step through them alone, instead of every entity in the VM.
-void PF_findflags()
+// findflags()'s answer: the next edict after `from` (in use) with any of `flags` in the float `field`; 0 when none.
+[[nodiscard]] int nextFlagged(int from, int field, int flags)
 {
-    const int from = NUM_FOR_EDICT(G_EDICT(OFS_PARM0));
-    const int field = G_INT(OFS_PARM1);
-    const int flags = static_cast<int>(G_FLOAT(OFS_PARM2));
+    if(qcvm == &sv.qcvm)
+    {
+        // (the edict index's fields: the same edict as the walk; vr_edictindex.cpp)
+        const int found = VR_EdictIndex_FindFlags(from, field, flags);
+        if(found >= 0)
+        {
+            return found;
+        }
+    }
     for(int i = from + 1; i < qcvm->num_edicts; i++)
     {
         edict_t* e = EDICT_NUM(i);
         if(!e->free && (static_cast<int>(E_FLOAT(e, field)) & flags))
         {
-            G_INT(OFS_RETURN) = EDICT_TO_PROG(e);
-            return;
+            return i;
         }
     }
-    G_INT(OFS_RETURN) = EDICT_TO_PROG(qcvm->edicts);
+    return 0;
+}
+
+void PF_findflags()
+{
+    const int from = NUM_FOR_EDICT(G_EDICT(OFS_PARM0));
+    const int field = G_INT(OFS_PARM1);
+    const int flags = static_cast<int>(G_FLOAT(OFS_PARM2));
+    G_INT(OFS_RETURN) = EDICT_TO_PROG(EDICT_NUM(nextFlagged(from, field, flags)));
+}
+
+// entity findflagsinview(entity start, .float fld, float flags, vector eye, float range, float mincos): findflags(),
+// past the entities whose box's centre ((absmin + absmax) * 0.5) is further from `eye` than `range` (vlen) or less than
+// `mincos` ahead of it (normalize(centre - eye) * v_forward): the QuakeC test of the stealth AI's look about
+// (VR_Stealth_LookAbout), in QuakeC's own float steps (OP_ADD_V, OP_MUL_VF, OP_SUB_V, PF_vlen, PF_normalize, OP_MUL_V),
+// so the same entities pass. Its other tests and the trace stay in QuakeC.
+void PF_findflagsinview()
+{
+    int e = NUM_FOR_EDICT(G_EDICT(OFS_PARM0));
+    const int field = G_INT(OFS_PARM1);
+    const int flags = static_cast<int>(G_FLOAT(OFS_PARM2));
+    const float* eyep = G_VECTOR(OFS_PARM3);
+    const float eye[3] = {eyep[0], eyep[1], eyep[2]};
+    const float range = G_FLOAT(OFS_PARM4);
+    const float minCos = G_FLOAT(OFS_PARM5);
+    const float* forward = pr_global_struct->v_forward;
+    while((e = nextFlagged(e, field, flags)) != 0)
+    {
+        const edict_t* ed = EDICT_NUM(e);
+        float to[3];
+        for(int i = 0; i < 3; i++)
+        {
+            const float sum = ed->v.absmin[i] + ed->v.absmax[i];
+            const float at = 0.5f * sum;
+            to[i] = at - eye[i];
+        }
+        const double len = sqrt(static_cast<double>(to[0]) * to[0] + static_cast<double>(to[1]) * to[1] +
+                                static_cast<double>(to[2]) * to[2]);
+        if(static_cast<float>(len) > range)
+        {
+            continue;
+        }
+        float dir[3] = {0.f, 0.f, 0.f};
+        if(len != 0)
+        {
+            const double inv = 1 / len;
+            for(int i = 0; i < 3; i++)
+            {
+                dir[i] = static_cast<float>(to[i] * inv);
+            }
+        }
+        const float dot = dir[0] * forward[0] + dir[1] * forward[1] + dir[2] * forward[2];
+        if(dot < minCos)
+        {
+            continue;
+        }
+        break;
+    }
+    G_INT(OFS_RETURN) = EDICT_TO_PROG(EDICT_NUM(e));
 }
 
 // vector liquidentry(vector start, vector end): where the segment first goes into water, slime or
@@ -1559,6 +1693,23 @@ void PF_portal_ai_map()
     VectorCopy(&point.x, G_VECTOR(OFS_RETURN));
 }
 
+// portal_ai_gateinfo(gate, what): 0 the gates' count (0: off), 1 the gate's flags, 2 its face (portals::aiGateFlags).
+void PF_portal_ai_gateinfo()
+{
+    const int gate = static_cast<int>(G_FLOAT(OFS_PARM0));
+    const int what = static_cast<int>(G_FLOAT(OFS_PARM1));
+    const int r = what == 0 ? portals::aiGateCount() : what == 1 ? portals::aiGateFlags(gate) : portals::aiGateFace(gate);
+    G_FLOAT(OFS_RETURN) = static_cast<float>(r);
+}
+
+// portal_ai_gate(gate, what, p): its face's middle, normal, p held to its aperture, p carried through (aiGateVec).
+void PF_portal_ai_gate()
+{
+    const auto v = portals::aiGateVec(static_cast<int>(G_FLOAT(OFS_PARM0)), static_cast<int>(G_FLOAT(OFS_PARM1)),
+        aiVec(G_VECTOR(OFS_PARM2)));
+    VectorCopy(&v.x, G_VECTOR(OFS_RETURN));
+}
+
 void PF_portal_ai_client()
 {
     edict_t* observer = G_EDICT(OFS_PARM0);
@@ -1946,6 +2097,8 @@ constexpr VrBuiltin vrBuiltins[] = {
     {"weapondrawnpose", PF_weapondrawnpose},
     {"modelbounds", PF_modelbounds},
     {"modelcentre", PF_modelcentre},
+    {"shapenearest", PF_shapenearest},
+    {"loadportof", PF_loadportof},
     {"drawnbounds", PF_drawnbounds},
     {"modeloffsetto", PF_modeloffsetto},
     {"findcone", PF_findcone},
@@ -2051,12 +2204,15 @@ constexpr VrBuiltin vrBuiltins[] = {
     {"portal_ai_sight", PF_portal_ai_sight},
     {"portal_ai_map", PF_portal_ai_map},
     {"portal_ai_client", PF_portal_ai_client},
+    {"portal_ai_gateinfo", PF_portal_ai_gateinfo},
+    {"portal_ai_gate", PF_portal_ai_gate},
     {"bodyshock", PF_bodyshock},
     {"bodyshockdeath", PF_bodyshockdeath},
     {"collectfx", PF_collectfx},
     {"bodysmoulder", PF_bodysmoulder},
     {"portal_carry", PF_portal_carry},
     {"findflags", PF_findflags},
+    {"findflagsinview", PF_findflagsinview},
     {"liquidentry", PF_liquidentry},
     {"watersplash", PF_watersplash},
     {"fileexists", PF_fileexists},
@@ -2073,6 +2229,12 @@ constexpr VrBuiltin vrBuiltins[] = {
     {"torchflametouch", PF_torchflametouch},
     {"mapflametouch", PF_mapflametouch},
     {"anglemod", PF_anglemod},
+    {"stealthlight", stealth::PF_stealthlight},
+    {"flashlightbeam", stealth::PF_flashlightbeam},
+    {"pvsvisible", stealth::PF_pvsvisible},
+    {"traceseethrough", stealth::PF_traceseethrough},
+    {"clientlight", stealth::PF_clientlight},
+    {"stealthprofile", stealth::PF_stealthprofile},
     {"meleerun", PF_meleerun},
     {"meleewristspeed", PF_meleewristspeed},
     {"meleewiggled", PF_meleewiggled},

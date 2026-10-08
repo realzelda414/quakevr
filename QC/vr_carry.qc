@@ -38,6 +38,10 @@
                          // VR_THROWN_BOX_TIME: VR_Explobox_Impact)
 .float carry_teleported; // on a player: until then it has just been teleported (VR_Carry_Teleported; the engine's VR
                          // teleport, vr_physics.cpp): what it carries follows its hands from where it is (VR_Carry_Follow)
+.float vr_slam_armed;    // a crate or barrel held in both hands: until when it was last over the head (VR_Crate_SlamFrame)
+.float vr_slam_thrown;   // ... let go of from there: when (its first hard landing takes vr_crate_slam_throw_damage)
+void(entity xBox) VR_Crate_SlamFrame;            // (vr_crates.qc)
+void(entity xBox, float xHands) VR_Crate_SlamReleased;
 .entity carry_letgo;     // the player who last let go of it (VR_Carry_Loose), and when: not hurt by it as it leaves the hand,
 .float carry_letgo_time; // and credited with its flung hits for a while (VR_Prop_Flung)
 .float vr_gib_made;      // when it became a gib (VR_MakeGibGrabbable; VR_Prop_Flung: harmless a while)
@@ -143,7 +147,8 @@ float(entity xPlayer, float xHand, entity xBox) VR_Carry_BodyPushes =
     }
     if(VRIsHandWeaponless(xPlayer, xHand))
     {
-        return cvar("vr_box3d_hand_props") && xBox.model != "progs/grenade.mdl" && xBox.model != "progs/mervup.mdl";
+        return cvar("vr_box3d_hand_props") && xBox.model != "progs/grenade.mdl" && xBox.model != "progs/mervup.mdl" &&
+               xBox.model != "progs/proxbomb.mdl";
     }
     return cvar("vr_box3d_weapon_push") != 0;
 };
@@ -298,6 +303,8 @@ void(entity xPlayer, float xHand, entity xBox) VR_Carry_Start =
 {
     dprint("carry: taken\n");
     xBox.carry_player = xPlayer;
+    xBox.vr_slam_armed = 0;
+    xBox.vr_slam_thrown = 0;
     portal_carry(xBox, xPlayer, xHand, TRUE);
     VR_Head_StopFlies(xBox); // (they would buzz on where it lay)
 
@@ -413,10 +420,26 @@ float(entity e) VR_Thrown_HitSpeed =
     return throwweight(1, VR_Thrown_Mass(e), VR_Thrown_Own(e, "w_throwmin"));
 };
 
+// A heavy prop thrown (NOTES.md vrfiringrange_2026-10-07_23-00-55: a barrel thrown with both hands hurt for about 14, a
+// blow with it about 90): its throw's damage times (mass / vr_throw_heavy_from)^vr_throw_heavy_exp, at most
+// vr_throw_heavy_max, for props heavier than vr_throw_heavy_from kg (a crate, a barrel; weightdamage's curve, which
+// every throw has, flattens out: a heavy thing thrown leaves the hand slow); 1 for a weapon (its own Weapon Weights) and
+// lighter things.
+float(entity e, float xMass) VR_Thrown_HeavyMult =
+{
+    float from = cvar_hget(cvarh_vr_throw_heavy_from);
+    if(e.classname == "thrown_weapon" || from <= 0 || xMass <= from)
+    {
+        return 1;
+    }
+    return min(pow(xMass / from, max(0, cvar_hget(cvarh_vr_throw_heavy_exp))), max(1, cvar_hget(cvarh_vr_throw_heavy_max)));
+};
+
 // Its damage hitting something at `xSpeed` units/s (0: too slow): its base (GetThrownWeaponBaseDamage) times its speed
 // over the throw's full-damage speed (.throwdmgspeed; that times VR_Thrown_Lenient for a heavy thing, as its thresholds
 // are; eased in just over its hit speed: throwdamage), its own Throw Damage x and Throw Damage Curve, the weight's curve
-// (weightdamage) and vr_weapon_throw_damage_mult (every throw's, not only a weapon's: 0.5 since 2026-10-02).
+// (weightdamage), a heavy prop's own (VR_Thrown_HeavyMult) and vr_weapon_throw_damage_mult (every throw's, not only a
+// weapon's: 0.5 since 2026-10-02).
 float(entity e, float xSpeed) VR_Thrown_Damage =
 {
     float dmgSpeed = e.throwdmgspeed;
@@ -426,7 +449,8 @@ float(entity e, float xSpeed) VR_Thrown_Damage =
     float mass = VR_Thrown_Mass(e);
     float curve = weightdamage(mass);
     float bySpeed = throwweight(2, mass, VR_Thrown_Own(e, "w_throwmin"), VR_Thrown_Own(e, "w_throwcurve"), xSpeed, dmgSpeed);
-    return bySpeed * GetThrownWeaponBaseDamage(e) * own * curve * cvar_hget(cvarh_vr_weapon_throw_damage_mult);
+    return bySpeed * GetThrownWeaponBaseDamage(e) * own * curve * VR_Thrown_HeavyMult(e, mass) *
+           cvar_hget(cvarh_vr_weapon_throw_damage_mult);
 };
 
 float VR_THROW_MISSILE_SPEED = 250; // u/s (times VR_Thrown_Lenient): a thing let go of this fast is thrown, a missile
@@ -840,10 +864,20 @@ void(float xHand, entity xBox) VR_Carry_Release =
     VR_Carry_Loose(xBox);
     xBox.vr_spin = VR_Throw_Spin(VRThrowSpinCapped(VRGetHandAVel(xHand)), propvalue(xBox, "mass"), hands);
     VR_Carry_Throw(xBox, v);
+    // It goes on with the player's own motion, as a thrown weapon does (MakeThrown; NOTES.md
+    // vrfiringrange_2026-10-07_23-51-46: a brick thrown running forward fell short), vr_carry_throw_inherit of it. (Its
+    // throw, a missile or not, is judged on the hand's speed alone: VR_Carry_Throw.)
+    xBox.velocity = xBox.velocity + self.velocity * max(0, cvar_hget(cvarh_vr_carry_throw_inherit));
+    if(self.velocity != '0 0 0')
+    {
+        dprint(sprintf("carry: with your motion (%.0f u/s): %v (%.0f u/s)\n", vlen(self.velocity), xBox.velocity,
+            vlen(xBox.velocity)));
+    }
     if(hands == 2)
     {
         VR_Throw_TwoHanded(self, xBox);
     }
+    VR_Crate_SlamReleased(xBox, hands); // a crate or barrel let go of from over the head (vr_crates.qc)
     xBox.vr_gib_handspeed = vlen(throwVel); // (a hard throw bursts it on a wall, however heavy: VR_Gib_HardThrow)
     VR_Gib_Released(xBox, vlen(v), xHand); // a gib or head thrown hard bursts on a wall, softer may stick
     VR_Grenade_Released(xBox, xHand); // a live grenade is the player's (vr_grenade.qc)
@@ -1031,12 +1065,6 @@ void(float xHand) VR_Carry_HandFrame =
     }
     box.carry_trigger = trigger;
 
-    // A round (a shell) held at the loading port of the gun in the other hand goes into it (vr_reload.qc).
-    if(VR_Reload_HeldFrame(xHand, box))
-    {
-        return;
-    }
-
     // Follow the hand, turning with it (its angles set; its place in the hand the grip's: moved at once by a change to its
     // Held Object Offsets); not through walls (monsters: VR_Carry_Follow).
     vector handRot = VRGetHandRot(xHand);
@@ -1049,6 +1077,12 @@ void(float xHand) VR_Carry_HandFrame =
         VR_Carry_Release(xHand, box); // stuck behind something
         return;
     }
+
+    // A round (a shell) held at the loading port of the gun in the other hand goes into it (vr_reload.qc). After it
+    // followed the hand: where the hand has it this frame, as the port is (this frame's, moved with the body). Before,
+    // it was tested where the last frame left it, a frame's walk behind the drawn gun: walking forward, the load point
+    // was found a hand's reach ahead of the receiver (4.4 units at run speed; the author's note, 2026-10-08 14:00).
+    VR_Reload_HeldFrame(xHand, box);
 };
 
 // Moves the held `box` (self is the player) towards `target`, not through walls (through monsters): FALSE if
@@ -1390,7 +1424,9 @@ void() VR_Carry_TwoHandFrame =
     {
         VR_Carry_EndTwoHands(box);
         VR_Carry_Release(cVR_MainHand, box); // stuck behind something
+        return;
     }
+    VR_Crate_SlamFrame(box); // a crate or barrel swung down from over the head onto something breaks (vr_crates.qc)
 };
 
 // ----------------------------------------------------------------------------

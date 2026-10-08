@@ -481,8 +481,24 @@ const DefaultChange defaultChanges[] = {
     // 101: detail textures off by default (the author, 2026-10-07).
     {101, &vr_detail, "1"}, // 0
     {101, &vr_menu_fine_step, "0.0999"}, // 0.1: the author's, slider noise from plain steps landing off the grid (fixed)
+    // 102: Swing Through Enemies on, the author's values (his note vrfiringrange 23-52-45: "more responsive").
+    {102, &vr_melee_phase, "0"}, // 1
+    {102, &vr_melee_phase_speed, "2.25"}, // 4 (his 3.996: slider noise)
+    {102, &vr_melee_phase_time, "0.15"}, // 0.35 (his 0.34965)
+    // 104: the author's settings of 2026-10-08 (his note vrfiringrange_2026-10-08_14-16-19: "I tweaked quite a few
+    // settings and hotspots, please make them the new defaults"; ROUND21.md, "Out of the water by hand; ...").
+    {104, &vr_enemygun_spent_crackle, "2.5"}, // 1
+    {104, &vr_enemygun_spent_volume, "0.25"}, // 0.5
+    {104, &vr_snd_pitch_jitter, "4"}, // 10
+    {104, &vr_ssg_fire_anim_speed, "1.4"}, // 1.75
+    {104, &vr_stealth_corpses, "600"}, // 700
+    {104, &vr_stealth_meter_time, "1.5"}, // 1
+    {104, &vr_stealth_run_speed, "250"}, // 280
+    {104, &vr_stealth_torch, "400"}, // 500
+    {104, &vr_slipgate_surface_opacity, "0.3"}, // 0.5 (vr_defaults.cfg)
+    {104, &vr_reload_port_shot_radius, "1.5"}, // 1.6
 };
-constexpr int configVersion = 101;
+constexpr int configVersion = 104;
 
 // Two settings' values the same (as numbers when both are).
 [[nodiscard]] bool sameValue(const char* a, const char* b)
@@ -775,6 +791,11 @@ void migrateConfig()
         Con_DPrintf("VR: vr_hub_map: vrstart (was vrstart2: the island hub's old name)\n");
         Cvar_SetQuick(&vr_hub_map, "vrstart");
     }
+    // 103: a new install starts in the tutorial (vrtutorial2) once; a config from before has played: the hub, as before.
+    if(from < 103)
+    {
+        Cvar_SetValueQuick(&vr_tutorial_started, 1.f);
+    }
     Cvar_SetValueQuick(&vr_cfg_version, static_cast<float>(configVersion));
 }
 
@@ -823,7 +844,7 @@ const CompiledDefault compiledDefaults[] = {
 // Per-player or bookkeeping settings, never shipped.
 [[nodiscard]] bool personal(const cvar_t* var)
 {
-    return var == &vr_cfg_version || var == &vr_bindings_version || var == &vr_wofs_version || var == &vr_height_calibration
+    return var == &vr_cfg_version || var == &vr_tutorial_started || var == &vr_bindings_version || var == &vr_wofs_version || var == &vr_height_calibration
         || var == &vr_props_version || var == &vr_tips_seen || var == &vr_menu_positions
         || var == &vr_xr_runtime || var == &vr_xr_runtime_json || var == &vr_note_device || var == &vr_dominant_eye
         || !ZA_STRNCMP(var->name, "vr_motion_", 10) // the motion recorder's (a tool's settings)
@@ -901,6 +922,7 @@ void registerCvars()
 // "Unknown command" (cmd.c asks here); the line is dropped quietly and the next config write leaves it out.
 constexpr const char* retiredCvars[] = {
     "vr_throw_lookahead", // 2026-10-06: unused since the throw's window ends at the release (ROUND21.md, "Throws at any frame rate")
+    "vr_throw_slowmo_flick_spin", // 2026-10-08: vr_throw_slowmo_flick_arm (ROUND21.md, "Wrist flicks in bullet time: the arm tells the tempo")
 };
 
 extern "C" int VR_RetiredCvar(const char* name)

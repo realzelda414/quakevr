@@ -592,6 +592,24 @@ void CL_RelinkEntities (void)
 				f = frac;
 				VectorSubtract (ent->msg_origins[0], from, delta);
 			}
+			// QVR: ... and between gates under 100 units apart (no snap: Quake's lerp went straight through the wall
+			// between them), when the older place carried lands much nearer the newer than it was
+			else if (f != 1 && VectorLength (delta) > 24.f)
+			{
+				float	t = 0.f;
+				vec3_t	c;
+				if (VR_PortalLerpFrom (ent->msg_origins[1], ent->msg_origins[0], c, &t))
+				{
+					vec3_t	rest;
+					VectorSubtract (ent->msg_origins[0], c, rest);
+					if (VectorLength (rest) < 0.5f * VectorLength (delta))
+					{
+						VectorCopy (c, from);
+						VectorCopy (rest, delta);
+						turn = t;
+					}
+				}
+			}
 
 			//johnfitz -- don't cl_lerp entities that will be r_lerped
 			if (r_lerpmove.value && (ent->lerpflags & LERP_MOVESTEP))
@@ -710,7 +728,7 @@ void CL_RelinkEntities (void)
 			dl->die = cl.time + 0.01;
 			VR_TuneDlight (QVR_DLIGHT_ROCKET, i, dl); // QVR
 		}
-		else if (ent->model->flags & EF_GRENADE)
+		else if ((ent->model->flags & EF_GRENADE) || VR_RoundTrail (i)) // QVR: and an armed pouch grenade
 		{
 			if (VR_GrenadeTrail (i)) // QVR: not a hand grenade with its pin in
 				CL_RocketTrail (ent, 1);
@@ -720,8 +738,12 @@ void CL_RelinkEntities (void)
 		else if (ent->model->flags & EF_TRACER3)
 			CL_RocketTrail (ent, 6);
 		else
+		{
+			VR_ExplosionDebrisTrail (i); // QVR: an explosion's chunk: its fire trail from where it was drawn last
 			CL_ResetTrail (ent);
+		}
 		VR_ProjectileLight (i); // QVR: hell knight flames, scrag spit, vore balls and lasers light up the room
+		VR_DistortionTrail (i); // QVR: bullet time's distortion trail behind a projectile (vr/vr_bttrails.cpp)
 
 		ent->forcelink = false;
 
@@ -788,6 +810,7 @@ int CL_ReadFromServer (void)
 	CL_UpdateTEnts ();
 	VR_ProfileEnd (); // QVR
 	VR_WallTorchFlames (); // QVR: taken wall torches' flames (vr_walltorch.cpp)
+	VR_TestEffects (); // QVR: vr_particle_test quake's sprite (vr_client.cpp)
 	VR_TorchLights (); // QVR: torches and flames flicker light onto the room
 
 //johnfitz -- devstats

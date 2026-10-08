@@ -100,6 +100,9 @@ float VR_BASH_PALM = 0.6;         // cosine: an open palm facing ahead (within 5
 float VR_BASH_PALM_ALONG = 0.7;   // cosine: moving the way it faces (within 45 degrees)
 float VR_BASH_PALM_RADIAL = 0.82; // cosine: a shove extends the arm: the palm moving out from its shoulder (his shoves:
                                   // 0.84-0.98; his hands waved down or round at the dummy, palm first: 0.55-0.8)
+float VR_SLAP_RADIAL = 0.7;       // cosine: a slap does not extend the arm: the open hand moving out from its shoulder less
+                                  // than this (a shove's palm, VR_BASH_PALM_RADIAL: 0.82 and more; between: neither)
+float VR_SLAP_ACROSS = 0.5;       // cosine: and goes across the body, within 60 degrees of sideways (not a pat down or up)
 float VR_SHOULDER_DOWN = 0.28;    // m: a shoulder below the eyes,
 float VR_SHOULDER_SIDE = 0.2;     // and to the side
 float VR_BASH_COOLDOWN = 0.8;     // s after a bash lands before the next
@@ -167,6 +170,7 @@ float VR_MKIND_SLASH = 0;  // a swing's blade, an axe's head, a gun's barrel swe
 float VR_MKIND_STAB = 1;   // driven along the line, the far end first
 float VR_MKIND_POMMEL = 2; // the near end (the blade proper not following)
 float VR_MKIND_PUNCH = 3;  // a fist (any way: jab, hook, uppercut, overhead)
+float VR_MKIND_SLAP = 4;   // an open hand swung across (VR_Melee_Slaps): a punch's, weaker (vr_melee_slap_mult), no gore
 
 // The hand's state, on an entity of its own (the player's vr_blow_main / vr_blow_off).
 .entity vr_blow_main;
@@ -196,6 +200,7 @@ float VR_MKIND_PUNCH = 3;  // a fist (any way: jab, hook, uppercut, overhead)
 .float mh_lenient;     // heavy leniency: its speed thresholds' factor, from what the hand holds (VR_Weight_Leniency)
 .float mh_curve;       // its strength's rise over the speed needed, times this (VR_Weight_MeleeCurve)
 .float mh_whooshed;    // a whoosh played for this motion (until it slows)
+.float mh_overland;    // frames in a row the grip was as fast as a blow lands (VR_Melee_Whoosh: a slap's whoosh)
 .entity mh_hit_ent;    // the last thing struck (world: none, or a bash or a held gib spent the motion),
 .vector mh_hit_dir;    // the struck part's way then (play space),
 .float mh_hit_time;    // when
@@ -374,6 +379,10 @@ float(entity p, float xHand) VR_Melee_Thing =
     if(VRHasBit(p.vrbits0, xHand == cVR_MainHand ? QVR_VRBITS0_MAINHAND_CLIMBING : QVR_VRBITS0_OFFHAND_CLIMBING))
     {
         return VR_MTHING_NONE; // a hand holding a ledge pulls the body
+    }
+    if(VR_FoeGrab_HandHolds(p, xHand))
+    {
+        return VR_MTHING_NONE; // a hand holding an enemy holds on (vr_foegrab.qc)
     }
     float wid = VRGetEntWeapon(p, xHand);
     if(wid == WID_FIST)
@@ -837,7 +846,52 @@ float(float xHand) VR_Melee_OpenHand =
     {
         return FALSE; // steadying the other's weapon
     }
-    return !VRHasBit(self.vrbits0, xHand == cVR_MainHand ? QVR_VRBITS0_MAINHAND_CLIMBING : QVR_VRBITS0_OFFHAND_CLIMBING);
+    return !VRHasBit(self.vrbits0, xHand == cVR_MainHand ? QVR_VRBITS0_MAINHAND_CLIMBING : QVR_VRBITS0_OFFHAND_CLIMBING) &&
+           !VR_FoeGrab_HandHolds(self, xHand);
+};
+
+// Where `xHand`'s grip is from its shoulder (play space, normalized; `xFwd`: the facing, play space): a shove extends the
+// arm along it (VR_Bash_Extends), a slap goes across it (VR_Melee_Slaps).
+vector(float xHand, entity b, vector xFwd) VR_Melee_ArmOut =
+{
+    vector right = '0 0 0';
+    right_x = xFwd_y;
+    right_y = -xFwd_x;
+    float side = VR_SHOULDER_SIDE;
+    if(xHand == cVR_OffHand) // (the left controller, left-handed too)
+    {
+        side = -side;
+    }
+    return normalize(b.mh_rgrip - (right * side - '0 0 1' * VR_SHOULDER_DOWN));
+};
+
+// SLAPS (vr_melee_slap; ROUND21.md, "Slaps"): whether `xHand`'s open hand, swung as fast as a punch (VR_Melee_Decide),
+// slaps: an open hand (VR_Melee_OpenHand) not in a shove's push (mh_pushing: VR_Bash), going across the body (within
+// 60 degrees of sideways: VR_SLAP_ACROSS) and not out from its shoulder (VR_SLAP_RADIAL, below a shove's
+// VR_BASH_PALM_RADIAL: an open palm pushed out ahead, with one hand or both, is always a shove, never a slap).
+float(float xHand, entity b) VR_Melee_Slaps =
+{
+    if(!cvar_hget(cvarh_vr_melee_slap) || b.mh_pushing || !VR_Melee_OpenHand(xHand))
+    {
+        return FALSE;
+    }
+    vector v = b.mh_vgrip;
+    float sp = vlen(v);
+    if(sp <= 0)
+    {
+        return FALSE;
+    }
+    vector fwd = VR_Blow_Facing();
+    vector right = '0 0 0';
+    right_x = fwd_y;
+    right_y = -fwd_x;
+    float across = fabs(v * right) / sp;
+    float outward = (v * VR_Melee_ArmOut(xHand, b, fwd)) / sp;
+    if(cvar("developer") >= 2)
+    {
+        dprint(sprintf("melee debug: hand %g open, %.1f m/s, across %.2f out %.2f\n", xHand, sp, across, outward));
+    }
+    return across >= VR_SLAP_ACROSS && outward < VR_SLAP_RADIAL;
 };
 
 // Prints a melee event for the logs and the motion evaluation (developer): "melee event: <what> ...".
@@ -1199,17 +1253,27 @@ float(float xHand, entity b, float xI, float xKind) VR_Melee_Decide =
         // A punch is a closed fist (the grip held, or the flashlight in it): an open hand only shoves (VR_Bash). (The
         // author: every punch of his with the grip held; his open hands waved, flicked and patted at the dummy, some at
         // 7-9 m/s, all "no hit".)
+        // Swung across, an open hand slaps (VR_Melee_Slaps): as a punch, weaker.
+        kind = VR_MKIND_PUNCH;
         if(!VR_Melee_ClosedFist(xHand))
         {
-            return FALSE;
+            if(!VR_Melee_Slaps(xHand, b))
+            {
+                return FALSE;
+            }
+            kind = VR_MKIND_SLAP;
+            b.mh_part = "the open hand";
         }
-        kind = VR_MKIND_PUNCH;
         way = b.mh_vgrip;
         // The blow's way: rising and steeply falling blows are thrown faster for the same effort.
         need = VR_Melee_SwingNeed(xHand, b, b.mh_vgrip);
         land = VR_MELEE_PUNCH_LAND;
         weight = cvar_hget(cvarh_vr_melee_punch_mult);
-        if(VR_Carry_IsHolding(self, xHand))
+        if(kind == VR_MKIND_SLAP)
+        {
+            weight = weight * cvar_hget(cvarh_vr_melee_slap_mult);
+        }
+        else if(VR_Carry_IsHolding(self, xHand))
         {
             weight = weight * VR_Carry_PunchMult(self, xHand); // a box, a rock, a brick in hand: an improvised weapon
         }
@@ -1321,6 +1385,13 @@ float(float xHand, entity b, float xI, float xKind) VR_Melee_Decide =
     b.mh_strength = min(VR_MELEE_STRONGEST, max(VR_MELEE_WEAKEST, s)) * weight;
     b.mh_way = VR_Melee_Way(b, way, b.mh_thing);
     return TRUE;
+};
+
+// Whether the blow just decided (VR_Melee_Decide) lands on `xEnt`: a slap only on something that takes damage, not on a
+// wall or a loose gib or head (it would burst it: VR_Gib_Blow); every other blow anywhere.
+float(entity b, entity xEnt) VR_Melee_SlapLands =
+{
+    return b.mh_kind != VR_MKIND_SLAP || (xEnt.takedamage && !xEnt.vr_gib);
 };
 
 // Whether `xHand` may strike `xEnt` now: once per motion (see VR_MELEE_REARM_*); another thing at once (a swing
@@ -1590,7 +1661,7 @@ float(float xHand, entity b) VR_Melee_Sweep =
     // The striking part first. The pommel's touch waits VR_Melee_PommelWait for the blade proper to reach the
     // same thing: then the blow is the blade's (a cut whose hands arrive first); else it lands as the pommel strike it
     // was.
-    if(edgeI >= 0 && VR_Melee_Decide(xHand, b, edgeI, vr_mpt_kind[edgeI]))
+    if(edgeI >= 0 && VR_Melee_Decide(xHand, b, edgeI, vr_mpt_kind[edgeI]) && VR_Melee_SlapLands(b, edgeEnt))
     {
         if(b.mh_pend_ent == world || b.mh_pend_ent != edgeEnt || vr_mpt_f[edgeI] >= VR_MELEE_BLADE_FROM)
         {
@@ -1634,7 +1705,7 @@ float(float xHand, entity b) VR_Melee_Sweep =
         return b.mh_c_ent.takedamage && VR_Melee_Armed(xHand, b, b.mh_c_ent);
     }
     if(edgeI < 0 && hiltI < 0 && wallI >= 0 && !VRGetMeleeHitSoundPlayed(xHand) &&
-       VR_Melee_Decide(xHand, b, wallI, vr_mpt_kind[wallI]))
+       VR_Melee_Decide(xHand, b, wallI, vr_mpt_kind[wallI]) && VR_Melee_SlapLands(b, wallEnt))
     {
         b.mh_c_ent = wallEnt;
         b.mh_c_pos = wallAt;
@@ -1698,6 +1769,10 @@ string(float xKind, float xThing) VR_Melee_KindName =
     {
         return "punch";
     }
+    if(xKind == VR_MKIND_SLAP)
+    {
+        return "slap";
+    }
     if(xThing == VR_MTHING_SWORD)
     {
         return "slash";
@@ -1723,8 +1798,25 @@ string(float xKind, float xThing) VR_Melee_KindName =
 // around the weapons' melee by PlayerVRMeleeImpl (client.qc) for the blow being struck. `developer` prints which.
 float vr_melee_blunt;
 float vr_melee_pommel_last; // 1..3 (0: none yet)
+float vr_melee_slap_last;   // 1..3 (0: none yet)
 string(string xSound) VR_Melee_HitSound =
 {
+    if(vr_melee_slap)
+    {
+        float j = min(3, 1 + floor(random() * 3));
+        if(vr_melee_slap_last)
+        {
+            j = vr_melee_slap_last + (random() < 0.5 ? 1 : 2);
+            if(j > 3)
+            {
+                j = j - 3;
+            }
+        }
+        vr_melee_slap_last = j;
+        xSound = j == 1 ? "vr/slap1.wav" : (j == 2 ? "vr/slap2.wav" : "vr/slap3.wav");
+        dprint(sprintf("melee sound: %s\n", xSound));
+        return xSound;
+    }
     if(vr_melee_blunt)
     {
         float k = min(3, 1 + floor(random() * 3));
@@ -1762,6 +1854,10 @@ string(float xKind, float xThing) VR_Melee_Category =
     {
         return "punch";
     }
+    if(xKind == VR_MKIND_SLAP)
+    {
+        return "slap";
+    }
     return "slash";
 };
 
@@ -1798,22 +1894,34 @@ float vr_melee_whoosh_alt; // the swish played last (VR_Melee_Whoosh): the knigh
 
 // The weapon's whoosh as `xHand`'s striking part gets going as a blow would (once a motion): as fast as a blow needs,
 // come from some way off (and a fist closed). The motion recorder's "stroke". A blade's, a fist's or a gun's swish is the
-// knights' two swings in turn (knight/sword1, sword2), as their own attacks pick them: not one recording every time.
+// knights' two swings in turn (knight/sword1, sword2), as their own attacks pick them: not one recording every time; an
+// open hand's slap, its own lighter swish (vr/slap_whoosh1, 2: make_sounds.py), in turn too.
 void(float xHand, entity b) VR_Melee_Whoosh =
 {
     float minSpeed = VR_Melee_MinSpeedOf(b);
     if(b.mh_fast < minSpeed * VR_MELEE_REARM_SLOW)
     {
         b.mh_whooshed = FALSE;
+        b.mh_overland = 0;
         return;
     }
-    if(b.mh_whooshed || b.mh_thing == VR_MTHING_NONE || vlen(b.mh_vgrip) < VR_Melee_LandNeed(xHand, b, b.mh_vgrip))
+    float fastNow = vlen(b.mh_vgrip) >= VR_Melee_LandNeed(xHand, b, b.mh_vgrip);
+    b.mh_overland = fastNow ? b.mh_overland + 1 : 0;
+    if(b.mh_whooshed || b.mh_thing == VR_MTHING_NONE || !fastNow)
     {
         return;
     }
+    // An open hand: no blow, but swung across as a slap is (VR_Melee_Slaps), the slap's own lighter whoosh, landing or
+    // not (vrfiringrange_2026-10-08_10-48-14: "no sound during the attack, even if it doesn't connect").
+    float slap = FALSE;
     if(b.mh_thing == VR_MTHING_FIST && !VR_Melee_ClosedFist(xHand))
     {
-        return; // an open hand: no blow
+        // As fast two frames in a row: a frame's jitter (a slow wave's speed doubled where the frames beat) is no slap.
+        if(b.mh_overland < 2 || !VR_Melee_Slaps(xHand, b))
+        {
+            return;
+        }
+        slap = TRUE;
     }
     if(meleerun(b, TRUE) < VR_MELEE_RUN || !VR_Melee_WristMoved(b) || VR_Melee_Wiggled(b) || VR_Melee_Reloading(b))
     {
@@ -1821,11 +1929,26 @@ void(float xHand, entity b) VR_Melee_Whoosh =
     }
     b.mh_whooshed = TRUE;
     self.show_hostile = time + 1; // a real swing or punch wakes monsters up (a hand merely closing doesn't: W_AttackImpl)
-    VR_Motion_Event("stroke", VR_Melee_Category(b.mh_thing == VR_MTHING_FIST ? VR_MKIND_PUNCH : VR_MKIND_SLASH, b.mh_thing), xHand, vlen(b.mh_vfar), b.mh_far, world, "");
+    float kind = VR_MKIND_SLASH;
+    if(slap)
+    {
+        kind = VR_MKIND_SLAP;
+    }
+    else if(b.mh_thing == VR_MTHING_FIST)
+    {
+        kind = VR_MKIND_PUNCH;
+    }
+    VR_Motion_Event("stroke", VR_Melee_Category(kind, b.mh_thing), xHand, vlen(b.mh_vfar), b.mh_far, world, "");
     vr_melee_whoosh_alt = !vr_melee_whoosh_alt;
     string s = vr_melee_whoosh_alt ? "knight/sword2.wav" : "knight/sword1.wav";
     float chan = xHand == cVR_OffHand ? CHAN_WEAPON2 : CHAN_WEAPON;
-    if(b.mh_thing == VR_MTHING_AXE || b.mh_thing == VR_MTHING_CLUB || b.mh_thing == VR_MTHING_SAW ||
+    if(slap)
+    {
+        s = vr_melee_whoosh_alt ? "vr/slap_whoosh2.wav" : "vr/slap_whoosh1.wav";
+        dprint(sprintf("melee sound: %s (a slap's whoosh, %.1f m/s, lands from %.1f)\n", s, vlen(b.mh_vgrip),
+            VR_Melee_LandNeed(xHand, b, b.mh_vgrip)));
+    }
+    else if(b.mh_thing == VR_MTHING_AXE || b.mh_thing == VR_MTHING_CLUB || b.mh_thing == VR_MTHING_SAW ||
        b.mh_thing == VR_MTHING_CROWBAR)
     {
         s = "weapons/ax1.wav";
@@ -2281,16 +2404,7 @@ vector(entity b) VR_Bash_PushVel =
 // palm first, is no shove). `xFwd`: the facing (play space).
 float(float xHand, entity b, vector v, vector xFwd) VR_Bash_Extends =
 {
-    vector right = '0 0 0';
-    right_x = xFwd_y;
-    right_y = -xFwd_x;
-    float side = VR_SHOULDER_SIDE;
-    if(xHand == cVR_OffHand) // (the left controller, left-handed too)
-    {
-        side = -side;
-    }
-    vector out = b.mh_rgrip - (right * side - '0 0 1' * VR_SHOULDER_DOWN);
-    return v * normalize(out) >= vlen(v) * VR_BASH_PALM_RADIAL;
+    return v * VR_Melee_ArmOut(xHand, b, xFwd) >= vlen(v) * VR_BASH_PALM_RADIAL;
 };
 
 // Whether the flashlight's hand `xHand` pushes along with the other's open palm (a two-handed shove, the torch in one
@@ -2976,6 +3090,9 @@ void(float xHand) VR_Melee_Landed =
 {
     entity b = VR_Blow(xHand);
     self.show_hostile = time + 1; // a blow that landed wakes monsters up (as a gun's shot: W_AttackImpl)
+    // QVR: heard by its strength and the held thing's weight (a fist's 200 units at strength 1; vr_stealth.qc)
+    VR_Stealth_Noise(self.origin, 200 * b.mh_strength * (1 + max(0, VR_Weight_HeldMass(self, xHand)) / 3) *
+        cvar_hget(cvarh_vr_stealth_noise_melee), self, STL_N_MELEE);
     b.mh_hit_ent = b.mh_c_ent;
     b.mh_hit_time = VR_PlayerTime();
     b.mh_hit_touch = VR_PlayerTime();

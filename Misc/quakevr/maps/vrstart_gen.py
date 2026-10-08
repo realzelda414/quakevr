@@ -863,7 +863,11 @@ def build_stairs(mw):
     staircase(part(mw, "staircase down to the range"), STAIR2)
 
 
-LECTERNS_X = (-165, -55, 55, 165)       # from the gate's centre
+# the campaign lecterns, from the gate's centre: two rows of three either side of the way to the gate (50 wide, as
+# when there were four), id's three on the left, the rerelease's three on the right; 58 apart, each 40 wide under a
+# 46-wide cap (the row ends within the curb, as the four's did)
+LECTERNS_X = (-164, -106, -48, 48, 106, 164)
+LECTERN_HALF = 20                        # the lectern's half width (its cap's: 3 more)
 LECTERN_Y = -60                          # their south faces (the buttons on them)
 
 
@@ -920,9 +924,10 @@ def build_terrace(mw):
     mw.add({"classname": "trigger_changelevel", "map": "start", "spawnflags": "1"},  # (no intermission)
            [box(gx - 40, gy - 10, zb, gx + 40, gy + 10, spring + 30, "trigger")])
     # the campaign lecterns (their buttons are entities: build_entities)
+    hw = LECTERN_HALF
     for lx in LECTERNS_X:
-        out.append(chamfer_box(gx + lx - 26, LECTERN_Y, z, gx + lx + 26, LECTERN_Y + 22, z + 62, 2, T("block", scale=0.5)))
-        out.append(chamfer_box(gx + lx - 30, LECTERN_Y - 3, z + 62, gx + lx + 30, LECTERN_Y + 25, z + 68, 2,
+        out.append(chamfer_box(gx + lx - hw, LECTERN_Y, z, gx + lx + hw, LECTERN_Y + 22, z + 62, 2, T("block", scale=0.5)))
+        out.append(chamfer_box(gx + lx - hw - 3, LECTERN_Y - 3, z + 62, gx + lx + hw + 3, LECTERN_Y + 25, z + 68, 2,
                                T("trim", scale=0.5)))
 
 
@@ -1518,12 +1523,16 @@ def tip(mw, name, message, x, y, z, distance=200, target=None, size=None):
 
 N = "\\n"
 
-# the campaign lecterns' buttons: (label, command); the first three choose what the slipgate starts (the old hub's
-# vr_activestartpaknameidx; QC's buttons.qc marks a mission pack that is not installed), the fourth starts at once
+# the campaign lecterns' buttons: (label, command); each chooses what the slipgate starts (the old hub's
+# vr_activestartpaknameidx; QC's buttons.qc marks a campaign whose data is missing); 3, 4 and 5 (Dimension of the Past,
+# Dimension of the Machine, Dawn of the Machine) have game folders of their own, so the slipgate's changelevel runs
+# vr_campaign_select dopa, mg1 or mg3 (vr_gamedir.cpp)
 CAMPAIGNS = [("QUAKE", "vr_activestartpaknameidx 0; echo Quake selected: step into the slipgate"),
              ("SCOURGE OF" + N + "ARMAGON", "vr_activestartpaknameidx 1; echo Scourge of Armagon selected: step into the slipgate"),
              ("DISSOLUTION" + N + "OF ETERNITY", "vr_activestartpaknameidx 2; echo Dissolution of Eternity selected: step into the slipgate"),
-             ("DIMENSION" + N + "OF THE PAST" + N + "(starts now)", "vr_campaign_select dopa")]
+             ("DIMENSION" + N + "OF THE PAST", "vr_activestartpaknameidx 3; echo Dimension of the Past selected: step into the slipgate"),
+             ("DIMENSION" + N + "OF THE MACHINE", "vr_activestartpaknameidx 4; echo Dimension of the Machine selected: step into the slipgate"),
+             ("DAWN OF" + N + "THE MACHINE", "vr_activestartpaknameidx 5; echo Dawn of the Machine selected: step into the slipgate")]
 
 # the pavilion's setting buttons (vr_setup_option <key>: Quake/vr/vr_setup.cpp's table; each press steps the setting,
 # shows it on a screen over the button and saves the config): the north board's rows, the south board's
@@ -1534,7 +1543,7 @@ SETTINGS_NORTH = [[("TURNING", "turning"), ("TURN SPEED", "turnspeed"), ("MOVE" 
 SETTINGS_SOUTH = [[("BODY", "body"), ("HUD", "hud"), ("CROSSHAIR", "crosshair"), ("WEAPON GRIP", "grip"),
                    ("GADGET ARM", "gadget")],
                   [("TORCH SIDE", "torch"), ("WEAPON MODE", "holsters"), ("RELOADING", "reload"),
-                   ("TWO-HANDED" + N + "AIM", "twohand")]]
+                   ("TWO-HANDED" + N + "AIM", "twohand"), ("SWIMMING", "swim")]]
 
 
 def build_entities(mw):
@@ -1549,7 +1558,7 @@ def build_entities(mw):
     qx, qy = QUICK
     banner(mw, N.join(["NEW TO VR?", "The tutorial teaches the basics;", "calibration fits the game to your body."]),
            qx, qy - 6, 14 + 96, 270, "0.3")
-    button(mw, "VR" + N + "TUTORIAL", "map vrtutorial", qx - 19, qy - 4, 14 + 40, 90)
+    button(mw, "VR" + N + "TUTORIAL", "skill 0; map vrtutorial2", qx - 19, qy - 4, 14 + 40, 90)  # (on Easy: the start flow's)
     button(mw, "VR" + N + "CALIBRATION", "map vrcalibration", qx + 19, qy - 4, 14 + 40, 90)
     tip(mw, "vs2_welcome", "Welcome! Walk with the stick and follow" + N + "the torches up to the campaigns.",
         p["x"], p["y1"] + 160, p["z"] + 40, 260)
@@ -1558,8 +1567,7 @@ def build_entities(mw):
     zb = t["z"]
     for (label, cmd), lx in zip(CAMPAIGNS, LECTERNS_X):
         cx = gx + lx
-        button(mw, label, cmd, cx, LECTERN_Y, zb + 42, 90,
-               scale="0.17" if "starts" in label else "0.2")
+        button(mw, label, cmd, cx, LECTERN_Y, zb + 42, 90)
     banner(mw, N.join(["CHOOSE A CAMPAIGN", "Press its stone, then step into the slipgate."]),
            gx, gy - 24, zb + 16 + 205, 270, "0.45")
     banner(mw, N.join(["Every campaign, and what", "its data needs:", "{menu:Official Campaigns}"]),
@@ -1601,8 +1609,9 @@ def build_entities(mw):
     tip(mw, "vs2_range", "Grip a gun from the bench with either hand." + N + "Hold a box of ammunition to a holster to load.",
         lx, -40, top + 10, 200)
     zf = rg["z"]
-    # lane 1 (y -160): a stack of crates
-    for (x, y, zz, large) in ((1100, -178, zf, 0), (1100, -142, zf, 0), (1100, -160, zf + 32, 0), (1260, -170, zf, 1)):
+    # lane 1 (y -160): a stack of crates (the two below 44 apart: clear of each other turned up to 30 degrees; the top one
+    # rests on them, QC vr_crate: on a crate placed before it)
+    for (x, y, zz, large) in ((1100, -182, zf, 0), (1100, -138, zf, 0), (1100, -160, zf + 32, 0), (1260, -170, zf, 1)):
         k = {"classname": "vr_crate", "origin": "%d %d %d" % (x, y, zz + 2), "angle": str(RND.randrange(0, 30)),
              "skin": str(RND.randrange(3))}
         if large:
@@ -1616,7 +1625,7 @@ def build_entities(mw):
     for i, mdl in enumerate(("vr_rock1", "vr_brick1", "vr_rock3", "vr_brick3", "vr_rock5")):
         mw.add({"classname": "vr_debris_piece", "model": "progs/%s.mdl" % mdl, "origin": "%d %d %d" % (sx, sy - 30 + 15 * i, zf + 40),
                 "angle": str(RND.randrange(0, 360)), "skin": str(RND.randrange(6))})
-    for (x, y, zz) in ((1240, 70, zf), (1240, 102, zf), (1240, 86, zf + 32)):
+    for (x, y, zz) in ((1240, 64, zf), (1240, 108, zf), (1240, 86, zf + 32)):  # (as lane 1's)
         mw.add({"classname": "vr_crate", "origin": "%d %d %d" % (x, y, zz + 2), "angle": str(RND.randrange(0, 30)),
                 "skin": str(RND.randrange(3))})
     # ---- the lookout tower
@@ -1643,6 +1652,8 @@ WORLD_KEYS = {
     "light": "14", "_minlight_color": "0.55 0.62 1", "_sunlight": "230", "_sunlight_mangle": "240 -30 0", "_sunlight_color": "0.62 0.72 1.0",
     "_sunlight2": "75", "_sunlight2_color": "0.3 0.38 0.62", "_bounce": "1", "_vr_debris": "0", "_vr_crates": "0",
     "sky": "vs2night", "fog": "0.035 0.045 0.055 0.08",
+    # Lit here as it is meant to be: the game's relight batches pass it over (vr_relight_maps.cpp, ownMap).
+    "_qvr_prelit": "1",
 }
 
 

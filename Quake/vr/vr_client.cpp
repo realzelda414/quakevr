@@ -3,6 +3,7 @@
 
 #include "vr_modelmetadata.hpp"
 #include "vr_client.hpp"
+#include "vr_bttrails.hpp"
 #include "vr_chainsaw.hpp"
 #include "vr_collectfx.hpp"
 #include "vr_held.hpp"
@@ -33,8 +34,10 @@
 #include "vr_autopump.hpp"
 #include "vr_explosiondebris.hpp"
 #include "vr_shock.hpp"
+#include "vr_stealth.hpp"
 #include "vr_smoulder.hpp"
 #include "vr_comfortfade.hpp"
+#include "vr_deathview.hpp"
 #include "vr_teleport.hpp"
 #include "vr_tips.hpp"
 #include "vr_throw.hpp"
@@ -227,6 +230,9 @@ VrMove unposed;
     move.vrYaw = hands::playSpaceYaw();
     move.origin = hs.playerOrigin;
     move.headPos = hs.head;
+    // The monsters' senses (QC vr_stealth.qc): his lamp as lit and the light on him, as this client sees them.
+    move.lampLit = flashlight::beamNow(move.lampLens, move.lampDir, move.lampRange, move.lampCos);
+    move.light = stealth::lightAt(move.origin);
 
     // The server walks the player by this over its frame (units per second).
     if(host_frametime > 0.0)
@@ -264,11 +270,12 @@ VrMove unposed;
                 Con_Printf("throw %s: %.2f m/s (%.2f %.2f %.2f), spin %.1f rad/s, hand now %.2f m/s\n",
                     h == HAND_MAIN ? "main" : "off", glm::length(e.vel), e.vel.x, e.vel.y, e.vel.z,
                     glm::length(e.angVel), glm::length(hs.vel[h]));
-                if(e.aimTurn > 0.f || e.lag > 0.f || e.rate != 1.f)
+                if(e.aimTurn > 0.f || e.lag > 0.f || e.rate != 1.f || e.travel > 0.f)
                 {
                     Con_Printf("  slow motion: windows x%.2f of the clock's, the controller's way (the slowed hand's %.1f "
-                               "deg off it), the hand %.2f m behind it at the peak\n",
-                        e.rate, e.aimTurn, e.lag);
+                               "deg off it), the hand %.2f m behind it at the peak; the flick (%.0f%% of it) x%.2f (%.2f m/s)\n",
+                        e.rate, e.aimTurn, e.lag, e.flickShare * 100.f, e.flickRate, glm::length(e.flick));
+                    Con_Printf("  slow motion: the stroke %.2f m in %.2f s, a nudge x%.2f\n", e.travel, e.strokeTime, e.nudge);
                 }
                 if(vr_debug_throw.value >= 2.f)
                 {
@@ -559,13 +566,25 @@ void parsePrecacheSound()
     cl.sound_precache[index] = S_PrecacheSound(name);
 }
 
+// vr_particle_test quake: Quake's own effects there instead (whatever vr_particles is): its explosion's particles
+// (R_ParticleExplosion) and its explosion sprite (progs/s_explod.spr), held there two seconds, its frames running
+// (VR_TestEffects). For seeing Quake's particles and sprites where Quake VR's are not drawn (behind a slipgate's
+// see-through surface: slipgate_edges_test.sh particles).
+struct TestSprite
+{
+    glm::vec3 at{0.f};
+    double start = 0.0, until = -1.0;
+    qmodel_t* model = nullptr;
+};
+TestSprite testSprite;
+
 // vr_particle_test <preset> [count]: a particle2 preset 64 units in front of the view (tuning); a splash (14) where
 // the view first meets a liquid's surface, if it does within 2048 units (going that way).
 void particleTest_f()
 {
     if(Cmd_Argc() < 2 || cls.state != ca_connected)
     {
-        Con_Printf("usage: vr_particle_test <preset 0..11> [count]\n");
+        Con_Printf("usage: vr_particle_test <preset 0..11 | quake> [count]\n");
         return;
     }
     vec3_t fwd, right, up;
@@ -573,6 +592,14 @@ void particleTest_f()
     const glm::vec3 eye{r_refdef.vieworg[0], r_refdef.vieworg[1], r_refdef.vieworg[2]};
     const glm::vec3 f{fwd[0], fwd[1], fwd[2]};
     glm::vec3 org = eye + f * 64.f;
+    if(!q_strcasecmp(Cmd_Argv(1), "quake"))
+    {
+        vec3_t o{org.x, org.y, org.z};
+        R_ParticleExplosion(o);
+        testSprite = {org, cl.time, cl.time + 2.0, Mod_ForName("progs/s_explod.spr", false)};
+        Con_Printf("vr_particle_test: Quake's explosion particles and sprite at %.0f %.0f %.0f\n", org.x, org.y, org.z);
+        return;
+    }
     glm::vec3 dir{0.f};
     const auto preset = static_cast<particles::Preset>(Q_atoi(Cmd_Argv(1)));
     if(preset == particles::Preset::Splash && cl.worldmodel)
@@ -616,6 +643,26 @@ void particleTest_f()
 
 } // namespace
 
+// CL_ReadFromServer, after the temp entities: vr_particle_test quake's sprite.
+extern "C" void VR_TestEffects(void)
+{
+    TestSprite& s = testSprite;
+    if(!s.model || cl.time > s.until || cl.time < s.start)
+    {
+        return;
+    }
+    entity_t* ent = CL_NewTempEntity();
+    if(!ent)
+    {
+        return;
+    }
+    ent->origin[0] = s.at.x;
+    ent->origin[1] = s.at.y;
+    ent->origin[2] = s.at.z;
+    ent->model = s.model;
+    ent->frame = static_cast<int>((cl.time - s.start) * 10.0) % za::max(s.model->numframes, 1);
+}
+
 namespace qvr::client
 {
 
@@ -631,7 +678,9 @@ void init()
     shock::registerCommands();
     smoulder::registerCommands();
     comfortfade::registerCommands();
+    deathview::registerCommands();
     weaponfx::registerCommands();
+    bttrails::registerCommands();
     Cmd_AddCommand("+offhandattack", OffhandAttackDown_f);
     Cmd_AddCommand("-offhandattack", OffhandAttackUp_f);
     Cmd_AddCommand("+grableft", GrabLeftDown_f);
@@ -732,7 +781,9 @@ extern "C" void VR_OnClientClearState()
     shock::clear();
     smoulder::clear();
     comfortfade::clear();
+    deathview::clear();
     weaponfx::clear();
+    bttrails::clear();
     wounds::clear();
     rope::forget();
     chainsaw::reset();
@@ -769,6 +820,7 @@ extern "C" void VR_ParseEntityUpdate(int num, int bits)
     data.noRotate = (bits & U_QVR_NOROTATE) != 0;
     data.spin = (bits & U_QVR_SPIN) != 0;
     data.weaponUid = (bits & U_QVR_WEAPONUID) ? MSG_ReadLong() : 0;
+    data.clip = (bits & U_QVR_WEAPONUID) ? MSG_ReadByte() : -1;
     data.noMag = (bits & U_QVR_NOMAG) != 0;
     data.ssgOpen = (bits & U_QVR_SSGOPEN) != 0;
     data.ssgLoaded = data.ssgOpen ? MSG_ReadByte() : 0;

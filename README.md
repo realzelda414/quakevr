@@ -96,8 +96,8 @@ are.
 ### Maps, campaigns and play
 
 - **Quake and both mission packs** in one game, from a VR hub with a tutorial and a firing range. The re-release's
-  **Dimension of the Past** and **Dimension of the Machine** play natively (single player); Dawn of the Machine is
-  being ported.
+  **Dimension of the Past**, **Dimension of the Machine** and **Dawn of the Machine** play natively (single
+  player).
 - **Map Library:** browse [Quaddicted](https://www.quaddicted.com/)'s custom maps and download, install, uninstall and
   play them in the game. **Other mods** run in a compatibility mode.
 - **Multiplayer and bots** (FrikBot), with a fixed 72 Hz server tick; flat-screen play (`vr_enabled 0`).
@@ -175,6 +175,16 @@ Machine is detected; its native VR gameplay port is still in progress. See the [
   `quakevr\tools`, with the VisPatch data, also makes water, slime and teleporters see-through.
   [docs/RELIGHTING.md](docs/RELIGHTING.md) has the steps. It takes about a minute.
 - **Transcribing voice notes** with Whisper. This is for playtesters.
+
+**Network and privacy.** The game sends nothing about you or your play. It goes online only for these:
+
+- **Update check:** at start-up, at most once an hour, it reads the latest release's `latest.json` from GitHub. If a
+  newer version is out, the menus say so in their bottom right
+  corner. To turn it off: *Advanced VR > HUD and Menus > Menu > Check for Updates*
+  (`vr_update_check 0`).
+- **Map Library:** at start-up, at most once a day, it fetches Quaddicted's package index (`vr_maps_fetch 0` turns
+  this off). It downloads maps only when you ask.
+- **Relighting:** it downloads ericw-tools only when you ask.
 
 ## First steps and basic tweaking
 

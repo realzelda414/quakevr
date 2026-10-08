@@ -174,6 +174,16 @@ void VR_OnClearMemory (void);			// Host_ClearMemory, before the hunk (edicts, cl
 void VR_MonsterFell (edict_t *ent, float speed);	// SV_Physics_Step, a walking monster landed at `speed` (QC VR_Monster_Fall)
 void VR_OnEdictFree (edict_t *ed);	// ED_Free (any VM's)
 void VR_OnEdictAlloc (edict_t *ed);	// ED_Alloc (any VM's), the edict cleared: when the server's was made (.vr_born; vr_cheats.cpp)
+// The edict index (vr_edictindex.cpp): find() on .classname and findflags() on a few fields without walking every edict.
+// Every change to an edict's free flag, classname or watched fields reaches it through these (server VM; others ignored).
+void VR_EdictIndex_Touch (edict_t *ed);		// the engine changed the edict (freed, taken, cleared, parsed, its classname set)
+void VR_EdictIndex_Reset (void);			// everything read again at the next query (a load)
+void VR_EdictIndex_StringSlot (int slot, int stable); // a known string's slot (re)assigned: stable when its text is never changed (PR_AllocString)
+void VR_EdictIndex_Address (int ofs, int watched);	// OP_ADDRESS of a watched field (fieldwatch's value): its store to come
+void VR_EdictIndex_Stored (int ofs);		// OP_STOREP into ofs while some are pending (watchpending)
+void VR_EdictIndex_TopLevelDone (void);		// PR_ExecuteProgram, the server's outermost call returned
+int VR_EdictIndex_Find (int start, int field, const char *s);	// PF_Find: the next match after start (0: none), -1 to walk
+int VR_EdictIndex_FindFlags (int start, int field, int flags);	// PF_findflags: the same
 int VR_MonsterFrozen (struct edict_s *ent);	// SV_Physics, past the clients: a living monster frozen (vr_freeze_monsters): skipped
 void VR_OnSpawnServerAfterLoad (void);	// SV_SpawnServer, after serverinfo is sent
 void VR_OnBeginLoadGame (void);			// Host_Loadgame_f, before SV_SpawnServer
@@ -196,6 +206,7 @@ void VR_OnMakeStatic (edict_t *ent);	// PF_makestatic, before the entity is free
 int VR_TossKeepsGround (struct edict_s *ent);	// SV_Physics_Toss, when on the ground: nonzero to stay
 int VR_RigidToss (struct edict_s *ent);		// SV_Physics_Toss, after thinking: nonzero if it moved the entity (.vr_rigid)
 void VR_PortalToss (struct edict_s *ent);	// SV_Physics_Toss, before the move: through a slipgate (vr_portals.cpp)
+void VR_PortalMonsterCross (struct edict_s *ent);	// SV_Physics_Step, after its think: a monster through a paired slipgate (vr_portals.cpp)
 void VR_PortalTraceBegin (void);			// PF_traceline: the last portal trace's crossings forgotten
 void VR_PortalTrace (const float start[3], const float end[3], int type, struct edict_s *passedict, trace_t *trace); // ... MOVE_PORTALS: on through the slipgates it crosses
 void VR_PhysicsFrameEnd (void);				// end of SV_Physics's entity loop: Box3D's world steps (vr_box3d.cpp)
@@ -229,10 +240,13 @@ int VR_ParseBeamEntity (int ent);						// CL_ParseBeam: beam key for an entity
 enum { QVR_DLIGHT_MUZZLE, QVR_DLIGHT_ROCKET, QVR_DLIGHT_EXPLOSION };
 void VR_DecalTempEntity (int scorch, const float *pos);	// cl_tent.c: a wall hit (0) or an explosion (1) leaves a mark
 int VR_GibTrail (int ent, int zombie);					// CL_RelinkEntities: a gib's blood (a trail, drops on the floor, splats where it hits); nonzero if it drew the trail (not Quake's)
+void VR_ExplosionDebrisTrail (int ent);					// CL_RelinkEntities, an entity without a trail of Quake's: an explosion's chunk's fire trail (vr_explosiondebris.cpp)
+int VR_RoundTrail (int ent);							// CL_RelinkEntities: a launcher's grenade round armed (the pouches' grenades: vr_grenade.qc) smokes as a grenade
 int VR_GrenadeTrail (int ent);						// CL_RelinkEntities: whether a grenade model smokes (not a hand grenade with its pin in: vr_grenade.qc)
 int VR_BulletHoleSprite (int ent);						// CL_RelinkEntities: Hipnotic's bullet hole sprite, a chip decal instead; nonzero if it is not drawn
 void VR_TuneDlight (int kind, int ent, void *dlight);	// after Quake sets a muzzle flash, rocket or explosion light up: size, colour, fade (the local player's flash at the gun)
 void VR_ProjectileLight (int ent);						// CL_RelinkEntities, after the trails: glowing projectiles (hell knight flames, scrag spit, vore balls, lasers) light up the room
+void VR_DistortionTrail (int ent);						// CL_RelinkEntities, after VR_ProjectileLight: bullet time's distortion trail follows a projectile (vr_bttrails.cpp)
 void VR_ProjectileImpactLight (int kind, const float *pos); // cl_tent.c: a scrag's (0) or a hell knight's (1) spike hitting a wall flashes
 void VR_HazeExplosion (const float *pos, float size);	// cl_tent.c: an explosion's heat haze (vr_haze.cpp; size 1 a rocket's)
 int VR_ModelSpins (int ent);							// CL_RelinkEntities: nonzero to spin a model as EF_ROTATE (a weapon pickup drawn as its prop)
@@ -247,6 +261,7 @@ void VR_ForgetEndedRopes (void); // CL_UpdateTEnts, before the beams: the ropes 
 void VR_BeamLights (int index, struct qmodel_s *model, const float *start, const float *end); // CL_UpdateTEnts: a lightning beam lights the room along its length (vr_beam_lights)
 void VR_BeamDrawn (int index, struct qmodel_s *model, const float *start, const float *end); // CL_UpdateTEnts: a lightning beam's ends as drawn this frame: Quad Damage's arcs along it (vr_beam_arcs)
 void VR_WallTorchFlames (void);							// CL_ReadFromServer, after the temp entities: the taken wall torches' flames (vr_walltorch.cpp)
+void VR_TestEffects (void);								// ... vr_particle_test quake's explosion sprite (vr_client.cpp)
 #include "vr_modelmetadata.h" // shared model identities/traits and loader invalidation
 // A campaign switch keeps the alias models whose files are the same in its game folders (vr_modelkeep.cpp)
 void VR_ModelSourcesBegin (struct qmodel_s *mod, const char *file); // Mod_LoadModel, an alias model's: its lookups recorded (its own file, just found, first)
@@ -280,6 +295,7 @@ void VR_ReliableSent (void);								// SV_SendClientMessages, before sv.reliable
 // Server physics (sv_phys.c, sv_user.c, world.c).
 int VR_RunThink2 (struct edict_s *ent);				// start of SV_RunThink: 0 if the entity was freed
 void VR_ClientPreMove (struct edict_s *ent);			// SV_Physics_Client: hand and weapon touches
+void VR_FoeGrabPreThink (struct edict_s *ent);			// SV_Physics_Client, after VR_ClimbPreThink: holds on enemies taken and let go (vr_foegrab.cpp)
 void VR_ClimbPreThink (struct edict_s *ent);			// SV_Physics_Client, before PlayerPreThink: ledge holds taken and let go (vr_climb.cpp)
 int VR_PortalLerpFrom (const float older[3], const float newer[3], float from[3], float *yaw); // CL_RelinkEntities: 1 when
 							// the older place carried through a slipgate (from; the gate's yaw) lands by the newer
@@ -342,6 +358,8 @@ void VR_OnDamage (int armor, int blood, const float *from);	// V_ParseDamage: a 
 // Console (console.c).
 int VR_NotifyOnWrist (void);							// Con_DrawNotify: nonzero to leave the notify lines to the wrist gadget's log
 int VR_GameLineOnWrist (const char *text, int length);	// Con_DrawNotify: a server's line: nonzero to leave it to the hologram (vr_messages_hologram_only)
+int VR_ConsoleLogLine (const char *text, int length, int server);	// Con_DrawNotify: nonzero to leave a line to the console (vr_hud_console_log 0: not a game message)
+void VR_NotifyLogInfo (void);						// vr_notify_info: prints the wrist gadget's log lines
 
 // Screen (gl_screen.c).
 void VR_GameCenterPrint (const char *str);				// SCR_CenterPrint: a centre print, for the wrist gadget's hologram (vr_gadget.cpp)
@@ -377,7 +395,7 @@ int VR_MenuHidesPlaque (void);							// M_DrawTransPic: the options pages' verti
 // The menus' branding (vr_menubrand.cpp): the Quake VR banner in place of Quake's plaque, and their browns turned red.
 int VR_MenuDrawBanner (int x, int y);					// M_DrawPlaque: the banner where the plaque's top left would be; nonzero if drawn (0: no image, draw the plaque)
 void VR_MenuDrawBannerColumn (void);					// M_Draw, before the page: the VR menu style's banner, in the left column under the corner's buttons
-void VR_MenuDrawVersion (void);						// M_Draw, before the page: "Quake VR: Unleashed - v0.9" / "by Vittorio Romeo" in the bottom right corner (vr_menu_version)
+void VR_MenuDrawVersion (void);						// M_Draw, before the page: "Quake VR: Unleashed - v0.9" / "by Vittorio Romeo" / a "Support on Ko-fi" link, in a box in the bottom right corner (vr_menu_version)
 void VR_MenuRecolor (float *params);					// Draw_SetMenuRecolor: the gui shader's MenuRecolor (vr_menu_recolor; x 0: off)
 int VR_MenuKey (int key, int repeat);					// M_Keydown: nonzero if the buttons took the key (a click on one, the sticks' selection on them)
 void VR_MenuBounds (int *left, int *top, int *width, int *height);	// M_UpdateBounds: the menus laid out from the canvas's bounds beside the corner's buttons
@@ -402,6 +420,9 @@ enum
 	QVR_LIMIT_COUNT
 };
 void VR_LimitHit (int limit);
+// SV_WriteEntitiesToClient: a client's entity kept from the other clients (a dead player whose ragdoll body lies there,
+// vr_deathview.cpp).
+int VR_SV_HiddenFromOthers (edict_t *ent);
 // SV_WriteEntitiesToClient: the entities sent to `clent` this frame of those in its sight, their bytes, the datagram's
 // room (vr_net_stats, vr_server.cpp).
 void VR_NetStatsEntities (edict_t *clent, int sent, int insight, int bytes, int maxsize);

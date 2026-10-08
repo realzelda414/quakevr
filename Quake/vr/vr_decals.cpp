@@ -11,6 +11,7 @@
 #include "vr_modellight.hpp"
 #include "vr_profile.hpp"
 #include "vr_retro.hpp"
+#include "vr_stereo.hpp"
 #include "vr_ring.hpp"
 #include "vr_trace.hpp"
 
@@ -113,6 +114,10 @@ struct Decal
     glm::vec3 normal{0.f};   // the surface's it was laid on,
     float depth = 0.f;       // and how far from that plane a face takes it (clipToWorld)
     int staticAt = -1;       // its first vertex in staticVertices while it is settled there (-1: it is not)
+    // The world decal grid's buckets it is listed in (worldBuckets), for the grid of `bucketsMask` (0: not made yet):
+    // a mark keeps its place, so only the new ones are hashed when the grid is made again.
+    za::Vector<za::U32> buckets;
+    za::U32 bucketsMask = 0;
 };
 
 // Oldest first (drawn in that order; the oldest go first): a ring of vr_decal_max slots, whose marks' triangles keep
@@ -176,7 +181,7 @@ void popOldest()
     dropCount -= isDrop(decals.front());
     decals.popFront();
 }
-int builtFrame = -1; // the host frame `vertices` were built in; -1 when decals came or went since
+int builtFrame = -1; // the host frame `vertices` were built in (-1 after a clear)
 int addedThisFrame = 0;
 int addedFrame = -1;
 int goreFrame = -1; // the host frame gore::frame last ran in
@@ -1019,13 +1024,16 @@ bool add(Kind kind, const glm::vec3& where, const glm::vec3& normal, float size,
     // Into the ring's next slot, its triangles into the buffer the slot's last mark had.
     Decal& slot = decals.pushBack();
     za::Vector<Corner> buffer = ZA_MOVE(slot.tris);
+    za::Vector<za::U32> bucketBuffer = ZA_MOVE(slot.buckets);
     slot = d;
     slot.staticAt = -1;
     slot.tris = ZA_MOVE(buffer);
+    slot.buckets = ZA_MOVE(bucketBuffer);
+    slot.buckets.clear();
+    slot.bucketsMask = 0;
     slot.tris.assignRange(tris.begin(), tris.end());
     dropCount += isDrop(slot);
-    builtFrame = -1;
-    worldDirty = true;
+    worldDirty = true; // (`vertices`, made each frame, take it in the next one: in both eyes together)
     return true;
 }
 
@@ -1324,17 +1332,16 @@ constexpr float worldReach = 12.f;
 
 za::Vector<WorldDecal> worldDecals;
 za::Vector<za::U32> worldGrid;
-za::Vector<za::U32> worldBucketCount, worldBucketFill;
-// Reused scratch: stamp each bucket once per mark, then keep that mark's memberships for the fill pass.
-za::Vector<za::U32> worldBucketStamp, worldMemberships;
-za::Vector<za::SizeT> worldMembershipOffsets;
+// Reused scratch: stamp each bucket once per mark (its memberships kept in the mark: Decal::buckets).
+za::Vector<za::U32> worldBucketStamp;
 za::U32 worldStamp = 0;
 gfx::StorageBuffer worldDecalBuffer, worldGridBuffer;
 double worldClock = 0.0; // cl.time the marks' times count from (the floats near 0)
 long long worldBuilds = 0;
+int worldFrame = -1; // the host frame of the last view that drew the marks on the world (VR_DecalsFrame: its first view makes the grid)
 
-// Append mark `d`'s buckets in first-cell order, each once. The stamp table matches mask + 1.
-void worldBuckets(const WorldDecal& d, za::U32 mask)
+// Mark `d`'s buckets in first-cell order, each once, into `out`. The stamp table matches mask + 1.
+void worldBuckets(const WorldDecal& d, za::U32 mask, za::Vector<za::U32>& out)
 {
     if(++worldStamp == 0)
     {
@@ -1357,7 +1364,7 @@ void worldBuckets(const WorldDecal& d, za::U32 mask)
                 if(worldBucketStamp[b] != worldStamp)
                 {
                     worldBucketStamp[b] = worldStamp;
-                    worldMemberships.pushBack(b);
+                    out.pushBack(b);
                 }
             }
         }
@@ -1407,51 +1414,54 @@ void buildWorld()
     const za::U32 mask = buckets - 1;
     {
         QVR_PROFILE("decal grid count");
-        worldBucketCount.assign(buckets, 0u);
+        // Each bucket's header counts its marks first (then its list's start and length: the prefix pass).
+        worldGrid.assign(1 + buckets, 0u);
         if(worldBucketStamp.size() != buckets)
         {
             worldBucketStamp.assign(buckets, 0u);
             worldStamp = 0;
         }
-        worldMemberships.clear();
-        worldMembershipOffsets.clear();
-        worldMembershipOffsets.pushBack(0);
-        for(const WorldDecal& w : worldDecals)
+        for(za::SizeT k = 0; k < decals.size(); k++)
         {
-            worldBuckets(w, mask);
-            worldMembershipOffsets.pushBack(worldMemberships.size());
-        }
-        for(const za::U32 b : worldMemberships)
-        {
-            worldBucketCount[b]++;
+            Decal& d = decals[k];
+            if(d.bucketsMask != mask) // (new, or the grid's size changed)
+            {
+                d.buckets.clear();
+                worldBuckets(worldDecals[k], mask, d.buckets);
+                d.bucketsMask = mask;
+            }
+            for(const za::U32 b : d.buckets)
+            {
+                worldGrid[1 + b]++;
+            }
         }
     }
     // Each bucket's list: the newest 64 of its marks (the oldest are under them).
     za::U32 total = 0;
     {
         QVR_PROFILE("decal grid prefix");
-        worldGrid.assign(1 + buckets, 0u);
         worldGrid[0] = mask;
         for(za::U32 b = 0; b < buckets; b++)
         {
-            const za::U32 n = za::min(worldBucketCount[b], worldBucketMarks);
-            worldGrid[1 + b] = (total << 8) | n;
+            const za::U32 n = za::min(worldGrid[1 + b], worldBucketMarks);
+            worldGrid[1 + b] = total << 8; // (its length counted up as the fill lists its marks)
             total += n;
         }
         worldGrid.resize(1 + buckets + total, 0u);
     }
     {
         QVR_PROFILE("decal grid fill");
-        worldBucketFill.assign(buckets, 0u);
+        // A bucket's header's length grows with each mark listed, up to 64: a bucket with fewer marks lists them all,
+        // so it ends at min(its marks, 64), the length the prefix pass gave its list.
         for(za::SizeT k = worldDecals.size(); k-- > 0;)
         {
-            for(za::SizeT m = worldMembershipOffsets[k]; m < worldMembershipOffsets[k + 1]; m++)
+            for(const za::U32 b : decals[k].buckets)
             {
-                const za::U32 b = worldMemberships[m];
-                const za::U32 n = worldGrid[1 + b] & 255u;
-                if(worldBucketFill[b] < n)
+                za::U32& header = worldGrid[1 + b];
+                if((header & 255u) < worldBucketMarks)
                 {
-                    worldGrid[1 + buckets + (worldGrid[1 + b] >> 8) + worldBucketFill[b]++] = static_cast<za::U32>(k);
+                    worldGrid[1 + buckets + (header >> 8) + (header & 255u)] = static_cast<za::U32>(k);
+                    header++;
                 }
             }
         }
@@ -1565,15 +1575,10 @@ void draw()
     }
 }
 
-void stress_f()
+// `count` splatter marks on the floor ahead of the player, `size` units across (vr_decal_stress, vr_decal_eyes_test):
+// how many were made.
+int stressMarks(int count, float size)
 {
-    if(!cl.worldmodel || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities)
-    {
-        Con_Printf("vr_decal_stress: enter a map first\n");
-        return;
-    }
-    const int count = Cmd_Argc() > 1 ? za::clamp(atoi(Cmd_Argv(1)), 1, 64) : 64;
-    const float size = Cmd_Argc() > 2 ? za::clamp(Q_atof(Cmd_Argv(2)), 1.f, 256.f) : 64.f;
     vec3_t forward, right, up;
     AngleVectors(cl.viewangles, forward, right, up);
     const glm::vec3 f{forward[0], forward[1], 0.f}, r{right[0], right[1], 0.f};
@@ -1593,7 +1598,74 @@ void stress_f()
             made += place(Mark::Splatter, where, normal, size);
         }
     }
+    return made;
+}
+
+void stress_f()
+{
+    if(!cl.worldmodel || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities)
+    {
+        Con_Printf("vr_decal_stress: enter a map first\n");
+        return;
+    }
+    const int count = Cmd_Argc() > 1 ? za::clamp(atoi(Cmd_Argv(1)), 1, 64) : 64;
+    const float size = Cmd_Argc() > 2 ? za::clamp(Q_atof(Cmd_Argv(2)), 1.f, 256.f) : 64.f;
+    const int made = stressMarks(count, size);
     Con_DPrintf("vr_decal_stress: %d of %d marks, size %.0f\n", made, count, size);
+}
+
+// vr_decal_eyes_test N: for N frames a mark is made between the eyes (as the right eye's view begins, after the left
+// eye drew), and each frame's eyes compared: the marks on the world each drew with and the grid's builds (both or
+// neither must have the new one). Printed at the end, then the cvar back to 0.
+struct EyesTest
+{
+    int frames = 0, made = 0, disagreed = 0;
+    int leftFrame = -1;
+    za::SizeT leftMarks = 0;
+    long long leftBuilds = 0;
+};
+EyesTest eyesTest;
+
+void eyesTestBegin()
+{
+    if(vr_decal_eyes_test.value <= 0.f || !stereo::isRenderingEye() || stereo::eye() != 1 || cl.viewentity <= 0 ||
+        cl.viewentity >= cl.num_entities)
+    {
+        return;
+    }
+    eyesTest.made += stressMarks(1, 24.f);
+}
+
+void eyesTestEnd()
+{
+    if(vr_decal_eyes_test.value <= 0.f || !stereo::isRenderingEye())
+    {
+        return;
+    }
+    if(stereo::eye() == 0)
+    {
+        eyesTest.leftFrame = host_framecount;
+        eyesTest.leftMarks = worldDecals.size();
+        eyesTest.leftBuilds = worldBuilds;
+        return;
+    }
+    if(eyesTest.leftFrame != host_framecount)
+    {
+        return;
+    }
+    eyesTest.frames++;
+    if(eyesTest.leftMarks != worldDecals.size() || eyesTest.leftBuilds != worldBuilds)
+    {
+        eyesTest.disagreed++;
+    }
+    if(eyesTest.frames >= static_cast<int>(vr_decal_eyes_test.value))
+    {
+        Con_Printf("vr_decal_eyes_test: %d frames, %d marks made between the eyes, %d frames the eyes drew different marks "
+                   "(0: each new mark in both or neither)\n",
+            eyesTest.frames, eyesTest.made, eyesTest.disagreed);
+        eyesTest = {};
+        Cvar_SetQuick(&vr_decal_eyes_test, "0");
+    }
 }
 
 void count_f()
@@ -1625,7 +1697,19 @@ void count_f()
             vr_parallax.value, vr_parallax_depth.value, TexMgr_IndexedSmooth() ? "on" : "only replacement textures' (vr_texture_smooth 2 for Quake's)",
             static_cast<int>(worldDecals.size()), static_cast<int>(worldGrid.size()), worldBuilds);
         za::U32 occupied = 0, capped = 0, largest = 0;
-        for(const za::U32 n : worldBucketCount)
+        za::Vector<za::U32> counts; // each bucket's marks (uncapped: the grid lists the newest 64)
+        counts.assign(worldGrid.empty() ? 0u : worldGrid[0] + 1u, 0u);
+        for(za::SizeT k = 0; k < decals.size(); k++)
+        {
+            if(!worldGrid.empty() && decals[k].bucketsMask == worldGrid[0]) // (listed in the last grid made)
+            {
+                for(const za::U32 b : decals[k].buckets)
+                {
+                    counts[b]++;
+                }
+            }
+        }
+        for(const za::U32 n : counts)
         {
             occupied += n > 0;
             capped += n > worldBucketMarks;
@@ -1633,7 +1717,7 @@ void count_f()
         }
         Con_Printf("world decal grid: %d buckets, %u occupied, %u capped at %u, %u largest uncapped; "
                    "%.1f KB marks, %.1f KB grid\n",
-            static_cast<int>(worldBucketCount.size()), occupied, capped, worldBucketMarks, largest,
+            static_cast<int>(counts.size()), occupied, capped, worldBucketMarks, largest,
             static_cast<double>(worldDecals.size() * sizeof(WorldDecal)) / 1024.0,
             static_cast<double>(worldGrid.size() * sizeof(za::U32)) / 1024.0);
     }
@@ -1925,6 +2009,12 @@ extern "C" void VR_DecalsFrame(float clock[4])
     {
         return;
     }
+    // Made once a frame, in its first view, for every view of it: marks that come or go during the frame (blood
+    // landing in the left eye's particles, the gore's frame in its decals::draw) show in both eyes together, from the
+    // next frame (made again in the right eye, they showed there a frame before the left).
+    const bool firstView = worldFrame != host_framecount;
+    worldFrame = host_framecount;
+    eyesTestBegin();
     const double life = expire();
     if(qvr::decals::decals.empty())
     {
@@ -1934,11 +2024,12 @@ extern "C" void VR_DecalsFrame(float clock[4])
     {
         makeAtlas();
     }
-    if(worldDirty)
+    if(worldDirty && firstView)
     {
         worldDirty = false;
         buildWorld();
     }
+    eyesTestEnd();
     if(!atlas || worldDecals.empty())
     {
         return;

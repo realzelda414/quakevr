@@ -241,12 +241,32 @@ void(float xHand, float xFrame, void() xFn) setHandThink =
     else                     setThink(xFrame, xFn);
 }
 
-void(float xHand) player_shot1 = { setHandThinkWithArg(xHand, $shotatt1, player_shot2); VRSetWeaponFrame(xHand, 1); self.effects = self.effects | EF_MUZZLEFLASH; };
-void(float xHand) player_shot2 = { setHandThinkWithArg(xHand, $shotatt2, player_shot3); VRSetWeaponFrame(xHand, 2); };
-void(float xHand) player_shot3 = { setHandThinkWithArg(xHand, $shotatt3, player_shot4); VRSetWeaponFrame(xHand, 3); };
-void(float xHand) player_shot4 = { setHandThinkWithArg(xHand, $shotatt4, player_shot5); VRSetWeaponFrame(xHand, 4); };
-void(float xHand) player_shot5 = { setHandThinkWithArg(xHand, $shotatt5, player_shot6); VRSetWeaponFrame(xHand, 5); };
-void(float xHand) player_shot6 = { setHandThinkWithArg(xHand, $shotatt6, player_run); VRSetWeaponFrame(xHand, 6); };
+// QVR: the super shotgun's firing animation (the shots' frames, shared with the shotgun's) paced by vr_ssg_fire_anim_speed
+// (1.4: 40% faster than id's 0.1 s a frame; the author's note vrfiringrange_2026-10-07_23-54-46: it breaks open only once
+// the animation is over, so a faster one opens sooner after a shot). The hand's next frame sooner (or later, below 1).
+void(float xHand) player_shot_pace =
+{
+    if(VRGetWeapon(xHand) != WID_SUPER_SHOTGUN)
+    {
+        return;
+    }
+    float k = 0.1 / max(0.25, cvar_hget(cvarh_vr_ssg_fire_anim_speed));
+    if(xHand == cVR_OffHand)
+    {
+        self.nextthink2 = time + k;
+    }
+    else
+    {
+        self.nextthink = time + k;
+    }
+};
+
+void(float xHand) player_shot1 = { setHandThinkWithArg(xHand, $shotatt1, player_shot2); player_shot_pace(xHand); VRSetWeaponFrame(xHand, 1); self.effects = self.effects | EF_MUZZLEFLASH; };
+void(float xHand) player_shot2 = { setHandThinkWithArg(xHand, $shotatt2, player_shot3); player_shot_pace(xHand); VRSetWeaponFrame(xHand, 2); };
+void(float xHand) player_shot3 = { setHandThinkWithArg(xHand, $shotatt3, player_shot4); player_shot_pace(xHand); VRSetWeaponFrame(xHand, 3); };
+void(float xHand) player_shot4 = { setHandThinkWithArg(xHand, $shotatt4, player_shot5); player_shot_pace(xHand); VRSetWeaponFrame(xHand, 4); };
+void(float xHand) player_shot5 = { setHandThinkWithArg(xHand, $shotatt5, player_shot6); player_shot_pace(xHand); VRSetWeaponFrame(xHand, 5); };
+void(float xHand) player_shot6 = { setHandThinkWithArg(xHand, $shotatt6, player_run); player_shot_pace(xHand); VRSetWeaponFrame(xHand, 6); };
 
 void(float xHand) player_axe1 = { setHandThinkWithArg(xHand, $axatt1, player_axe2); VRSetWeaponFrame(xHand, 1); };
 void(float xHand) player_axe2 = { setHandThinkWithArg(xHand, $axatt2, player_axe3); VRSetWeaponFrame(xHand, 2); };
@@ -786,6 +806,7 @@ void(string gibname, float dm) ThrowGib =
     new.nextthink = time + 10 + random()*10;
     new.frame = 0;
     new.flags = 0;
+    new.stl_notice = STL_NOTICE_BODY; // QVR: monsters seeing it are alerted (vr_stealth.qc)
     VR_MakeGibGrabbable(new);
     VR_Gib_MakeDestroyable(new, 1);
     VR_SmallGib_CarryMults(self, new); // VR: it carries this monster's small gib and brain counts (vr_smallgibs.qc)
@@ -940,7 +961,11 @@ void() PlayerDie =
     self.think = SUB_Null;
     self.think2 = SUB_Null;
 
-    if(self.velocity_z < 10)
+    // VR: his body a ragdoll of its own (vr_death_view; vr_deathdoll.qc), not gibbed: he stays where he was (the view
+    // where his eyes were), no death hop.
+    if(VR_DeathDoll_Make(self))
+        self.velocity = '0 0 0';
+    else if(self.velocity_z < 10)
         self.velocity_z = self.velocity_z + random()*300;
 
     if(self.health < -40)

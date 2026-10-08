@@ -196,7 +196,8 @@ constexpr float weaponDrawnReach = 48.f;
         const int mi = static_cast<int>(target->v.modelindex);
         const qmodel_t* model = mi > 0 && mi < MAX_MODELS ? sv.models[mi] : nullptr;
         const float slack = model && (modelmeta::has(model, modelmeta::Trait::LiveShell) ||
-                                      modelmeta::has(model, modelmeta::Trait::Magazine))
+                                      modelmeta::has(model, modelmeta::Trait::Magazine) ||
+                                      modelmeta::has(model, modelmeta::Trait::LiveRound) || modelmeta::isQuakeGrenade(model))
                                 ? za::max(vr_reload_grab_slack.value, 0.f) * 0.01f * units::metresToUnits()
                                 : 0.f;
         return held::grabTouch(target, player, which == HAND_OFF ? 0 : 1, slack);
@@ -1907,7 +1908,7 @@ extern "C" int VR_TouchLinks(edict_t* ent)
     int found = 0;
 
     const bool client = isClient(ent);
-    SV_AreaEdicts(ent->v.absmin, ent->v.absmax, list, &found, space);
+    SV_AreaEdictsUnordered(ent->v.absmin, ent->v.absmax, list, &found, space);
     if(client)
     {
         // handsReach's, and a weapon's length more: a weapon's drawn shape reaches that far from its box.
@@ -1917,7 +1918,7 @@ extern "C" int VR_TouchLinks(edict_t* ent)
             const glm::vec3 hand = fieldVec(ent, ofs);
             const float lo[3] = {hand.x - reach.x, hand.y - reach.y, hand.z - reach.z};
             const float hi[3] = {hand.x + reach.x, hand.y + reach.y, hand.z + reach.z};
-            SV_AreaEdicts(lo, hi, list, &found, space);
+            SV_AreaEdictsUnordered(lo, hi, list, &found, space);
         }
     }
     za::quickSort(list, list + found); // edict order (the edicts are one array), each once

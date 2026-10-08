@@ -5,12 +5,12 @@
 
 #include "vr_modelmetadata.hpp"
 #include "vr_particles.hpp"
-#include "vr_explosiondebris.hpp"
 #include "vr_units.hpp"
 #include "vr_engine.hpp"
 #include "vr_cvars.hpp"
 #include "vr_gfx.hpp"
 #include "vr_hue.hpp"
+#include "vr_jobs.hpp"
 #include "vr_lighting.hpp"
 #include "vr_lines.hpp"
 #include "vr_mem.hpp"
@@ -1661,7 +1661,6 @@ void splash(const glm::vec3& org, const glm::vec3& dir, int count)
 
 bool spawn(const glm::vec3& org, const glm::vec3& dir, Preset preset, int count)
 {
-    if(preset == Preset::Explosion) { explosiondebris::spawn(org); }
     QVR_PROFILE("particle spawn");
     // The splash's ripples on the liquid (vr_water_ripples, vr_water.cpp), with Quake VR's particles or without.
     glm::vec3 surface{0.f};
@@ -2497,9 +2496,16 @@ za::SizeT lightCount = 0; // the particles lightOf is for (the pool may have gro
 struct LightStats
 {
     int lit{0}, emissive{0}, traces{0}, shared{0}, refreshed{0}, stale{0}, lights{0};
+    za::SizeT reached{0}; // a dynamic light that reaches a lit particle, counted once for each such pair
     double ms{0.0}; // lightParticles' time
 };
 LightStats lightStats;
+jobs::Site lightSite{"particle light"}; // (its parallelFor: vr_jobs_sites)
+// The dynamic lights' work (the last frame's lit particles times this frame's lights, and 4 for each light that
+// reached one) from which lightParticles splits it between threads: combined (6800 lit, 21 lights, 91000 reaches)
+// splits, 0.3 ms off the main thread; explosions_storm (1400 lit, 13 lights, 800 reaches), particles_dense (5700,
+// 5, 100) and combat_48 (2400, 6, 200) stay on the caller (a split's start costs more than it saves there).
+constexpr za::SizeT splitLightWork = 65536;
 double lightMsSum = 0.0; // lightParticles' time over the frames since the last report
 int lightFrames = 0;
 long long lightTraceSum = 0; // ... and the traces it made
@@ -2623,6 +2629,45 @@ void lightmapOf(Particle& p, za::SizeT index, LightStats& st)
     return l * (za::max(q, 0.f) / steps / m);
 }
 
+// What litLight needs of the frame.
+struct LitFrame
+{
+    const float* curve; // lighting::lightCurve of each lightmap value
+    const FrameLight* lights;
+    int lightCount;
+    bool darkplaces, retro;
+};
+
+// A lit particle's light: its lightmap's (after the contrast, as the world's) and the dynamic lights added after it.
+[[nodiscard]] glm::vec3 litLight(const Particle& p, const LitFrame& lf, za::SizeT& reached)
+{
+    glm::vec3 c{lf.curve[p.lightmap[0]], lf.curve[p.lightmap[1]], lf.curve[p.lightmap[2]]};
+    for(int k = 0; k < lf.lightCount; k++)
+    {
+        const FrameLight& l = lf.lights[k];
+        const glm::vec3 to = p.org - l.pos;
+        const float d2 = glm::dot(to, to);
+        if(d2 >= l.radius * l.radius)
+        {
+            continue;
+        }
+        reached++;
+        const float dist = za::sqrt(d2);
+        float add = lf.darkplaces ? darkplacesAtten(dist, l.radius) * 128.f : l.radius - dist; // (128: Quake's full)
+        if(l.spot.w != 0.f && dist > 1e-3f) // VR_SpotCone's
+        {
+            const float t = za::clamp(l.spot.w - glm::dot(glm::vec3{l.spot}, to) / dist, 0.f, 1.f);
+            add *= 1.f - t * t * (3.f - 2.f * t);
+        }
+        if(add > 0.f)
+        {
+            c += add * l.color;
+        }
+    }
+    const glm::vec3 f = glm::clamp(c * (1.f / 128.f), glm::vec3{0.f}, glm::vec3{2.f});
+    return lf.retro ? retroLevels(f) : f;
+}
+
 // Every particle's light this frame (lightOf), and the dynamic lights that reach any.
 void lightParticles()
 {
@@ -2659,6 +2704,13 @@ void lightParticles()
         curve[v] = k[0];
     }
     const bool retro = retrolight::on() && vr_retrolight_models.value != 0.f;
+    const LitFrame lf{curve, frameLights, frameLightCount, darkplaces, retro};
+    // The lightmap's light in order on this thread: the traces share a budget and a cache, and R_LightPoint its globals
+    // (and the model's data: never read on the pool's threads). With many particles and lights, the dynamic lights
+    // after it on the game's threads (each writing only its own lightOf: the same results however it is split);
+    // else in the same pass (splitLightWork).
+    const za::SizeT work = static_cast<za::SizeT>(lightStats.lit) * static_cast<za::SizeT>(frameLightCount) + 4 * lightStats.reached;
+    const bool split = jobs::workers() > 0 && work >= splitLightWork;
     for(za::SizeT i = 0; i < pool.size(); i++)
     {
         Particle& p = pool[i];
@@ -2673,36 +2725,28 @@ void lightParticles()
             continue;
         }
         lightmapOf(p, i, st);
-        // (the baked light's contrast, as the world's: the dynamic lights added after it)
-        glm::vec3 c{curve[p.lightmap[0]], curve[p.lightmap[1]], curve[p.lightmap[2]]};
-        for(int k = 0; k < frameLightCount; k++)
+        if(!split)
         {
-            const FrameLight& l = frameLights[k];
-            const glm::vec3 to = p.org - l.pos;
-            const float d2 = glm::dot(to, to);
-            if(d2 >= l.radius * l.radius)
-            {
-                continue;
-            }
-            const float dist = za::sqrt(d2);
-            float add = darkplaces ? darkplacesAtten(dist, l.radius) * 128.f : l.radius - dist; // (128: Quake's full)
-            if(l.spot.w != 0.f && dist > 1e-3f) // VR_SpotCone's
-            {
-                const float t = za::clamp(l.spot.w - glm::dot(glm::vec3{l.spot}, to) / dist, 0.f, 1.f);
-                add *= 1.f - t * t * (3.f - 2.f * t);
-            }
-            if(add > 0.f)
-            {
-                c += add * l.color;
-            }
+            lightOf[i] = litLight(p, lf, st.reached);
         }
-        glm::vec3 f = glm::clamp(c * (1.f / 128.f), glm::vec3{0.f}, glm::vec3{2.f});
-        if(retro)
-        {
-            f = retroLevels(f);
-        }
-        lightOf[i] = f;
         st.lit++;
+    }
+    if(split)
+    {
+        za::Atomic<za::SizeT> reached{0};
+        jobs::parallelFor(lightSite, pool.size(), 1024, [&](za::SizeT begin, za::SizeT end) {
+            za::SizeT n = 0;
+            for(za::SizeT i = begin; i < end; i++)
+            {
+                const Particle& p = pool[i];
+                if(on && p.lighting != Lighting::Emissive)
+                {
+                    lightOf[i] = litLight(p, lf, n);
+                }
+            }
+            reached.fetchAddRelaxed(n);
+        });
+        st.reached = reached.loadRelaxed(); // (after the call: every chunk ran)
     }
     lightCount = pool.size();
     st.ms = static_cast<double>(za::Clock::nowNanoseconds() - start) * 1e-6;
@@ -2743,8 +2787,8 @@ void lightReport_f()
         st.emissive, st.lights);
     Con_Printf("  lit: light %.3f (lightmap %.3f, dynamic %.3f; 1 = Quake's full), colour luma %.3f (unlit %.3f)\n",
         light / m, baked / m, (light - baked) / m, colour / m, base / m);
-    Con_Printf("  this frame: %d traces, %d shared, %d flicker reads, %d stale; %.3f ms (%.3f ms a frame over %d, with %.0f traces and %.0f lit)\n",
-        st.traces, st.shared, st.refreshed, st.stale, st.ms, lightMsSum / za::max(lightFrames, 1), lightFrames,
+    Con_Printf("  this frame: %llu light reaches (a dynamic light within a lit particle's reach), %d traces, %d shared, %d flicker reads, %d stale; %.3f ms (%.3f ms a frame over %d, with %.0f traces and %.0f lit)\n",
+        static_cast<unsigned long long>(st.reached), st.traces, st.shared, st.refreshed, st.stale, st.ms, lightMsSum / za::max(lightFrames, 1), lightFrames,
         static_cast<double>(lightTraceSum) / za::max(lightFrames, 1),
         static_cast<double>(lightLitSum) / za::max(lightFrames, 1));
     lightMsSum = 0.0;
@@ -2925,7 +2969,7 @@ int halfResFrame = -1;
     if(halfResFrame != host_framecount)
     {
         halfResFrame = host_framecount;
-        const float cover = largeCover(split, viewport);
+        const float cover = vr_particle_halfres_force.value != 0.f ? 2.f : largeCover(split, viewport);
         halfRes = cover >= (halfRes ? 1.f : 1.5f);
     }
     return halfRes;
@@ -3043,7 +3087,12 @@ extern "C" void VR_DrawSceneTranslucent()
         retroSet > 0 ? za::max(0.f, vr_particle_retro_halfres_pixels.value) :
                        za::max(0.f, vr_particle_halfres_pixels.value)};
     const bool allowHalf = retroSet > 0 ? vr_particle_retro_halfres.value != 0.f : vr_particle_halfres.value != 0.f;
-    const bool half = inView && allowHalf &&
+    // Retro: not in the frames composited in reverse order (vr_particle_saturate: the densest, from 10 views of
+    // particles), where skipping what is hidden costs less than all of them at half size (particles_dense: 8 against
+    // 25 ms of GPU a frame, BENCHMARKS.md "Half-resolution retro particles").
+    const bool saturated = retroSet > 0 && inView && vr_particle_halfres_force.value == 0.f &&
+                           reverseOrderThisFrame(split.pixelScale, viewport);
+    const bool half = inView && allowHalf && !saturated &&
                       (GL_NeedsSceneEffects() || GL_NeedsPostprocess()) && halfResThisFrame(split, viewport);
 
     // The opaque scene's distances, for the soft ones (the liquids' when they made them this view): only when a soft
@@ -3117,8 +3166,36 @@ GrenadeTrailLog grenadeTrails;
 
 } // namespace
 
-// A grenade's smoke trail: not a hand grenade with its pin in (vr_grenade.qc: skin 1 of progs/grenade.mdl or of the
-// multi-grenade's progs/mervup.mdl, VR_HGREN_SKIN_UNARMED, muted by make_grenade_skins.py until its fuse is lit).
+// Whether a launcher's grenade round (the pouches' grenades: QC vr_grenade.qc VR_HandGrenade_Make) smokes as a grenade
+// (its models have no trail flag of their own: a round lying about never smokes): armed, progs/vr_round_grenade.mdl's
+// skins 2 and 3 (QC VR_HGREN_SKIN_ARMED), progs/vr_round_prox.mdl's 1.
+extern "C" int VR_RoundTrail(int ent)
+{
+    if(ent <= 0 || ent >= cl.num_entities)
+    {
+        return 0;
+    }
+    const entity_t& e = cl_entities[ent];
+    if(!e.model)
+    {
+        return 0;
+    }
+    if(qvr::modelmeta::is(e.model, qvr::modelmeta::Id::RoundGrenade))
+    {
+        constexpr int armedSkin = 2;
+        return e.skinnum >= armedSkin;
+    }
+    if(qvr::modelmeta::is(e.model, qvr::modelmeta::Id::RoundProx))
+    {
+        return e.skinnum >= 1;
+    }
+    return 0;
+}
+
+// A grenade's smoke trail: not a hand grenade with its pin in (vr_grenade.qc: skin 1 of progs/grenade.mdl, of the
+// multi-grenade's progs/mervup.mdl or of the proximity grenade's progs/proxbomb.mdl, muted by make_grenade_skins.py until
+// it is armed; make_rounds.py's rounds, unused since 2026-10-08, smoke only armed: progs/vr_round_grenade.mdl's skins 2
+// and 3, progs/vr_round_prox.mdl's 1).
 extern "C" int VR_GrenadeTrail(int ent)
 {
     if(ent <= 0 || ent >= cl.num_entities)
@@ -3127,8 +3204,11 @@ extern "C" int VR_GrenadeTrail(int ent)
     }
     const entity_t& e = cl_entities[ent];
     constexpr int unarmedSkin = 1;
-    const bool smokes = !(e.model && e.skinnum == unarmedSkin &&
-                          (qvr::modelmeta::is(e.model, qvr::modelmeta::Id::Grenade) || qvr::modelmeta::is(e.model, qvr::modelmeta::Id::Mervup)));
+    bool smokes = !(e.model && e.skinnum == unarmedSkin && qvr::modelmeta::isQuakeGrenade(e.model));
+    if(e.model && (qvr::modelmeta::is(e.model, qvr::modelmeta::Id::RoundGrenade) || qvr::modelmeta::is(e.model, qvr::modelmeta::Id::RoundProx)))
+    {
+        smokes = VR_RoundTrail(ent) != 0;
+    }
     // developer 1: each grenade's trail as it starts or stops.
     const auto n = static_cast<size_t>(ent);
     if(developer.value && (!grenadeTrails.seen[n] || grenadeTrails.smoking[n] != smokes))
@@ -3186,7 +3266,6 @@ extern "C" int VR_ParticleExplosion(const float* org)
 
 extern "C" int VR_ParticleExplosion2(const float* org, int colorStart, int colorLength)
 {
-    qvr::explosiondebris::spawn({org[0], org[1], org[2]});
     using namespace qvr;
     using namespace qvr::particles;
     if(!(cl.protocolflags & PRFL_QUAKEVR) || !vr_particles.value || !ensureAtlas())
@@ -3221,7 +3300,6 @@ extern "C" int VR_EntityTrail(int ent, int type)
 
 extern "C" int VR_BlobExplosion(const float* org)
 {
-    qvr::explosiondebris::spawn({org[0], org[1], org[2]});
     using namespace qvr::particles;
     if(!enabled())
     {

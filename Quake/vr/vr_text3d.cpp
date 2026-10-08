@@ -7,11 +7,13 @@
 #include "vr_shadows.hpp"
 #include "vr_decals.hpp"
 #include "vr_cvars.hpp"
+#include "vr_cellcord.hpp"
 #include "vr_chainsaw.hpp"
 #include "vr_hue.hpp"
 #include "vr_worldtext.hpp"
 #include "vr_flashlight.hpp"
 #include "vr_gadget.hpp"
+#include "vr_gearlights.hpp"
 #include "vr_profile.hpp"
 #include "vr_rope.hpp"
 #include "vr_portals.hpp"
@@ -126,7 +128,7 @@ struct ScreenShape
 // The screens' palette (the wrist gadget's, by default the player's hue): its text, and its face behind it.
 [[nodiscard]] glm::vec3 screenText()
 {
-    const float bright = CLAMP(0.f, vr_gadget_screen_brightness.value, 2.f);
+    const float bright = CLAMP(0.f, vr_gadget_screen_brightness.value, 2.f) * gearlights::screen(); // (the gear lights)
     return glm::min(hue::color(vr_gadget_screen_hue, 0.55f, bright), glm::vec3{1.f});
 }
 
@@ -146,7 +148,7 @@ struct ScreenShape
 
 [[nodiscard]] glm::vec3 screenInk()
 {
-    const float bright = CLAMP(0.f, vr_gadget_screen_brightness.value, 2.f);
+    const float bright = CLAMP(0.f, vr_gadget_screen_brightness.value, 2.f) * gearlights::screen(); // (the gear lights)
     return glm::min(gadget::whitened(hue::color(vr_gadget_screen_hue, 0.55f, 1.f), screenWhiteness()) * bright,
         glm::vec3{1.f});
 }
@@ -243,6 +245,34 @@ za::SizeT tipDrawCount = 0;
 gadget::Log wristLog;
 gadget::Glow gadgetGlow;
 int builtFrame = -1; // the host frame they were laid out in; -1 when texts were queued since
+
+// The camera's four side planes (from r_matviewproj, as the layout is drawn: VR_DrawSceneOpaque), each a normal and
+// its offset, for the boards' cull: a board wholly outside makes no pixels in this view, so its geometry is not laid
+// out (the eyes and the slipgates' views each lay out every board of the map: vrslipgates' loop with gates within gates,
+// a third of a millisecond a frame).
+glm::vec4 viewPlanes[4]{};
+
+void setViewPlanes(const glm::mat4& viewProj)
+{
+    const glm::mat4 m = glm::transpose(viewProj); // its rows
+    viewPlanes[0] = m[3] + m[0];
+    viewPlanes[1] = m[3] - m[0];
+    viewPlanes[2] = m[3] + m[1];
+    viewPlanes[3] = m[3] - m[1];
+}
+
+// A sphere's place: some of it inside the four planes (clip space's -w <= x, y <= w).
+bool sphereSeen(const glm::vec3& c, float r)
+{
+    for(const glm::vec4& p : viewPlanes)
+    {
+        if(glm::dot(glm::vec3{p}, c) + p.w < -r * glm::length(glm::vec3{p}))
+        {
+            return false;
+        }
+    }
+    return true;
+}
 za::Vector<za::StringView> textLines; // layout()'s, kept between calls
 
 void glyph(const glm::vec3& topLeft, const glm::vec3& right, const glm::vec3& down, unsigned char c, const glm::vec4& color,
@@ -588,8 +618,8 @@ void layout(za::StringView text, const glm::vec3& pos, const glm::vec3& angles, 
             quad(bl, br, tr, tl, glm::vec4{screenFace(), 1.f});
         }
 
-        // Its glow (vr_screen_glow), over the bezel and a little beyond, just in front of the face.
-        const float k = CLAMP(0.f, vr_screen_glow.value, 3.f);
+        // Its glow (vr_screen_glow), over the bezel and a little beyond, just in front of the face (dimmed: the gear lights).
+        const float k = CLAMP(0.f, vr_screen_glow.value, 3.f) * gearlights::light();
         if(k > 0.f && bright > 0.f)
         {
             glow({.centre = pos - n * (gap * 0.5f), .right = right, .up = up, .halfSize = {halfW + pad, halfH + pad},
@@ -667,6 +697,14 @@ void layoutBoard(size_t index, const worldtext::WorldText& wt)
     const float depth = charSize * 0.6f;
     const float gap = charSize * 0.04f;
     const glm::vec3& pos = wt.pos;
+    // All it draws: the bezel's box (behind the face by up to 2 gaps and its depth), the face, the glow's rings round
+    // the face (out to its spread: the bezel and 0.8 of a character), each side of `pos` whichever way it faces.
+    const float reachX = halfW + pad + bezel + charSize * 0.8f, reachY = halfH + pad + bezel + charSize * 0.8f;
+    const float reachZ = gap * 2.f + depth;
+    if(!sphereSeen(pos, za::sqrt(reachX * reachX + reachY * reachY + reachZ * reachZ) + 1.f))
+    {
+        return; // (still wanted: its image kept up for when it is seen)
+    }
 
     box(pos - n * (gap * 2.f + depth * 0.5f), right, up, n, halfW + pad + bezel, halfH + pad + bezel, depth * 0.5f,
         glm::vec3{0.1f, 0.1f, 0.11f});
@@ -1178,6 +1216,7 @@ extern "C" void VR_DrawSceneOpaque()
     gadget::drawScreen(); // the wrist gadget's screen (vr_gadget.cpp)
     flashlight::drawOpaque(); // the flashlight's cord (vr_flashlight.cpp)
     chainsaw::drawOpaque();   // the chainsaw's starter cord and its handle in the hand (vr_chainsaw.cpp)
+    cellcord::drawOpaque();   // the cell cords (vr_cellcord.cpp)
     rope::drawOpaque(); // the grappling hook's ropes (vr_rope.cpp)
 
     if(!(cl.protocolflags & PRFL_QUAKEVR))
@@ -1192,6 +1231,7 @@ extern "C" void VR_DrawSceneOpaque()
     // Reusing the first portal camera here mirrors text in the main eye view.
     {
         builtFrame = host_framecount;
+        setViewPlanes(gfx::sceneViewProjection()); // the boards' cull (layoutBoard)
         vertices.clear();
         screenGlyphs.clear();
         panels.clear();

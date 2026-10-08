@@ -83,6 +83,9 @@ void R_GetEntityBounds (const entity_t *e, vec3_t mins, vec3_t maxs); // gl_rmai
 void R_DrawAliasModelsDepth (entity_t **ents, int count); // r_alias.c: depth only (the shadow maps' casters)
 // r_alias.c: the same, each drawn once into all its faces (faces[i]'s bits; faceviewproj: 6 matrices; vr_shadow_layered)
 void R_DrawAliasModelsDepthLayered (entity_t **ents, const unsigned char *faces, int count, const float *faceviewproj);
+void R_AliasDepthCacheBegin (qboolean on); // r_alias.c: a pass over the shadow maps' lights: each caster set up once in it
+void R_AliasDepthCacheEnd (void);
+void R_AliasDepthCacheStats (int *hits, int *misses); // r_alias.c: the set-ups reused and made since the last call
 qboolean R_PaintAliasWounds (entity_t *e, int numsplats, const float *splats, int side); // r_alias.c: into its wound mask (vr_wounds.cpp); side -1 all, 0 or 1 that side's
 qboolean R_PaintBrushWounds (entity_t *e, int numsplats, const float *splats); // r_world.c: a held brush model's box into its box mask (vr_wounds.cpp)
 void R_BModelCentre (entity_t *e, float out[3]); // r_world.c: where the middle of a brush model's box is drawn
@@ -92,6 +95,7 @@ qboolean GL_GetShaderStorageRange (GLuint index, GLuint *buffer, GLintptr *offse
 int NUM_FOR_EDICT_CHECKED (const edict_t *e);		// pr_edict.c: -1 instead of a Host_Error
 void V_SetupView (void);							// view.c: V_RenderView without the drawing
 void SV_AreaEdicts (const float *mins, const float *maxs, edict_t **list, int *listcount, int listspace); // world.c: the linked edicts whose boxes touch mins..maxs
+void SV_AreaEdictsUnordered (const float *mins, const float *maxs, edict_t **list, int *listcount, int listspace); // world.c: the same, in no order
 int SV_HullPointContents (hull_t *hull, int num, vec3_t p); // world.c: the ledge map (vr_ledges.cpp)
 void Z_Usage (int *used, int *peak, int *size);		// zone.c: the zone's bytes in use, most ever, and total (vr_limits)
 void Hunk_Usage (int *used, int *peak, int *size, int *segments, int *maxsegments); // zone.c (vr_limits)

@@ -176,6 +176,7 @@ void(float kind, vector org, float radius, float duration) watershock = #0;
 float QVR_SHOCK_SELF = 0;
 float QVR_SHOCK_SURFACE = 1;
 float QVR_SHOCK_BURST = 2;
+float QVR_SHOCK_GUN = 8; // a lasting shock over the `self` player's own gun in hand `radius` (0 off, 1 main), `duration` s (its client: vr_enemyguns.qc VR_EnemyGun_Spent)
 // `player` struck by lightning (a shambler's bolt, another's lightning gun, a trap's, the water's shock spreading) for
 // `damage` at `at`: its client draws Quad's arcs over its arms, hands and body a while (vr_shock_self_time, by the damage;
 // engine vr_shock.cpp KindSelfHit). Nothing else.
@@ -333,6 +334,8 @@ vector(entity e, float max) modelbounds = #0; // the model's mins (max 0) or max
 vector(entity e, float max) drawnbounds = #0;
 // The model_offset putting the middle of e's drawn box (its model_scale as now, its model_offset ignored) at `at`.
 vector(entity e, vector at) modeloffsetto = #0;
+vector(entity e, vector a, vector b) shapenearest = #0; // QVR: the point of e's shape (its Box3D body's, as it lies or is held: its hull, a gun's convex pieces) nearest the segment a..b; without a body its box's
+float(entity e, float ssgOpen) loadportof = #0; // QVR: a gun lying about (its model, as it lies): its loading port's point, way in and opening's way into e.loadportpos, .loadportaxis, .loadportface (the super shotgun's barrels turned down ssgOpen degrees); FALSE (them zero) if it has none
 vector(entity e) modelcentre = #0; // the middle of the drawn model (turned with it, scaled and offset as drawn), in the world
 // findradius's chain (the same order) less what has no model or whose modelcentre is out of the cone from org along dir
 // (a unit vector) whose cosine is mincos (a little wider: test each again), or within a unit of org.
@@ -385,7 +388,7 @@ float() worldtext_hmake = #0;
 void(float h, string s) worldtext_hsettext = #0;
 void(float h, vector v) worldtext_hsetpos = #0;
 void(float h, vector v) worldtext_hsetangles = #0;
-float(entity trig, entity who) portal_handles = #0; // QVR: the engine carries this player through the slipgate (vr_portals_walk)
+float(entity trig, entity who) portal_handles = #0; // QVR: the engine carries this player (or monster: vr_portals_monsters) through the slipgate (vr_portals_walk)
 float() portal_crossings = #0;       // QVR: how many slipgates the last MOVE_PORTALS traceline went through (0 none)
 vector(float i) portal_entry = #0;   // QVR: ... where it went into the i-th (from 0)
 vector(float i) portal_exit = #0;    // QVR: ... where it came out of it
@@ -416,6 +419,14 @@ float() highlighting = #0; // a highlight log is running (vr_highlights; vr_high
 // A moment for the highlight log: its kind, score (0: the kind's own), what it was done to, with what, and the game time
 // it began (0: now).
 void(string kind, float score, entity subject, string detail, float since) highlight = #0;
+float(vector at) stealthlight = #0; // QVR: the light at a point (128: Quake's full light; the dynamic lights too, not the host's own flashlight's); -1 unknown (vr_stealth.cpp)
+vector(entity player, float what) flashlightbeam = #0; // QVR: the player's flashlight as his client lit it (each coop player's own): what 0 its lens, 1 its axis, 2 '<on> <range> <cos of its cone's half angle>' ('0 0 0' off)
+float(entity player) clientlight = #0; // QVR: the light on that player as his own client measured it (as stealthlight); -1 unknown (vr_stealth.cpp)
+void(float what) stealthprofile = #0; // QVR: 1 begins, 0 ends the stealth AI's work as the profiler's "stealth" scope (vr_profile); -1 at a frame's start (vr_stealth.cpp)
+float(vector a, vector b) pvsvisible = #0; // QVR: whether b is in a's potentially visible set (a noise round a corner, not through solid walls)
+// QVR: traceline (its trace_* globals) on through what can be seen through: fences and grates ('{' alpha-tested
+// textures) and entities drawn see-through (alpha under 1); how many it went through (vr_stealth.cpp)
+float(vector v1, vector v2, float nomonsters, entity forent) traceseethrough = #0;
 float(float v) anglemod = #0; // v wrapped into [0, 360) (vr_builtins.cpp)
 
 // The melee history of a hand's blow `b` (vr_melee.qc VR_Blow: the ring of its last poses, VR_Melee_Track), looked back
@@ -442,6 +453,10 @@ float(string path) fileexists = #0; // whether a file is in the search path (dat
 // The next entity after `start` (in edict order) with any of `flags` set in the float field `fld`; world when none: a
 // loop over the monsters (findflags(world, flags, FL_MONSTER)...) steps through them alone, in the engine (vr_builtins.cpp).
 entity(entity start, .float fld, float flags) findflags = #0;
+// findflags(), past the entities whose box's centre ((absmin + absmax) * 0.5) is further from `eye` than `range` (vlen) or
+// less than `mincos` ahead (normalize(centre - eye) * v_forward), in QuakeC's own float steps: the same entities pass as
+// with that test in QuakeC (VR_Stealth_LookAbout's torches and bodies; vr_builtins.cpp).
+entity(entity start, .float fld, float flags, vector eye, float range, float mincos) findflagsinview = #0;
 vector(vector start, vector end) liquidentry = #0;
 void(vector org, vector dir, float strength, float snd) watersplash = #0;
 float QVR_SPLASH_SILENT = 0; // the caller plays its own sound
@@ -457,3 +472,5 @@ void(entity box, entity player, float hand, float begin) portal_carry = #0;
 float(entity observer, entity target, vector from, vector point, float gate) portal_ai_sight = #0;
 vector(float gate, vector value, float direction) portal_ai_map = #0;
 entity(entity observer) portal_ai_client = #0;
+float(float gate, float what) portal_ai_gateinfo = #0;     // QVR: what 0 the gates' count (0: off), 1 a gate's flags (1 active, 2 paired, 4 monsters walk through), 2 its face (an exit: its pair's side; 0 none)
+vector(float gate, float what, vector p) portal_ai_gate = #0; // QVR: what 0 its face's middle, 1 its normal (into its room), 2 p held to its aperture, 3 p carried through

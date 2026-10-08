@@ -45,6 +45,9 @@ void setupView(const hands::State& s, view::ViewEntity& ve);
 // The cord (vr_flashlight_cord), in each eye's opaque scene (VR_DrawSceneOpaque): lit, depth-tested.
 void drawOpaque();
 
+// Whether the cord was drawn in the last frame (vr_gear_status; vr_flashlight_cord_info).
+[[nodiscard]] bool cordDrawn();
+
 // The visible beam, in each eye's scene after the translucent pass (VR_DrawSceneTranslucent):
 // depth-tested, added onto the scene.
 void drawTranslucent();
@@ -121,5 +124,12 @@ struct Fingers
 // Round 21: whether `hand`'s upper face button (B/Y) is the flashlight's now: the hand holds it, or it is on the head
 // and the hand is at it. The off hand's Y then does not start a voice note at the mouth (vr_input.cpp).
 [[nodiscard]] bool wantsSecondary(int hand);
+
+// The beam as last lit (the host's own lamp; none while off): its lens, axis, reach (units) and the cosine of its cone's
+// half angle (the monsters' eyes, vr_stealth.cpp). False when it is off.
+[[nodiscard]] bool beamNow(glm::vec3& lens, glm::vec3& dir, float& range, float& cosOuter);
+
+// Whether a dynamic light is one of the lamp's own (its spot, spill and glow): it lights what it points at, not its holder.
+[[nodiscard]] bool ownsLight(int key);
 
 } // namespace qvr::flashlight

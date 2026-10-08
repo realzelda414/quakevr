@@ -50,6 +50,7 @@ typedef struct edict_s
 	qboolean	free;			/* don't modify directly, use ED_AddToFreeList/ED_RemoveFromFreeList */
 	link_t		freechain;
 	link_t		area;			/* linked to a division node or leaf */
+	int		areanode, areaslot;	/* QVR: and where in that node's array (world.c, SV_AreaEdictsUnordered) */
 
 	int		num_leafs;
 	int		leafnums[MAX_ENT_LEAFS];
@@ -279,6 +280,12 @@ typedef struct qcvm_s
 
 	int			maxglobalofs;
 	int			*ofstoglobal;		// index of global at offset, or -1
+
+	// QVR: the server's fields whose stores the edict index follows (vr_edictindex.cpp): fieldwatch[field offset] is
+	// nonzero for one (NULL: none, the client VM); watchpending counts the OP_ADDRESSes of them not yet stored into.
+	const unsigned char	*fieldwatch;
+	int			fieldwatch_n;
+	int			watchpending;
 } qcvm_t;
 
 typedef struct savedata_s
@@ -331,6 +338,8 @@ void PR_ClearEngineString (int num);
 int PR_AllocString (int bufferlength, char **ptr);
 
 void PR_Profile_f (void);
+void PR_ProfileQC_f (void); // QVR: per-function QuakeC time
+extern cvar_t vr_qcprofile;
 
 edict_t *ED_Alloc (void);
 void ED_Free (edict_t *ed);
@@ -356,6 +365,7 @@ int NUM_FOR_EDICT(edict_t*);
 int SAVE_NUM_FOR_EDICT (savedata_t *save, edict_t *e);
 
 #define	NEXT_EDICT(e)		((edict_t *)( (byte *)e + qcvm->edict_size))
+
 
 #define	EDICT_TO_PROG(e)	(int)((byte *)e - (byte *)qcvm->edicts)
 #define PROG_TO_EDICT(e)	((edict_t *)((byte *)qcvm->edicts + e))
