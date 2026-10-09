@@ -203,7 +203,7 @@ is read-only and can mask an incomplete local test fixture; verify resolved tabl
    The implementation and measured acceptance results are recorded above; neither pack is now required for Quake.
 3. **Official campaign discovery and launcher order** (existing store/base discovery and `vr_gamedir.cpp`): detect
    owned Dopa/MG1/MG3 without network/install writes; validate content and maintain VR progs priority.
-4. **Campaign selection and hub** (`vr_gamedir.cpp`, `vr_menu.cpp`, `vrstart_old.ent`, QC campaign helper): select paths,
+4. **Campaign selection and hub** (`vr_gamedir.cpp`, `vr_menu.cpp`, QC campaign helper): select paths,
    startmap and state schema together, restore VR Hub, guard unavailable/unsupported choices and map-name collisions.
 5. **Dopa entities** (new prefixed QC helpers, `progs.src`, FGD): implement explosions/fog; acceptance e5m1/e5m2
    and e5start/e5end have zero dropped gameplay entities and correct progression.
@@ -359,7 +359,7 @@ end/dm1 maps and sidecars are isolated by descriptor. Optional pack brush models
 such as `maps/b_explob.bsp`, remain available. Exact resolved root/archive provenance is retained by file lookup,
 including duplicate basedirs, and relit replacements use that source folder's namespace.
 
-- `vr_campaign_menu`: the selector, also available from Single Player > Official Campaigns, VR Settings and the hub board.
+- `vr_campaign_menu`: the selector, also available from the main menu's Select Campaign, VR Settings and the hub board.
 - `vr_campaign_status`: all six data/readiness results, source roots, start maps and schemas.
 - `vr_campaign_select <folder>`: starts a ready campaign; missing/corrupt/native-in-progress choices are refused before spawn.
 - `vr_campaign_native <folder>`: explicit developer native launch, with a gameplay/progression-incomplete warning.

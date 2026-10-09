@@ -174,6 +174,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&pr_checkextension);
 	Cvar_RegisterVariable (&sv_altnoclip); //johnfitz
 	Cvar_RegisterVariable (&sv_gameplayfix_random);
+	Cvar_RegisterVariable (&sv_random_seed); // QVR
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
 	Cvar_RegisterVariable (&sv_netsort);
 	Cvar_RegisterVariable (&sv_autoload);
@@ -945,7 +946,7 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 			if (ent->baseline.scale != ent->scale) bits |= U_SCALE;
 			if (bits & U_FRAME && (int)ent->v.frame & 0xFF00) bits |= U_FRAME2;
 			if (bits & U_MODEL && (int)ent->v.modelindex & 0xFF00) bits |= U_MODEL2;
-			if (ent->sendinterval) bits |= U_LERPFINISH;
+			if (ent->sendinterval || VR_StepLerpInterval (ent) >= 0) bits |= U_LERPFINISH; // QVR: (in the air: a server frame)
 			bits |= VR_EntityUpdateBits (ent); // QVR
 			if (bits >= 65536) bits |= U_EXTEND1;
 			if (bits >= 16777216) bits |= U_EXTEND2;
@@ -1011,7 +1012,10 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 		if (bits & U_MODEL2)
 			MSG_WriteByte(msg, (int)ent->v.modelindex >> 8);
 		if (bits & U_LERPFINISH)
-			MSG_WriteByte(msg, (byte)(Q_rint((ent->v.nextthink-qcvm->time)*255)));
+		{
+			int steplerp = VR_StepLerpInterval (ent); // QVR: a stepping monster in the air moves every server frame
+			MSG_WriteByte(msg, steplerp >= 0 ? (byte)steplerp : (byte)(Q_rint((ent->v.nextthink-qcvm->time)*255)));
+		}
 		//johnfitz
 		VR_WriteEntityUpdate (msg, ent, bits); // QVR
 	}
@@ -1981,7 +1985,6 @@ static void SV_SpawnServerRun (const char *server);
 // QVR: a map's load, a scope of its own for the profiler (its hitch log).
 void SV_SpawnServer (const char *server)
 {
-	server = VR_MapAlias (server); // QVR: vrstart2 is vrstart now, vrslipgates vrteleporters (old saves, binds)
 	VR_CheckSpawnCampaignMap (server); // QVR: never a campaign switch here (map and load chose it before they disconnected)
 	VR_NoteMapSpawn (server); // QVR: the map (and its map package) a crash report names
 	VR_ProfileBegin ("map spawn");
@@ -2034,6 +2037,7 @@ static void SV_SpawnServerRun (const char *server)
 	//memset (&sv, 0, sizeof(sv));
 	Host_ClearMemory ();
 	VR_TimeMark ("server: clear memory"); // QVR
+	VR_ServerRandomMapLoad (); // QVR: the server's random numbers seeded (sv_random_seed), before anything spawns
 
 	q_strlcpy (sv.name, server, sizeof(sv.name));
 	if (developer.value || map_checks.value)

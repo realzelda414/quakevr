@@ -65,6 +65,8 @@ int VR_SkipSwap (void);		// GL_EndRendering: nonzero to leave this frame unprese
 void VR_FrameDrawn (void);	// GL_EndRendering, before the present: vr_screenshot_frames's screenshot of it
 int VR_ModalMessageFrame (void); // SCR_ModalMessage's loop: with a headset, a frame showing the
 							// dialog (the runtime paces it); zero without one (the loop sleeps)
+int VR_TestModalAnswer (void);	// SCR_ModalMessage, M_Confirm: vr_test_modal_answer's answer once the dialog has shown half a
+							// second (1 yes, 0 no; tests), else -1
 double VR_HostFrameTime (double time);	// start of _Host_Frame: the frame's time (a motion take's own while
 							// it plays back, vr_motion_play: the same frames at any speed)
 int VR_Box3DSteps (void);		// host_tickstats: Box3D's world steps so far (0 without a world)
@@ -198,6 +200,9 @@ void VR_SaveFlashlightState (void); // before a save snapshot or changelevel par
 void VR_OnFreshStart (void);			// Host_Map_f, Host_Loadgame_f: a game started afresh or loaded, not a changelevel (the flashlight off)
 void VR_StoreSpawnParms (int client);	// after parm1..16 are copied from globals into a client_t
 void VR_RestoreSpawnParms (int client);	// after parm1..16 are copied from a client_t into globals
+int VR_ServerRandom (void);			// the server's own rand() (vr_srvrandom.cpp): 0..0x7fff, apart from the client's effects' C library rand()
+void VR_ServerRandomMapLoad (void);	// SV_SpawnServer: the server's stream seeded (sv_random_seed; 0: the clock)
+extern cvar_t sv_random_seed;			// pr_cmds.c: the server's random numbers' seed at each map load (tests; 0: the clock's)
 int VR_ProbeRandom (void);			// QC's random() while the kinds that can appear are made as a map loads (vr_progs.cpp): its own numbers, 0..0x7fff; -1 otherwise
 int VR_AllowLatePrecache (void);		// nonzero if precaches are allowed after map load
 int VR_LatePrecacheModel (const char *name); // precache index for setmodel, or -1 if not allowed
@@ -235,6 +240,7 @@ void VR_CalcStats (struct client_s *client, int *statsi, float *statsf); // end 
 int VR_ActiveWeaponStat (struct edict_s *ent);			// SV_WriteClientdataToMessage: the active weapon item bit
 int VR_EntityUpdateBits (struct edict_s *ent);			// SV_WriteEntitiesToClient, before U_EXTEND*
 void VR_WriteEntityUpdate (struct sizebuf_s *msg, struct edict_s *ent, int bits); // after the update
+int VR_StepLerpInterval (struct edict_s *ent);			// SV_WriteEntitiesToClient: U_LERPFINISH's byte for a stepping monster in the air (moved every server frame), -1 else (vr_server.cpp)
 void VR_ParseEntityUpdate (int num, int bits);			// CL_ParseUpdate, after the fitz fields
 int VR_ParseServerMessage (int cmd);					// unknown svc: nonzero if handled
 int VR_ParseBeamEntity (int ent);						// CL_ParseBeam: beam key for an entity
@@ -305,7 +311,9 @@ int VR_ClimbHangsFrom (struct edict_s *check, struct edict_s *pusher);	// SV_Pus
 int VR_ClimbCarryBlocked (struct edict_s *check, struct edict_s *pusher, const float *from, const float *move); // SV_PushMove: its ride stopped short: nonzero blocks the pusher (vr_climb_mover_crush), else it lets go
 void VR_ClimbCarried (struct edict_s *pusher, const float *move);	// SV_PushMove, moved: the holds on it moved with it
 void VR_ClientRoomscaleMove (struct edict_s *ent);		// SV_Physics_Client, after the move
+void VR_UnstickMonster (struct edict_s *ent);			// SV_Physics_Step: a monster inside the map, not moving, for a while: to the nearest free spot (vr_unstick_monsters; vr_unstick.cpp)
 int VR_Unstick (struct edict_s *ent);				// SV_CheckStuck, found in solid: nonzero if moved to the nearest free spot (vr_unstick; vr_unstick.cpp)
+void VR_WalkMoveDebug (struct edict_s *ent, const char *what, const trace_t *trace); // SV_WalkMove, SV_FlyMove: the first player's move printed (vr_debug_walkmove; vr_unstick.cpp)
 void VR_BeforePlayerPostThink (struct edict_s *ent);	// SV_Physics_Client, before PlayerPostThink
 void VR_AfterPlayerPostThink (struct edict_s *ent);	// and after it
 float *VR_MoveAngles (struct edict_s *ent, float *fallback); // angles steering walk/swim moves
@@ -313,6 +321,8 @@ int VR_NoclipAngles (struct edict_s *ent, float *out); // SV_NoclipMove: a heads
 float VR_WaterStickScale (struct edict_s *ent, int swimming); // SV_ClientThink, before SV_WaterMove / SV_AirMove: the stick's speed in water
 float VR_StaminaSpeedScale (struct edict_s *ent);	// SV_AirMove: tired, times the most walking speed (sv_maxspeed; vr_stamina_speed)
 void VR_AfterWaterMove (struct edict_s *ent, float forwardmove, float sidemove, float upmove); // after SV_WaterMove: swimming strokes (the stick steering them)
+void VR_GroundPlaneMet (struct edict_s *ent, const float *normal); // SV_FlyMove, SV_WalkMove: a player met walkable floor (vr_slope_walk)
+void VR_GroundGravity (struct edict_s *ent, const float *before); // SV_Physics_Client, gravity added: on a walkable slope, only its part into the slope (vr_slope_walk)
 float VR_StepSize (float fallback);					// SV_WalkMove step height
 void VR_OnWaterLevelChange (struct edict_s *ent, float oldwaterlevel); // end of SV_CheckWater
 int VR_AllowWaterSplash (struct edict_s *ent);			// SV_CheckWaterTransition splash sounds
@@ -326,6 +336,7 @@ int VR_HullClipPortal(struct edict_s* ent, const float* start, const float* mins
     const float* end, const float* plane, trace_t* trace);
 // A player narrower than hull 1 against BSP models (vr_hull_width; vr_hull.cpp, docs/vr-port/HULLS.md).
 int VR_HullMoveBox (struct edict_s *passedict, const float *mins, const float *maxs, float *boxmins, float *boxmaxs); // SV_Move: nonzero if its BSP clips use this box
+int VR_HullOverDropoff (struct edict_s *ent, const float *origin, const float *vel, float speed); // SV_UserFriction's ledge test: nonzero if the floor drops away ahead (vr_hull_edge_probe: from the narrow box's leading edge; a point in solid has floor)
 int VR_HullClipBSP (struct edict_s *ent, const float *start, const float *boxmins, const float *boxmaxs, const float *end,
 	trace_t *trace);								// SV_ClipMoveToEntity for SOLID_BSP: nonzero if it traced (else the hull)
 int VR_HullEntBox (struct edict_s *passedict, const float *mins, const float *maxs, float *boxmins, float *boxmaxs); // SV_Move: nonzero if the player's box meets other entities' boxes narrowed (vr_hull_ent_width)
@@ -377,6 +388,8 @@ void VR_NavEntered (int state, int previous);			// M_Menu_Maps_f: opened by a ju
 int VR_NavBack (int state);								// its Back: nonzero if it went back where the jump came from
 int VR_MenuMainShowsMods (void);
 int VR_MenuMouseOnButtons (float x, float y);			// M_Mousemove: the spot (menu x, y) on one of the corner's buttons (the menu's rows left alone)						// M_Main_Draw: the main menu's Mods row asked for (vr_menu_main_mods)
+void VR_StartTutorial (void);							// the main menu's VR Tutorial, confirmed: as the Play page's Tutorial (its map's command queued)
+void VR_StartHub (void);								// the main menu's VR Hub, confirmed: as the Play page's VR Hub (vr_campaign_hub: vr_hub_map)
 void VR_OpenMapLibrary (void);							// Single Player > Map Library: the map browser page (vr_menu_maps.inc)
 void VR_Menu_Draw (void);								// M_Draw, m_vr
 void VR_Menu_Key (int key, int repeat);				// M_Keydown, m_vr (repeat: the key's auto-repeat)
@@ -388,6 +401,7 @@ int VR_MenuDrawSlider (int x, int y, float range, float marker, const char *desc
 int VR_MenuDrawCheckbox (int x, int y, int on);			// M_DrawCheckbox: a switch
 int VR_MenuDrawTextBox (int x, int y, int width, int lines); // M_DrawTextBox: a panel
 int VR_MenuDrawHighlight (int cx, int cy);				// M_DrawArrowCursor: the selected row's highlight; nonzero: no cursor (the corner's buttons have the selection)
+int VR_MenuDrawButton (int x0, int x1, int y, int selected);	// M_Confirm's buttons (x0..x1 across, the label's row y): the VR menu style's; nonzero if drawn
 // The corner's buttons (vr_menuui.cpp): "Back to game" closing the menu from any page, which reopens
 // there; "Advanced VR" and "Levels" jumping to those from any page.
 void VR_MenuDrawStatus (void);							// M_Draw, last: the status box (vr_menu_status) in the top right corner
@@ -411,6 +425,7 @@ int VR_MenuRunsGame (void);								// Host_ServerFrame: nonzero if a single play
 // 24 pixels high whose small capitals end on row 15.
 int VR_BigFont_CanDraw (const char *text);				// M_Main_Draw: nonzero if every letter of `text` is there
 int VR_BigFont_Draw (int x, int y, const char *text);	// M_Main_Draw: draws it (its cell's top at y); returns its width
+float VR_BigFont_DrawScaled (int x, int y, float scale, const char *text); // as VR_BigFont_Draw, `scale` times the size (the main menu's rows closer than 15); its width
 
 // Hardcoded limits (vr_limits.cpp, the vr_limits command): a limit whose overflow used to be silent is counted, and warned
 // about once a session.
@@ -458,9 +473,8 @@ int VR_PortalReachMove(struct edict_s* player, const float* start, const float* 
 
 void VR_RegisterPackStatus(void);
 int VR_CanLoadCampaignMap(const char *map);
-int VR_IsVrMap(const char *map);			// vrstart, vrstart_old, vrtutorial, vrfiringrange: Quake VR's own maps, run in Quake's campaign
-const char *VR_HubMap(void);				// the hub the game starts in and returns to: vr_hub_map (vrstart, or vrstart_old)
-const char *VR_MapAlias(const char *map);		// a map's current name (vrstart2: vrstart; vrslipgates: vrteleporters)
+int VR_IsVrMap(const char *map);			// vrstart, vrtutorial, vrfiringrange: Quake VR's own maps, run in Quake's campaign
+const char *VR_HubMap(void);				// the hub the game starts in and returns to: vrstart
 int VR_CanChangeCampaignMap(const char *map);
 int VR_CanLoadCampaignSave(const char *text);
 

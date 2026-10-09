@@ -63,7 +63,7 @@ Useful settings:
 | `vr_gunangle`, `vr_offhandpitch` | 39.5, 40.25 | weapon pitch relative to the controller (the shipped values, tuned for that raw pose): Advanced VR > Weapons > Hand/Gun Calibration (both hands at once: VR Settings > Hand Pitch) |
 | `vr_world_scale` | 1.25 | |
 | `vr_height_calibration`, `vr_floor_offset` | 1.646, -21 | |
-| `vr_mirror` | 1 | desktop window: 0 off, 1 left eye, 2 both eyes |
+| `vr_mirror` | 1 | desktop window: 0 off, 1 on (`vr_window_view`: 0 left eye, 1 left smoothed, 2 spectator, 3 both eyes, 4 right eye, 5 right smoothed) |
 | `vr_deadzone` | 10 | stick deadzone, percent |
 | `vr_weapon_grip_mode` | 0 | 1 = weapons stay in the hand without holding the grip (issue #31) |
 
@@ -900,7 +900,7 @@ is the most useful thing to send me along with a description. In particular:
 - **Nothing in the headset:** look for the `VR:` lines. They say which OpenXR call failed, with its result code.
   `vr_restart` retries after the headset is on or the runtime is running.
 - **The picture is wrong** (double vision, wrong scale, swimming): `vr_status` output while it happens, and a
-  screenshot of the desktop mirror (`vr_mirror 2` shows both eyes).
+  screenshot of the desktop mirror (`vr_window_view 3` shows both eyes).
 - **Hands or weapons are in the wrong place or at the wrong angle:** `vr_status` and `vr_dumpview` while holding the
   pose. Hand Pitch on VR Settings (Hand Calibration) is the first thing to adjust.
 - **Fingers wrong on something held** (through it, or stuck open): `vr_debug_grasp 1` prints each grasp solve;
@@ -917,7 +917,7 @@ swings the main hand for throwing tests. `vr_mock_shake <degrees>` shakes the he
 4 mm a degree of position wobble) and `vr_mock_shake_turn <degrees/s>` turns it slowly under that, timed from when the
 shake starts (the same poses every run with `vr_fixed_frames 1`); `vr_window_log 1` prints the head's and the window
 camera's angles each frame (Smoothed Mirror, Spectator Camera: ROUND21.md, "Recording"). The window's `screenshot` is
-the window's view; `vr_eyeshot 1` the eyes'. `imagehash [filter]` checksums every loaded texture as the GPU holds it (to `imagehash.txt`, the sum in the console): two runs loaded the same pixels when their sorted files match (eyeshots of identical content still differ by 1 in a few pixels between runs). `vr_particle_seed <n>` (not 0) makes the particles the same in every run (their random numbers restart from it at each map), for comparing images. `vr_mock_fingers <main|off> <trigger> <grip> [<thumb>]` sets the finger
+the window's view; `vr_eyeshot 1` the eyes'. `imagehash [filter]` checksums every loaded texture as the GPU holds it (to `imagehash.txt`, the sum in the console): two runs loaded the same pixels when their sorted files match (eyeshots of identical content still differ by 1 in a few pixels between runs). `vr_particle_seed <n>` (not 0) makes the particles the same in every run (their random numbers restart from it at each map), for comparing images. `sv_random_seed <n>` (not 0; before the `map`) does the same for the server's random numbers (QuakeC's `random()`, the monsters' turns; their own stream since 2026-10-09, never moved by the client's effects): with `vr_fixed_frames 1`, an AI scene plays the same every run (`vr_bench_statehash` equal at the same frame); 0, the default, seeds from the clock at each map load (`sv_random_info` prints the seed). `vr_test_crand <n>` draws n numbers from the C library's `rand()`, as the client's effects do (they must not change the game). `vr_mock_fingers <main|off> <trigger> <grip> [<thumb>]` sets the finger
 sensors (0..1); a fifth argument sets the index finger's touch on the trigger.
 Fast test runs (ROUND21.md, "Faster tests and startup"): `vr_mock_fast 1` runs the mock headset's frames as fast as
 the machine makes them while the game's clock is fixed (`vr_fixed_frames 1`; `vr_motion_play` and `vr_motion_eval`
@@ -983,7 +983,7 @@ until the kit's timeout (so did `quit` after `menu_vr ...`). A player's `quit` o
 uses no network: no add-on list download, the map index read from its cache only (`maps_fetch` fetches).
 
 Menus (ROUND21.md, "Menu: scroll memory and shortcuts"): `menu_vr pos` prints the layout (ROUND21.md, "The menus' corner column moved left": where the menu's text starts, the corner buttons' right edge and bottom, beside or over the menu; on a VR page the rows' top and count), then the menu shown and, on a VR page, its
-selected row (with the header above it), its scroll and the page Back goes to. While a drop-down list is open (ROUND21.md, "Drop-down lists in the VR menus") a second line gives its row, highlighted choice, scroll and box (menu coordinates, for `vr_mock_laser`). `menu_vr rows` (Debug > Tools > Menu Rows) prints the VR page's rows as drawn (MROW: row, top y, label) and MROWS: rows shown, scroll and its most, the section gap (`vr_menu_section_gap`) and whether the mouse finds each row where it is drawn (`rowAt agrees`). `menu_vr pos` also prints where Back goes (`back to <page>, menu <m_state>` for a menu outside the VR pages), the main menu's row spacing and group gap, Single Player's row, the flat banner's place, the corner's version label (ROUND21.md, "Versions and the menus' version label": its text, box, what the menu draws right to under it, or why it was left out), and the selected slider's setting, its value as shown and its step (`(fine)` while the fine modifier is held); `vr_mock_key <key> down|up` holds or lets go of a key (`shift`: fine steps). `menu_vr recent [clear]` prints Search's recent list (SRECENT lines, each row's middle in menu coordinates while Search is shown) or clears it (quakevr/search_recent.txt). `menu_vr list`: every page's number
+selected row (with the header above it), its scroll and the page Back goes to. While a drop-down list is open (ROUND21.md, "Drop-down lists in the VR menus") a second line gives its row, highlighted choice, scroll and box (menu coordinates, for `vr_mock_laser`). `menu_vr rows` (Debug > Tools > Menu Rows) prints the VR page's rows as drawn (MROW: row, top y, label) and MROWS: rows shown, scroll and its most, the section gap (`vr_menu_section_gap`) and whether the mouse finds each row where it is drawn (`rowAt agrees`). `menu_vr pos` also prints where Back goes (`back to <page>, menu <m_state>` for a menu outside the VR pages), the main menu's row spacing and group gap, Single Player's row, the flat banner's place, the corner's version label (ROUND21.md, "Versions and the menus' version label": its text, box, what the menu draws right to under it, or why it was left out), and the selected slider's setting, its value as shown and its step (`(fine)` while the fine modifier is held); `vr_mock_key <key> down|up` holds or lets go of a key (`shift`: fine steps); `vr_mock_key text <letters>` types letters as a keyboard's text input does (the console's line, Search's box); `vr_console_complete_bench <text> [runs]` times the console's completion hint key by key, the old way too, and checks both agree (ROUND21.md, "Typing in the console no longer stalls"). `menu_vr recent [clear]` prints Search's recent list (SRECENT lines, each row's middle in menu coordinates while Search is shown) or clears it (quakevr/search_recent.txt). `menu_vr list`: every page's number
 and place in the tree. `menu_vr dump` prints every page reached from VR Settings and its rows (MDPAGE/MDROW lines);
 `python Misc/quakevr/menu_coverage.py before.log after.log` compares two dumps (every setting and action still on a
 page, the tree, pages over 30 rows; ROUND21.md, "Menus reorganized"). Page numbers: 13 Grappling Hook, 23 Weapon
@@ -1008,6 +1008,12 @@ Stuck (ROUND21.md, "Never stuck"): `vr_stuck_info` prints the player's server po
 in, the movers near it and how often `vr_unstick` freed it; `vr_stuck_test <x> <y> <z>` puts the player there as if it
 had walked there (so Quake's return to the last free spot can't free it). `setpos` with angles turns noclip on: follow
 it with `noclip`. The kit's `scratch/unstick/` has the checks (`button_ab.txt`, `door.txt`, `net_u0.txt`/`net_u1.txt`).
+Stuck monsters and stairs (ROUND21.md, "Stuck on stairs, a fiend stuck on a bridge"): `vr_stuck_sink [edict] [depth]` sinks
+the nearest live monster 24 units into the floor (`vr_unstick_monsters` frees it within `vr_unstick_monsters_time`;
+`developer 1` prints it, `vr_stuck_info` counts it); `vr_stuck_trace <dx> <dy> <dz> [edict]` prints where the box stops,
+the plane met and Quake's hull's answer; `vr_debug_walkmove 1` prints each walk move. Headless walking: `vr_mock_look 0 0;
+wait5; setpos <x> <y> <z> 0 <yaw> 0; noclip; wait10; vr_mock_stick off 0 0.3` (the look first: set after setpos, the
+heading came out either way). Expansion maps: `-ExtraArgs "-nomapindex -noaddons"` and `vr_campaign_native dopa|mg1`.
 Climbing (ROUND21.md, "Climbing with both hands"): the mock's grip button does not press the grab. Script
 `+graboff`/`-graboff` and `+grabmain`/`-grabmain` (in a `vr_mock_play` file: `<t> cmd +graboff`). Map `vrclimb` has a rung
 wall (`setpos 71 0 24 0 0 0; noclip`, the second toggling setpos's noclip off) and a long ledge over a trench
@@ -1300,7 +1306,7 @@ head, the box, the lean, the pelvis, the feet and the lean's hold and cues, ever
 Leaning through stick turns (ROUND21.md, the section of that name): `bash Misc/quakevr/lean/lean_turn_test.sh <agent> ["0 2"] [cases]`
 prints the body's drift in the room (`vr_body_error`) after a lean, a turn or move, and straightening up; with
 `vr_lean_turn 2` about 1 cm at most throughout, 0 after. `vr_debug_body_error 1` logs it twice a second.
-Stray button presses at a load (ROUND21.md, "A far button pressed at a map load"): `bash Misc/quakevr/buttons/stray_press_test.sh <agent>` loads vrstart (the island) and vrstart_old 5 times each, then 20 times a save
+Stray button presses at a load (ROUND21.md, "A far button pressed at a map load"): `bash Misc/quakevr/buttons/stray_press_test.sh <agent>` loads vrstart (the island) and vrtutorial 5 times each, then 20 times a save
 made with the off hand held up beside vrstart's Turning button, and presses it once for real: `stray presses 0, real
 presses 1, long lines 0`. `vr_debug_wallbuttons 1` (Debug > Views > Wall Buttons) prints each press with the hand's
 position and its distance from the button and from the player; `developer 1` a hand's line to its muzzle longer than any
@@ -1310,9 +1316,13 @@ doing its poses is a take of raw tracking played alongside: `vr_motion_play <tak
 `vr_bodycal standing` in the same frame (the scratchpad's `bodycal/gentake.py` makes them); `vr_bodycal_print`
 prints the result. `vr_bodycal_refit <file>` fits a saved session (`quakevr/bodycal/`) again; `vr_bodycal_debug`
 prints the empty hands' wrists.
-VR Calibration (ROUND21.md, "VR Calibration"): from the main menu, `togglemenu; wait30; vr_mock_stick main 0 1; wait10;
-vr_mock_stick main 0 0` puts the cursor on VR CALIBRATION, `vr_test_modal_answer 1` answers the next confirmation dialog
-by itself (0: no), then `vr_mock_button main primary 1` / `0`. `vr_setup_test_take <take>` plays a synthetic person's
+VR Calibration (ROUND21.md, "VR Calibration"): the main menu opens on Select Campaign; `vr_mock_key uparrow` four times
+puts the cursor on VR CALIBRATION (three: VR Tutorial, two: VR Hub, one: VR Settings; `togglemenu; wait30;
+vr_mock_stick main 0 1; wait10; vr_mock_stick main 0 0` moves it one up too), `vr_test_modal_answer 1` answers the next confirmation dialog
+by itself (0: no), then `vr_mock_button main primary 1` / `0`. The menus' confirmation dialogs (M_Confirm: VR Calibration,
+VR Tutorial, VR Hub, New Game, Reset All, Quit in the headset) have two buttons: `vr_mock_laser yes` / `no` points the
+laser at one, `vr_mock_button main trigger 1` then `0` takes it (`vr_mock_mouse yes|no click` on a flat screen; `menu_vr
+pos` says menu 28 while one is up); `vr_test_confirm` opens a test one (it prints `test confirm: answered OK`). `vr_setup_test_take <take>` plays a synthetic person's
 take (as above, a Windows path: `cygpath -m`) from the body step's first frame and stops it after. `vr_setup here` runs
 it in any map, `vr_setup_skip` goes on to the next step (Body Calibration stopped). In the room `togglemenu` pauses it
 ("paused on Body Calibration's page", `menu_vr pos` on page "Body Calibration" row "Position"); two more `togglemenu`s
@@ -1806,6 +1816,11 @@ big.cfg; vr_limits time`), `vr_limits cvarlen <name>` gives a value's length (a 
 is no `set` command: a config line sets only an existing cvar. `vr_physics_spawn item_shells <dist> <left>` 320 times
 in e1m1 moves 320 props (the datagram peaked at 16.5 KB of 64 KB).
 The HUD in the headset (ROUND21.md, "No flat HUD in the headset; the map's flames light torches; the pouch's turn"):
+Shimmer (edge crawl, texture sparkle; ROUND21.md, "Shimmer at the pier and the bridge"): `python Misc/quakevr/shimmer_test.py <agent> [--exec cfg] [--region "x y w h"] name="commands" ...` loads the map (vrstart's pier by
+default), pauses, takes the left eye at six half-pixel head turns and prints, per config, the share of pixels popping
+by more than 16 and 32 levels between turns (the shimmer); e.g. `base="echo base" msaa4="vid_fsaa 4"`. The menu's
+sharpness (ROUND21.md, "The menu sharp in the headset"): `vr_mock_eye_size 2048; vr_restart`, `menu_vr`, then
+`vr_menu_resolution 0` / `1.5` and `vr_eyeshot 3` each; `developer 1` prints the canvas's size when it is made.
 `vr_eyeshot 3` saves both eyes with the UI (the HUD panel, the menu) as the headset shows them (Debug > Tools > Eye
 Images); `hudstyle 0..3` each, then `vr_eyeshot 3; wait5; screenshot`: no HUD in the eyes, the style's HUD in the window
 (the mirror and the spectator view, `vr_window_view 2`). The map's flames lighting a torch again: e1m2, torch 53 taken
@@ -1902,8 +1917,8 @@ and Guardian skip forced pain callbacks (mitosis/teleport side effects) but thei
 `python Misc/quakevr/parryinterrupt/test.py <worktree>` runs real guard tests, lowered-guard follow-up hits,
 option-off and failed-guard controls, actual knight animations, a 0.8 s stagger, e1m1 smoke and calibration
 menu paths, a real dragon tail sequence with route recovery, and knight same-callback damage/global checks.
-Optional trailing sections: `forced animations timing smoke dragon callback`. Logs stay in the worktree root;
-the script overwrites `quakevr/test_parryinterrupt.cfg`. Debug > Tests also exposes **Dragon Parry Sequence**
+Optional trailing sections: `forced animations timing smoke dragon callback`. Logs go to the worktree's scratch;
+the script overwrites `quakevr/test_parryinterrupt.cfg`. Debug > Tests also exposes **Dragon Parry Sequence** (hold a guard: a melee weapon level across, not upright; **Dragon Parry (Mock Crowbar)** sets the mock hands so: `vr_mock_hand main 0.15 1.25 -0.4 0 90 0` with the grip held; the guns' `GUARD` pose `70 90 0` holds a crowbar upright, no guard), **Dragon Tail Swing (Pose Check)** (the dragon's own slash drawn, then parried, under `vr_debug_pose_check 1`; `parry_pose_test.sh <agent> 2400 dragon`)
 and **Same-Frame Parry Hits** (both grant 500 health; the dragon requires Rogue assets), plus **Check the Parry Pose**
 (impulse 249) and **A Melee Blow Now** (impulse 242). With `notarget`, the latter is a controlled blow through
 the actual parry path. In VR, check a knight/ogre's multi-hit attack, crossed arms, counter timing, and turn
@@ -2003,3 +2018,24 @@ s) and the coop one `bash Misc/quakevr/multiplayer/stealth_mp_test.sh <agent>` (
 ROUND21.md, "Stealth AI: the gaps closed". A real shot headless: `vr_weapon_grip_mode 1; impulse 9; impulse 154` (150 +
 the weapon id: into the main hand), then `+attack; vr_mock_button main trigger 1; wait3; -attack; vr_mock_button main
 trigger 0`.
+
+## OpenXR runtime choice (2026-10-09)
+
+`vr_xr_runtime 4` (Auto, the default; ROUND21.md, "OpenXR runtime: Auto") picks the runtime whose app runs and, when it
+fails, tries the others (`vr_xr_runtime_fallback`). `vr_xr_runtime_explain` (Debug > Reports > OpenXR Runtime Choice)
+prints what it sees (the apps running, the installed runtimes, the system's active one), the order it would try them
+in, and the last start's outcome; it loads nothing. Without the real runtimes: `vr_xr_test 1` takes the installed
+runtimes (`vr_xr_test_runtimes`, manifests, comma-separated), the active one (`vr_xr_test_active`) and the running
+processes (`vr_xr_test_processes`, e.g. `VirtualDesktop.Streamer.exe,vrserver.exe`) from those cvars, never the
+registry, and never loads the real system runtime. `vr_xr_test_fail <parts of manifests or labels, or *>` fails those
+attempts at once (also with real runtimes: `vr_xr_test_fail virtualdesktop` shows the fallback past VDXR).
+`bash Misc/quakevr/fakexr/build.sh <worktree>` builds a fake runtime DLL (no headset: `xrGetSystem` fails) into
+`scratch/fakexr`, one copy per runtime with a manifest named as the real one's; `FAKEXR_LOG` logs each copy's loads and
+unloads, `FAKEXR_FAIL_INSTANCE=fakexr_steam` fails one's `xrCreateInstance`. `bash Misc/quakevr/xr_runtime_test.sh
+<agent>` runs it all (39 checks, ~1 min): Auto's order case by case, Virtual Desktop's own runtime setting
+(`vr_xr_test_vd_runtime`: VD's number, -1 unknown, 0 Automatic, 1 SteamVR, 2 VDXR, or a StreamerSettings.json to read), the manual choices, the config migration, the
+fallback through the real loader (each fake runtime loaded, failing and unloaded in turn in one process) and an
+outside `XR_RUNTIME_JSON` winning. Also (49 checks): `FAKEXR_D3D11=fakexr_vd` makes VDXR's fake load and free d3d11.dll as VDXR does,
+and the game keeps it loaded (`graphics DLLs: d3d11.dll kept` in the report; not with `vr_xr_keep_graphics_dlls 0`);
+each VR start's log `quakevr/qvr_openxr.txt`; SteamVR asked again for the headset (`vr_xr_steamvr_wait`); a
+`+vr_xr_runtime` on the command line reported; a relative `library_path` resolved. Part 4: `FAKEXR_HEADSET=fakexr_steam` gives that copy a headset (a session, OpenGL swapchains, frames; `FAKEXR_EYE=WxH`, `FAKEXR_UNFOCUS=a-b` frames the session is VISIBLE, as under SteamVR's dashboard): `qvr_openxr.txt`'s formats, layers, sizes, states and timing lines, `vr_xr_unfocused`'s frames shown again with valid layers, `vr_xr_eye_scale`.

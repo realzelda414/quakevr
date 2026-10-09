@@ -9,22 +9,25 @@
 [[nodiscard]] za::Vector<Item> pageRecording()
 {
     return {
-        cycle("Window View", "vr_window_view", {{0.f, "Left Eye (raw)"}, {1.f, "Smoothed Mirror"}, {2.f, "Spectator Camera"}})
-            .help("What the desktop window shows, to record it (OBS: a Window Capture of it). Left Eye: the eye's image as it "
-                  "is, shaking with your head. Smoothed Mirror: the same image, turned to follow a steadied head and cropped "
-                  "to the window: free. Spectator Camera (Recording Mode): the game drawn a third time for the window, from "
-                  "your head, steadied, with its own field of view: sharpest and widest, and it costs about one more eye's "
-                  "rendering. The headset's view is the same in all three."),
+        cycle("Window View", "vr_window_view",
+            {{3.f, "Both Eyes (raw)"}, {0.f, "Left Eye (raw)"}, {1.f, "Left Eye (smoothed)"}, {4.f, "Right Eye (raw)"},
+                {5.f, "Right Eye (smoothed)"}, {2.f, "Spectator Camera"}})
+            .help("What the desktop window shows, to record it (OBS: a Window Capture of it). Both Eyes: the two lenses' "
+                  "images side by side, as they are. Left or Right Eye (raw): that eye's image as it is, shaking with your "
+                  "head. Smoothed: the same image, turned to follow a steadied head and cropped to the window: free. "
+                  "Spectator Camera (Recording Mode): the game drawn a third time for the window, from your head, "
+                  "steadied, with its own field of view: sharpest and widest, and it costs about one more eye's "
+                  "rendering. The headset's view is the same in all of them."),
         open("Desktop Mirror: Body and Display", pageIndex(pageBodyDisplay)).help("The desktop mirror is on Body and Display."),
         toggle("Flat HUD on the Mirror", "vr_window_hud_mirror")
-            .help("The flat status bar over the window's Left Eye and Smoothed Mirror views (on by default)."),
+            .help("The flat status bar over the window's raw and smoothed eye views (on by default)."),
         toggle("Flat HUD on the Spectator Camera", "vr_window_hud_spectator")
             .help("The flat status bar over the Spectator Camera (off by default: the recording shows the game as the "
                   "headset does, with the wrist gadget as its HUD)."),
         toggle("Hide Head Text on the Mirror", "vr_mirror_hide_hud_text")
             .help("Hides the text that floats in front of your head (pickup messages, centre prints, notify lines) in the "
-                  "window's Left Eye and Smoothed Mirror views (off by default; in the Left Eye view also the window's own "
-                  "copy of that text, at its top). The headset still shows it."),
+                  "window's raw and smoothed eye views (off by default; in the raw views also the window's own copy of "
+                  "that text, at its top). The headset still shows it."),
         toggle("Hide Head Text on the Spectator Camera", "vr_spectator_hide_hud_text")
             .help("Hides the text that floats in front of your head (pickup messages, centre prints, notify lines) in the "
                   "Spectator Camera (on by default: clean footage for trailers). The headset still shows it; menus "
@@ -194,20 +197,27 @@
             .help("Strike the gadget's screen hard and straight with your other hand, or with the butt of the gun it "
                   "holds. It must come straight into the screen fast enough and stop on it: a swing across it, a "
                   "soft touch or a hand brushing past does nothing."),
+        cycle("Gesture", "vr_bullettime_tap_gesture", {{0.f, "Single Tap"}, {1.f, "Double Tap"}})
+            .help("Single Tap: one hard tap starts or stops it. Double Tap: two taps in quick succession (each may be "
+                  "lighter: Double Tap Force), lifting off the screen between them; a single tap does nothing."),
+        slider("Double Tap Window", "vr_bullettime_tap_double_window", 0.2f, 1.f, 0.05f, "%.2f s").extend(0.1f, 2.f)
+            .help("Double Tap: how soon after the first tap the second must come."),
+        slider("Double Tap Force", "vr_bullettime_tap_double_speed", 0.1f, 3.f, 0.1f, "%.1f m/s").extend(0.05f, 6.f)
+            .help("Double Tap: how fast each tap must come into the screen (Tap Force is the single tap's)."),
         slider("Tap Force", "vr_bullettime_tap_speed", 0.5f, 3.f, 0.1f, "%.1f m/s").extend(0.05f, 6.f)
-            .help("How fast your hand (or the gun's butt) must come into the screen (either arm may move). Higher: "
-                  "harder taps only."),
+            .help("How fast your hand (or the gun's butt, or what it holds) must come into the screen (either arm may "
+                  "move). Higher: harder taps only. Single Tap's (Double Tap Force: the double tap's)."),
         slider("Tap Straightness", "vr_bullettime_tap_angle", 10.f, 80.f, 5.f, "%.0f deg").extend(1.f, 89.f)
             .help("How far off straight into the screen the strike may come. Lower: only straight strikes (a melee "
                   "swing across the screen comes from the side)."),
         slider("Tap Zone Margin", "vr_bullettime_tap_margin", 0.f, 8.f, 0.5f, "%.1f cm").extend(0.f, 20.f)
             .help("How far past the screen's edges the strike may land too."),
-        slider("Tap Zone Depth", "vr_bullettime_tap_depth", 2.f, 15.f, 0.5f, "%.1f cm").extend(0.5f, 30.f)
-            .help("How close over the screen your hand's middle (or the gun's butt) must stop: your palm is a few cm "
-                  "out from it. Debug > Show Gadget Button: And the Screen Tap shows this zone."),
+        slider("Tap Zone Depth", "vr_bullettime_tap_depth", 0.5f, 15.f, 0.5f, "%.1f cm").extend(0.5f, 30.f)
+            .help("How close over the screen your hand (any of it: palm, fingers, knuckles, its back) or the gun's "
+                  "butt must stop. Debug > Show Gadget Button: And the Screen Tap shows this zone."),
         slider("Tap Zone Width", "vr_bullettime_tap_width", 0.5f, 2.f, 0.05f, "%.2fx").extend(0.1f, 5.f)
             .help("The zone's width as a share of the screen's (before the margin). Debug > Show Gadget Button: And the "
-                  "Screen Tap shows the zone and your striking points (blue)."),
+                  "Screen Tap shows the zone and what strikes (your hand's surface blue, the gun's butt orange, white on the zone)."),
         slider("Tap Zone Height", "vr_bullettime_tap_height", 0.5f, 2.f, 0.05f, "%.2fx").extend(0.1f, 5.f)
             .help("... and its height."),
         slider("Tap Zone Across", "vr_bullettime_tap_x", -6.f, 6.f, 0.25f, "%.2f cm").extend(-20.f, 20.f)
@@ -218,6 +228,8 @@
             .help("... and out of its face (negative: into your arm): Tap Zone Depth is measured from there."),
         toggle("The Gun's Butt Taps Too", "vr_bullettime_tap_butt")
             .help("On: the butt of the gun in your other hand taps the screen as your hand does. Off: only your hand."),
+        slider("Gun Butt Reach", "vr_bullettime_tap_butt_depth", 1.f, 10.f, 0.5f, "%.1f cm").extend(0.f, 30.f)
+            .help("How far from the gun's rearmost end its butt reaches: all of it within that strikes."),
         slider("Tap Must Stop", "vr_bullettime_tap_stop", 0.1f, 1.f, 0.05f, "%.2f")
             .help("The impact: the speed into the screen must drop to this much of its peak on it (a hand passing by "
                   "keeps its speed). 1: counts as it arrives, stopped or not."),
@@ -232,6 +244,17 @@
             .help("After a tap counts, how long before the next one does (a bounce is one)."),
         slider("Haptic Tick", "vr_bullettime_haptic", 0.f, 2.f, 0.25f, "%.2f")
             .help("The tick in both hands when a tap counts (0: none)."),
+        slider("Tap Click Volume", "vr_bullettime_tap_sound", 0.f, 1.f, 0.05f, "%.2f")
+            .help("The gadget clicks from its screen as a tap registers: a short tick for a double tap's first, two "
+                  "rising blips for the tap that starts or stops bullet time (0: silent)."),
+        slider("Tap Glitch", "vr_bullettime_tap_glitch", 0.f, 2.f, 0.1f, "%.1f")
+            .help("... and its screen glitches for a moment: bands torn sideways, the colours split (0: none)."),
+        slider("Tap Glitch Time", "vr_bullettime_tap_glitch_time", 0.05f, 0.5f, 0.01f, "%.2f s")
+            .help("How long the glitch lasts (the tap that starts or stops it a quarter longer)."),
+        command("Try: First Tap", "vr_bullettime_tap_feedback_test")
+            .help("vr_bullettime_tap_feedback_test: a double tap's first tap's click and glitch, without tapping."),
+        command("Try: Activation Tap", "vr_bullettime_tap_feedback_test 1")
+            .help("vr_bullettime_tap_feedback_test 1: the click and glitch of the tap that starts or stops it."),
         open("Gadget Side Button: Gear Lights", pageIndex(pageScreens))
             .help("The button on the gadget's lower edge now dims your gear's lights (HUD and Menus > Screens)."),
         header("Distortion Trails"),

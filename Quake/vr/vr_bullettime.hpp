@@ -10,6 +10,8 @@
 
 #include <glm/glm.hpp>
 
+#include "Zancle/Container/Vector.hpp"
+
 namespace qvr::hands
 {
 struct State;
@@ -23,9 +25,21 @@ void init(); // vr_bullettime
 // VR_AdvanceTime (real seconds): the meter drains while on, the cooldown runs, the meter fills; the look eases.
 void advance(double dt);
 
-// VR_BeginFrame, after the input: the gadget's screen tapped hard by the other hand or its gun's butt
-// (vr_bullettime_tap).
+// VR_BeginFrame (vr_debug_gadget_button 3: where the tapping hand is from the screen at the frame's start, for the view's
+// check: frameStartOffset).
 void frame();
+
+// The view (VR_SetupViewEntities), once a frame, right after the gadget is placed: the gadget's screen tapped hard by the
+// other hand or its gun's butt (vr_bullettime_tap), tested against the gadget and the hands as drawn this frame (`s`: the
+// hands as the view draws them; after the move and the turn, on lifts alike), never a frame behind or ahead.
+void viewFrame(const hands::State& s);
+
+// vr_debug_gadget_button 3: the screen's middle from the tapping hand's place at the frame's start (frame); false: none.
+[[nodiscard]] bool frameStartOffset(glm::vec3& out);
+
+// How far `hand` (hands::State::pos) moved since the view tested the tap (the player moving and turning): the mock's
+// targets (tapHandTarget, gearlights::buttonHandTarget) are taken from the gadget as drawn then.
+[[nodiscard]] glm::vec3 movedSinceView(const hands::State& s, int hand);
 
 // The time scale bullet time asks for: vr_bullettime_scale while on, else 1.
 [[nodiscard]] float scale();
@@ -69,18 +83,21 @@ struct Screen
 // (vr_bullettime_tap_width, _height: shares of its own; vr_bullettime_tap_margin is added round it as it is tested).
 [[nodiscard]] bool tapZone(Screen& out);
 
-// The striking points of `hand` that tap the screen (its palm's middle; holding a gun, with vr_bullettime_tap_butt, the
-// gun's butt): their count (1 or 2).
-[[nodiscard]] int strikingPoints(const hands::State& s, int hand, glm::vec3 (&out)[2]);
+// The striking volume of `hand` that taps the screen (world points, w a radius): the hand as drawn (its mesh's vertices:
+// view::drawnHandSurface) and, holding a gun (vr_bullettime_tap_butt), its butt (vr_bullettime_tap_butt_depth); with each
+// point's part (`parts`, if given: view::HandPart, or 255 the gun's butt).
+void strikingVolume(const hands::State& s, int hand, za::Vector<glm::vec4>& out, za::Vector<unsigned char>* parts);
 
 // A screen tap under way (coming at the screen fast) or one that counted half a second ago: the side button waits.
 [[nodiscard]] bool tapping();
 
-// Where `hand`'s place (hands::State::pos) must be for its striking point (its middle, hands::palmPoint; or with `butt`,
-// its gun's butt: view::heldWeaponButt) to be `cm` over the screen's middle and `sideCm` along its right
-// (vr_mock_hand_to ... screen <cm> [<side cm>], screenbutt: steps along its normal make a tap, along its right a swing
-// across). False with no gadget shown (or no gun, for `butt`).
-[[nodiscard]] bool tapHandTarget(int hand, float cm, float sideCm, bool butt, glm::vec3& out);
+// Where `hand`'s place (hands::State::pos) must be for its striking point to be `cm` over the screen's middle and
+// `sideCm` along its right (vr_mock_hand_to ... screen <cm> [<side cm>] [<part>]: steps along its normal make a tap,
+// along its right a swing across). The point: `part` nullptr or "palm" the palm's middle (hands::palmPoint), "butt" its
+// gun's butt (view::heldWeaponButt), or the drawn hand's point of that part furthest towards the screen ("palmskin",
+// "back", "knuckles", "fingers", "tips", "thumb": view::drawnHandSurface). False with no gadget shown (or no gun, no such
+// part).
+[[nodiscard]] bool tapHandTarget(int hand, float cm, float sideCm, const char* part, glm::vec3& out);
 
 // vr_input, a controller's stick pressed (`now`) or let go: true if bullet time takes it (vr_bullettime_trigger 1: the
 // left stick, HAND_OFF; 2: the right, HAND_MAIN; in the game only), so its key (LTHUMB, RTHUMB) never reaches the game.

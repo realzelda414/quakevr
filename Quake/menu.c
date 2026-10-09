@@ -1165,15 +1165,269 @@ static enum m_state_e M_GetBaseState (enum m_state_e state)
 }
 
 //=============================================================================
+/* CONFIRMATION DIALOG */ // QVR
+
+// QVR: a question over the menu it came from (VR Calibration, the tutorial, the hub, a new game, Reset to Defaults,
+// Quit in the headset), with a button for each answer: the action's (left) and Cancel (right), pointed at with the laser
+// and the trigger in the headset, clicked with the mouse on a flat screen; or the keys: y, n; Escape, B (no); the
+// arrows choose the button Enter or A answers with (the action's at first). In place of SCR_ModalMessage's loop, whose
+// frames had no host frame (the game stood still under it: NOTES.md vrstart_2026-10-09_18-21-02): the game goes on.
+typedef void (*m_confirm_action_t) (void);
+
+static struct
+{
+	enum m_state_e		prevstate;		// the menu under it (m_none: opened in game: back to the game)
+	char				text[320];
+	char				label[2][24];	// the buttons': 0 the action's, 1 Cancel
+	m_confirm_action_t	action;			// for the action's button
+	double				deadline;		// realtime it answers Cancel by itself (0: never)
+	int					cursor;			// the button Enter takes
+} confirmdlg;
+
+#define CONFIRM_YES	0
+#define CONFIRM_NO	1
+
+typedef struct
+{
+	int x, y, cols, lines;	// the box (M_DrawTextBox's)
+	int textlines;
+	int rowy;				// the buttons' row
+	int bx[2], bw, bcols;	// the buttons' left edges, width, and characters inside
+} confirmlayout_t;
+
+void M_Confirm (const char *text, const char *yes, const char *no, float timeout, m_confirm_action_t action)
+{
+	if (m_state == m_confirm)
+		return;
+	confirmdlg.prevstate = key_dest == key_menu ? m_state : m_none;
+	q_strlcpy (confirmdlg.text, text, sizeof (confirmdlg.text));
+	q_strlcpy (confirmdlg.label[CONFIRM_YES], yes, sizeof (confirmdlg.label[CONFIRM_YES]));
+	q_strlcpy (confirmdlg.label[CONFIRM_NO], no, sizeof (confirmdlg.label[CONFIRM_NO]));
+	confirmdlg.action = action;
+	confirmdlg.deadline = timeout > 0.f ? realtime + timeout : 0.0;
+	confirmdlg.cursor = CONFIRM_YES;
+	if (key_dest != key_menu)
+		IN_DeactivateForMenu ();
+	key_dest = key_menu;
+	m_state = m_confirm;
+	m_entersound = true;
+}
+
+int M_Confirm_PrevState (void)
+{
+	return confirmdlg.prevstate;
+}
+
+// The text's lines and widest line, the box round them and a row for the buttons (a row free above and below it), in
+// Quake's 320 x 200 middle.
+static void M_Confirm_Layout (confirmlayout_t *l)
+{
+	const char *s;
+	int len = 0, cols = 0, inner, i;
+
+	l->textlines = 0;
+	for (s = confirmdlg.text; ; s++)
+	{
+		if (*s == '\n' || !*s)
+		{
+			cols = q_max (cols, len);
+			if (len > 0 || *s)
+				l->textlines++;
+			len = 0;
+			if (!*s)
+				break;
+		}
+		else
+			len++;
+	}
+	l->bcols = 0;
+	for (i = 0; i < 2; i++)
+		l->bcols = q_max (l->bcols, (int) strlen (confirmdlg.label[i]) + 2);
+	l->bcols = (l->bcols + 1) & ~1; // (M_DrawTextBox's width: even)
+	l->bw = l->bcols * 8 + 16;
+	inner = q_max (cols * 8, 2 * l->bw + 16);
+	l->cols = ((inner + 15) / 16) * 2;
+	l->lines = l->textlines + 3;
+	l->x = 160 - (l->cols * 8 + 16) / 2;
+	l->y = 100 - (l->lines * 8 + 16) / 2;
+	l->rowy = l->y + 8 + (l->textlines + 1) * 8;
+	l->bx[CONFIRM_YES] = 160 - 8 - l->bw;
+	l->bx[CONFIRM_NO] = 160 + 8;
+}
+
+// The button at a spot of the menu (x, y), or -1.
+static int M_Confirm_ButtonAt (float x, float y)
+{
+	confirmlayout_t l;
+	int i;
+
+	M_Confirm_Layout (&l);
+	if (y < l.rowy - 6 || y >= l.rowy + 14)
+		return -1;
+	for (i = 0; i < 2; i++)
+		if (x >= l.bx[i] && x < l.bx[i] + l.bw)
+			return i;
+	return -1;
+}
+
+// A button's middle (menu x, y), while the dialog is up: vr_mock_laser yes|no and vr_mock_mouse (tests).
+qboolean M_Confirm_ButtonSpot (int which, float *x, float *y)
+{
+	confirmlayout_t l;
+
+	if (key_dest != key_menu || m_state != m_confirm || which < 0 || which > 1)
+		return false;
+	M_Confirm_Layout (&l);
+	*x = l.bx[which] + l.bw * 0.5f;
+	*y = l.rowy + 4.f;
+	return true;
+}
+
+static void M_Confirm_Answer (int button)
+{
+	m_confirm_action_t action = confirmdlg.action;
+
+	m_state = confirmdlg.prevstate;
+	m_entersound = true;
+	if (m_state == m_none) // opened in game: back to it
+	{
+		IN_Activate ();
+		key_dest = key_game;
+	}
+	if (button == CONFIRM_YES && action)
+		action ();
+}
+
+static void M_Confirm_Draw (void)
+{
+	confirmlayout_t l;
+	const char *s;
+	int i, len, answer;
+
+	answer = VR_TestModalAnswer (); // vr_test_modal_answer (tests)
+	if (answer >= 0)
+	{
+		M_Confirm_Answer (answer ? CONFIRM_YES : CONFIRM_NO);
+		return;
+	}
+	if (confirmdlg.deadline && realtime > confirmdlg.deadline)
+	{
+		M_Confirm_Answer (CONFIRM_NO);
+		return;
+	}
+
+	if (confirmdlg.prevstate != m_none) // the menu under it, faded
+	{
+		m_state = confirmdlg.prevstate;
+		m_recursiveDraw = true;
+		M_Draw ();
+		m_state = m_confirm;
+		Draw_FadeScreen (1.f);
+	}
+
+	GL_SetCanvas (CANVAS_MENU);
+	M_Confirm_Layout (&l);
+	M_DrawTextBox (l.x, l.y, l.cols, l.lines);
+	for (s = confirmdlg.text, i = 0; i < l.textlines; i++)
+	{
+		char line[48];
+		for (len = 0; s[len] && s[len] != '\n'; len++)
+			;
+		q_strlcpy (line, s, q_min (len + 1, (int) sizeof (line)));
+		M_PrintWhite (160 - (int) strlen (line) * 4, l.y + 8 + i * 8, line);
+		s += len;
+		if (*s)
+			s++;
+	}
+	for (i = 0; i < 2; i++)
+	{
+		const char *label = confirmdlg.label[i];
+		const int selected = i == confirmdlg.cursor;
+		const int tx = l.bx[i] + (l.bw - (int) strlen (label) * 8) / 2;
+		if (!VR_MenuDrawButton (l.bx[i], l.bx[i] + l.bw, l.rowy, selected))
+		{
+			M_DrawTextBox (l.bx[i], l.rowy - 8, l.bcols, 1);
+			if (selected)
+				M_DrawCharacter (tx - 10, l.rowy, 12 + ((int)(realtime * 4) & 1));
+		}
+		if (selected)
+			M_PrintWhite (tx, l.rowy, label);
+		else
+			M_Print (tx, l.rowy, label);
+	}
+}
+
+static void M_Confirm_Key (int key)
+{
+	int button;
+
+	switch (key)
+	{
+	case K_ESCAPE:
+	case K_BBUTTON:
+	case K_MOUSE2:
+	case K_MOUSE4:
+		M_Confirm_Answer (CONFIRM_NO);
+		break;
+
+	case K_LEFTARROW:
+	case K_RIGHTARROW:
+	case K_UPARROW:
+	case K_DOWNARROW:
+	case K_TAB:
+		M_ThrottledSound ("misc/menu1.wav");
+		confirmdlg.cursor ^= 1;
+		break;
+
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		M_Confirm_Answer (confirmdlg.cursor);
+		break;
+
+	case K_MOUSE1: // the mouse, or the laser's trigger (it moved the mouse there first): on a button only
+		button = M_Confirm_ButtonAt (m_mousex, m_mousey);
+		if (button >= 0)
+			M_Confirm_Answer (button);
+		break;
+
+	default:
+		break;
+	}
+}
+
+static void M_Confirm_Char (int key)
+{
+	if (key == 'y' || key == 'Y')
+		M_Confirm_Answer (CONFIRM_YES);
+	else if (key == 'n' || key == 'N')
+		M_Confirm_Answer (CONFIRM_NO);
+}
+
+static void M_Confirm_Mousemove (float x, float y)
+{
+	int button = M_Confirm_ButtonAt (x, y);
+
+	if (button >= 0 && button != confirmdlg.cursor)
+	{
+		confirmdlg.cursor = button;
+		M_MouseSound ("misc/menu1.wav");
+	}
+}
+
+//=============================================================================
 /* MAIN MENU */
 
-int	m_main_cursor = 2; // QVR: MAIN_SINGLEPLAYER (below): Single Player first, as before the VR Calibration and VR Settings rows
+int	m_main_cursor = 4; // QVR: MAIN_CAMPAIGNS (below): the playing group's first row (Select Campaign), below the VR rows
 int m_main_mods;
 
 enum
 {
 	MAIN_VRCALIBRATION, // QVR: the first-time setup (vr_setup.hpp), the first row
-	MAIN_VRSETTINGS, // QVR: the VR Settings (as Options > VR Settings), right after VR Calibration; Back from them to this menu
+	MAIN_VRTUTORIAL, // QVR: the tutorial (as the Play page's Tutorial), confirmed
+	MAIN_VRHUB, // QVR: the VR hub (vr_hub_map, as the Play page's VR Hub), confirmed
+	MAIN_VRSETTINGS, // QVR: the VR Settings (as Options > VR Settings), after the VR places; Back from them to this menu
+	MAIN_CAMPAIGNS, // QVR: Select Campaign, the official campaigns' page (was Single Player > Official Campaigns)
 	MAIN_SINGLEPLAYER,
 	MAIN_MULTIPLAYER,
 	MAIN_MAPLIBRARY, // QVR: Download Maps, the map browser (vr_menu_maps.inc)
@@ -1190,8 +1444,8 @@ enum
 // (vr_bigfont.cpp), so that VR Calibration looks like the others.
 static const char *const m_main_labels[MAIN_ITEMS] =
 {
-	"VR Calibration", "VR Settings", "Single Player", "Multiplayer", "Download Maps", "Play Custom Map", "Options",
-	"Advanced VR", "Mods", "Quit",
+	"VR Calibration", "VR Tutorial", "VR Hub", "VR Settings", "Select Campaign", "Single Player", "Multiplayer", "Download Maps",
+	"Play Custom Map", "Options", "Advanced VR", "Mods", "Quit",
 };
 
 const char *M_Main_RowLabel (void) // QVR: menu_vr pos
@@ -1206,12 +1460,14 @@ static qboolean M_Main_Shown (int item)
 	return item != MAIN_MODS || (m_main_mods && VR_MenuMainShowsMods ());
 }
 
-// QVR: the rows in groups, a gap above each but the first: the VR rows, playing (Single Player, Multiplayer), the maps
+// QVR: the rows in groups, a gap above each but the first: the VR rows (VR Calibration, VR Tutorial, VR Hub, VR Settings:
+// the author's note vrstart_2026-10-09_18-37-10), playing (Select
+// Campaign, Single Player, Multiplayer), the maps
 // (Download Maps, Play Custom Map), the settings (Options, Advanced VR, Mods), Quit apart (the author's note
 // vrfiringrange_2026-10-08_00-02-55).
 static qboolean M_Main_GroupStart (int item)
 {
-	return item == MAIN_SINGLEPLAYER || item == MAIN_MAPLIBRARY || item == MAIN_OPTIONS || item == MAIN_QUIT;
+	return item == MAIN_CAMPAIGNS || item == MAIN_MAPLIBRARY || item == MAIN_OPTIONS || item == MAIN_QUIT;
 }
 
 void M_Menu_Main_f (void)
@@ -1236,7 +1492,8 @@ void M_Menu_Main_f (void)
 
 // QVR: the rows' spacing and the groups' gaps: Quake's 20 and 10, closer where the canvas is too short for them all (a
 // flat screen's 200 rows, the headset's panel at Menu Height 1): the gaps a little first, then the rows (to 15), then the
-// gaps the rest of the way; the last row's letters, 20 tall, kept inside it.
+// gaps the rest of the way; then, still too short, the rows to 13 with no gaps, their letters drawn smaller (to fit 15
+// apart); the last row's letters, 20 tall, kept inside it.
 void M_Main_Layout (int *step, int *gap)
 {
 	drawtransform_t transform;
@@ -1252,6 +1509,8 @@ void M_Main_Layout (int *step, int *gap)
 	Draw_GetTransformBounds (&transform, &left, &top, &right, &bottom);
 	avail = (int)(bottom - 2 - 32 - 20);
 	*step = CLAMP (15, (avail - groups * 6) / (rows - 1), 20);
+	if ((rows - 1) * *step > avail) // more rows than fit 15 apart (a flat screen's 200 rows): closer, to 13, their letters
+		*step = q_max (13, avail / (rows - 1)); // smaller (M_Main_Draw), no gaps
 	*gap = CLAMP (0, (avail - (rows - 1) * *step) / groups, 10);
 }
 
@@ -1298,9 +1557,10 @@ void M_Main_Draw (void)
 	}
 	if (text)
 	{
+		const float scale = step < 15 ? step / 15.f : 1.f; // (rows closer than 15: smaller letters)
 		for (i = 0; i < MAIN_ITEMS; i++) // QVR: the rows as text
 			if (M_Main_Shown (i))
-				m_main_row_right[i] = (float)(73 + VR_BigFont_Draw (73, M_Main_RowY (i, step, gap), m_main_labels[i]));
+				m_main_row_right[i] = 73.f + VR_BigFont_DrawScaled (73, M_Main_RowY (i, step, gap), scale, m_main_labels[i]);
 	}
 	else
 	{ // QVR: the picture's rows (its Help row left out), the others in the mods' row's letters
@@ -1324,6 +1584,9 @@ void M_Main_Draw (void)
 					M_PrintEx (74, row + 1, 16, "MODS");
 				break;
 			case MAIN_VRCALIBRATION: M_PrintEx (74, row + 1, 16, "VR CALIBRATION"); break;
+			case MAIN_VRTUTORIAL: M_PrintEx (74, row + 1, 16, "VR TUTORIAL"); break;
+			case MAIN_VRHUB: M_PrintEx (74, row + 1, 16, "VR HUB"); break;
+			case MAIN_CAMPAIGNS: M_PrintEx (74, row + 1, 16, "SELECT CAMPAIGN"); break;
 			case MAIN_MAPLIBRARY: M_PrintEx (74, row + 1, 16, "DOWNLOAD MAPS"); break;
 			case MAIN_PLAYCUSTOM: M_PrintEx (74, row + 1, 16, "PLAY CUSTOM MAP"); break;
 			case MAIN_VRSETTINGS: M_PrintEx (74, row + 1, 16, "VR SETTINGS"); break;
@@ -1346,6 +1609,32 @@ static void M_Main_MoveCursor (int dir)
 		if (M_Main_Shown (m_main_cursor))
 			break;
 	}
+}
+
+// QVR: VR Calibration's confirmed: the menu closed, the calibration room (vr_setup.hpp).
+static void M_Main_StartCalibration (void)
+{
+	IN_Activate ();
+	key_dest = key_game;
+	m_state = m_none;
+	Cbuf_InsertText ("vr_setup\n"); // before anything queued (a test script's next commands)
+}
+
+// QVR: VR Tutorial's and VR Hub's confirmed: the menu closed, the map started (its command queued: vr_menu.cpp).
+static void M_Main_StartTutorial (void)
+{
+	IN_Activate ();
+	key_dest = key_game;
+	m_state = m_none;
+	VR_StartTutorial ();
+}
+
+static void M_Main_StartHub (void)
+{
+	IN_Activate ();
+	key_dest = key_game;
+	m_state = m_none;
+	VR_StartHub ();
 }
 
 void M_Main_Key (int key)
@@ -1380,18 +1669,32 @@ void M_Main_Key (int key)
 		switch (m_main_cursor)
 		{
 		case MAIN_VRCALIBRATION: // QVR: the calibration room (vr_setup)
-			if (!SCR_ModalMessage (sv.active
-				? "Start VR Calibration?\n\nThe game in progress ends: you go\nto the calibration room, and the\ncalibration starts by itself.\n\n(y/n)\n"
-				: "Start VR Calibration?\n\nYou go to the calibration room, and\nthe calibration starts by itself:\nyour height, then your body.\n\n(y/n)\n", 0.0f))
-				break;
-			IN_Activate ();
-			key_dest = key_game;
-			m_state = m_none;
-			Cbuf_InsertText ("vr_setup\n"); // before anything queued (a test script's next commands)
+			M_Confirm (sv.active
+				? "Start VR Calibration?\n\nThe game in progress ends: you go\nto the calibration room, and the\ncalibration starts by itself."
+				: "Start VR Calibration?\n\nYou go to the calibration room, and\nthe calibration starts by itself:\nyour height, then your body.",
+				"Start", "Cancel", 0.f, M_Main_StartCalibration);
+			break;
+
+		case MAIN_VRTUTORIAL: // QVR: the tutorial, as the Play page's Tutorial (VR_StartTutorial)
+			M_Confirm (sv.active
+				? "Start the VR Tutorial?\n\nThe game in progress ends: you go\nto the tutorial's first lesson."
+				: "Start the VR Tutorial?\n\nLessons on playing Quake in VR,\none after another.",
+				"Start", "Cancel", 0.f, M_Main_StartTutorial);
+			break;
+
+		case MAIN_VRHUB: // QVR: the hub, as the Play page's VR Hub (VR_StartHub)
+			M_Confirm (sv.active
+				? "Go to the VR Hub?\n\nThe game in progress ends: you go\nto the hub, where Quake VR starts."
+				: "Go to the VR Hub?\n\nWhere Quake VR starts.",
+				"Go", "Cancel", 0.f, M_Main_StartHub);
 			break;
 
 		case MAIN_SINGLEPLAYER:
 			M_Menu_SinglePlayer_f ();
+			break;
+
+		case MAIN_CAMPAIGNS: // QVR: the official campaigns' page; Back from it to this menu
+			VR_OpenCampaignSelector ();
 			break;
 
 		case MAIN_MULTIPLAYER:
@@ -1454,9 +1757,8 @@ void M_Main_Mousemove (float cx, float cy)
 
 qboolean m_singleplayer_showlevels;
 int	m_singleplayer_cursor;
-// QVR: append campaigns after Quake's rows; Map Library stays on the main menu.
-#define	SINGLEPLAYER_ITEMS	(4 + m_singleplayer_showlevels)
-#define SINGLEPLAYER_CAMPAIGNS (3 + m_singleplayer_showlevels)
+// QVR: Quake's rows only: the official campaigns are the main menu's Select Campaign row.
+#define	SINGLEPLAYER_ITEMS	(3 + m_singleplayer_showlevels)
 
 void M_Menu_SinglePlayer_f (void)
 {
@@ -1480,17 +1782,29 @@ void M_SinglePlayer_Draw (void)
 	if (m_singleplayer_showlevels)
 		M_DrawTransPic (72, 92, Draw_CachePic ("gfx/sp_maps.lmp") );
 
-	if (VR_BigFont_CanDraw ("Official Campaigns"))
-	{
-		VR_BigFont_Draw (73, 32 + SINGLEPLAYER_CAMPAIGNS * 20, "Official Campaigns");
-	}
-	else
-	{
-		M_PrintEx (74, 32 + SINGLEPLAYER_CAMPAIGNS * 20 + 1, 16, "OFFICIAL CAMPAIGNS");
-	}
 	M_DrawQuakeCursor (54, 32 + m_singleplayer_cursor * 20);
 }
 
+
+// QVR: New Game (confirmed while a game runs): as it was in M_SinglePlayer_Key.
+static void M_SinglePlayer_NewGame (void)
+{
+	if (quake64)
+	{
+		M_SetSkillMenuMap ("start");
+		M_Menu_Skill_f ();
+		return;
+	}
+	IN_Activate();
+	key_dest = key_game;
+	if (sv.active)
+		Cbuf_AddText ("disconnect\n");
+	Cbuf_AddText ("maxplayers 1\n");
+	Cbuf_AddText ("deathmatch 0\n"); //johnfitz
+	Cbuf_AddText ("coop 0\n"); //johnfitz
+	Cbuf_AddText ("campaign 1\n");
+	Cbuf_AddText ("map start\n");
+}
 
 void M_SinglePlayer_Key (int key)
 {
@@ -1521,29 +1835,13 @@ void M_SinglePlayer_Key (int key)
 	case K_MOUSE1:
 		m_entersound = true;
 
-        if (m_singleplayer_cursor == SINGLEPLAYER_CAMPAIGNS)
-        { VR_OpenCampaignSelector(); break; }
 		switch (m_singleplayer_cursor)
 		{
 		case 0:
-			if (sv.active)
-				if (!SCR_ModalMessage("Are you sure you want to\nstart a new game? (y/n)\n", 0.0f))
-					break;
-			if (quake64)
-			{
-				M_SetSkillMenuMap ("start");
-				M_Menu_Skill_f ();
-				break;
-			}
-			IN_Activate();
-			key_dest = key_game;
-			if (sv.active)
-				Cbuf_AddText ("disconnect\n");
-			Cbuf_AddText ("maxplayers 1\n");
-			Cbuf_AddText ("deathmatch 0\n"); //johnfitz
-			Cbuf_AddText ("coop 0\n"); //johnfitz
-			Cbuf_AddText ("campaign 1\n");
-			Cbuf_AddText ("map start\n");
+			if (sv.active) // QVR: asked over the menu (M_Confirm)
+				M_Confirm ("Are you sure you want to\nstart a new game?", "New Game", "Cancel", 0.f, M_SinglePlayer_NewGame);
+			else
+				M_SinglePlayer_NewGame ();
 			break;
 
 		case 1:
@@ -2058,7 +2356,7 @@ void M_Maps_Draw (void)
 
 				M_PrintScroll (x + namecols*8, y + i*8, desccols*8, buf,
 					selected ? mapsmenu.ticker.scroll_time : 0.0, true);
-				
+
 				if (!message)
 					GL_SetCanvasColor (1, 1, 1, 1);
 			}
@@ -3394,7 +3692,7 @@ void M_Menu_Gamepad_f (void)
 
 #define PP_IGNORE_ARGS(...)
 
-enum 
+enum
 {
 	// Add option id's and BEGIN values
 	#define BEGIN_MENU_OPT(prefix, state, desc)		prefix##_BEGIN, _##prefix##_REWIND = prefix##_BEGIN - 1,
@@ -3875,9 +4173,9 @@ void M_AdjustSliders (int dir)
 			curr_alwaysrun = ALWAYSRUN_VANILLA;
 		else
 			curr_alwaysrun = ALWAYSRUN_OFF;
-			
+
 		target_alwaysrun = (ALWAYSRUN_ITEMS + curr_alwaysrun + dir) % ALWAYSRUN_ITEMS;
-			
+
 		if (target_alwaysrun == ALWAYSRUN_VANILLA)
 		{
 			Cvar_SetValue ("cl_alwaysrun", 0);
@@ -4481,7 +4779,7 @@ static void M_Options_DrawItem (int y, int item)
 		r = vid_contrast.value - 1.0;
 		M_DrawSlider (x, y, r, va ("%.0f", 10.f * r));
 		break;
-	
+
 	case OPT_MOUSESPEED:
 		r = (sensitivity.value - 1)/10;
 		M_DrawSlider (x, y, r, va ("%.1f", sensitivity.value));
@@ -4862,7 +5160,7 @@ void M_Options_Draw (void)
 
 	M_Options_UpdateLayout ();
 	M_List_Update (&optionsmenu.list);
-	
+
 	if (*optionsmenu.last_cursor != optionsmenu.list.cursor)
 	{
 		*optionsmenu.last_cursor = optionsmenu.list.cursor;
@@ -4938,6 +5236,13 @@ void M_Options_Draw (void)
 	}
 }
 
+// QVR: Reset to Defaults confirmed.
+static void M_Options_ResetDefaults (void)
+{
+	Cbuf_AddText ("resetcfg\n");
+	Cbuf_AddText ("exec default.cfg\n");
+}
+
 void M_Options_Key (int k)
 {
 	if (!keydown[K_MOUSE1])
@@ -4994,13 +5299,8 @@ void M_Options_Key (int k)
 			m_state = m_none;
 			Con_ToggleConsole_f ();
 			break;
-		case OPT_DEFAULTS:
-			if (SCR_ModalMessage("This will reset all controls\n"
-					"and stored cvars. Continue? (y/n)\n", 15.0f))
-			{
-				Cbuf_AddText ("resetcfg\n");
-				Cbuf_AddText ("exec default.cfg\n");
-			}
+		case OPT_DEFAULTS: // QVR: asked over the menu (M_Confirm), Cancel by itself after 15 seconds as before
+			M_Confirm ("This will reset all controls\nand stored cvars. Continue?", "Reset", "Cancel", 15.f, M_Options_ResetDefaults);
 			break;
 		case OPT_MODS:
 			M_Menu_Mods_f ();
@@ -5672,14 +5972,14 @@ int		msgNumber;
 enum m_state_e	m_quit_prevstate;
 qboolean	wasInMenus;
 
-const char*const quitMessage [] = 
+const char*const quitMessage [] =
 {
 /* .........1.........2.... */
   "  Are you gonna quit    ",
   "  this game just like   ",
   "   everything else?     ",
   "                        ",
- 
+
   " Milord, methinks that  ",
   "   thou art a lowly     ",
   " quitter. Is this true? ",
@@ -5694,22 +5994,22 @@ const char*const quitMessage [] =
   "   for trying to quit!  ",
   "     Press Y to get     ",
   "      smacked out.      ",
- 
+
   " Press Y to quit like a ",
   "   big loser in life.   ",
   "  Press N to stay proud ",
   "    and successful!     ",
- 
+
   "   If you press Y to    ",
   "  quit, I will summon   ",
   "  Satan all over your   ",
   "      hard drive!       ",
- 
+
   "  Um, Asmodeus dislikes ",
   " his children trying to ",
   " quit. Press Y to return",
   "   to your Tinkertoys.  ",
- 
+
   "  If you quit now, I'll ",
   "  throw a blanket-party ",
   "   for you next time!   ",
@@ -5726,10 +6026,38 @@ void M_ChooseQuitMessage (void)
 	msgNumber = (cl_confirmquit.value >= 2.f) ? (int)(realtime*(5.0*1.61803399))&7 : 8;
 }
 
+// QVR: Quit confirmed in the headset's dialog.
+static void M_Quit_Confirmed (void)
+{
+	IN_DeactivateForConsole();
+	key_dest = key_console;
+	Host_Quit_f ();
+}
+
 void M_Menu_Quit_f (void)
 {
-	if (m_state == m_quit)
+	if (m_state == m_quit || m_state == m_confirm)
 		return;
+	if (VR_IsActive () && cl_confirmquit.value) // QVR: in the headset, its message with two buttons (M_Confirm)
+	{
+		const char*const *msg;
+		char text[160];
+		int i, lines;
+		M_ChooseQuitMessage ();
+		msg = quitMessage + msgNumber*4;
+		lines = msgNumber == 8 ? 1 : 4; // (Leave QUAKE?'s last line is its keys: the buttons say it)
+		while (lines > 1 && !msg[lines - 1][strspn (msg[lines - 1], " ")]) // (nor a blank last line)
+			lines--;
+		text[0] = 0;
+		for (i = 0; i < lines; i++)
+		{
+			if (i)
+				q_strlcat (text, "\n", sizeof (text));
+			q_strlcat (text, msg[i], sizeof (text));
+		}
+		M_Confirm (text, "Quit", "Cancel", 0.f, M_Quit_Confirmed);
+		return;
+	}
 	wasInMenus = (key_dest == key_menu);
 	IN_DeactivateForMenu();
 	key_dest = key_menu;
@@ -7170,7 +7498,7 @@ static void M_ModInfo_UpdateLayout (void)
 	int			width = strlen (modinfomenu.title) * 12 + 16;
 	int			height = 0;
 	const char	*str;
-	
+
 	str = modinfomenu.author;
 	while (*str && height < MODINFO_MAXAUTHORLINES)
 	{
@@ -7675,6 +8003,10 @@ void M_Draw (void)
 	case m_vr: // QVR
 		VR_Menu_Draw ();
 		break;
+
+	case m_confirm: // QVR
+		M_Confirm_Draw ();
+		break;
 	}
 
 	VR_MenuDrawOverlay (); // QVR: the "Back to game" button
@@ -7729,7 +8061,7 @@ void M_Keydown (int key, qboolean repeat)
 		}
 	}
 
-	if (!bind_grab && VR_MenuKey (key, repeat)) // QVR: the corner's buttons (Back to game, Advanced VR, Levels)
+	if (!bind_grab && m_state != m_confirm && VR_MenuKey (key, repeat)) // QVR: the corner's buttons (Back to game, Advanced VR, Levels); not under a dialog
 		return;
 
 	switch (M_GetBaseState (m_state))
@@ -7824,6 +8156,10 @@ void M_Keydown (int key, qboolean repeat)
 	case m_vr: // QVR
 		VR_Menu_Key (key, repeat);
 		return;
+
+	case m_confirm: // QVR
+		M_Confirm_Key (key);
+		return;
 	}
 }
 
@@ -7851,7 +8187,7 @@ void M_Mousemove (int screenx, int screeny)
 		return;
 	}
 
-	if (VR_MenuMouseOnButtons (x, y)) // QVR: on a corner button: the menu's own selection stays (Back returns to it)
+	if (m_state != m_confirm && VR_MenuMouseOnButtons (x, y)) // QVR: on a corner button: the menu's own selection stays (Back returns to it); not under a dialog
 		return;
 
 	switch (M_GetBaseState (m_state))
@@ -7936,6 +8272,10 @@ void M_Mousemove (int screenx, int screeny)
 
 	case m_vr: // QVR
 		VR_Menu_Mousemove (x, y);
+		return;
+
+	case m_confirm: // QVR
+		M_Confirm_Mousemove (x, y);
 		return;
 	}
 }
@@ -8022,6 +8362,9 @@ void M_Charinput (int key)
 	case m_vr: // QVR: the Search page's box
 		VR_Menu_Char (key);
 		return;
+	case m_confirm: // QVR
+		M_Confirm_Char (key);
+		return;
 	default:
 		return;
 	}
@@ -8048,6 +8391,8 @@ textmode_t M_TextEntry (void)
 		return M_Keys_TextEntry ();
 	case m_vr: // QVR
 		return (textmode_t) VR_Menu_TextEntry ();
+	case m_confirm: // QVR: y and n answer it
+		return TEXTMODE_NOPOPUP;
 	default:
 		return TEXTMODE_OFF;
 	}
@@ -8143,4 +8488,3 @@ void M_CheckMods (void)
 	m_skill_usecustomtitle = M_CheckCustomGfx ("gfx/p_skill.lmp",
 		"gfx/ttl_sgl.lmp", 6728, sgl_hashes, countof (sgl_hashes));
 }
-

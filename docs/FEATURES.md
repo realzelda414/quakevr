@@ -352,13 +352,13 @@ Most of these have switches on the *Graphics* pages, and the *Preset* there sets
   campaign lecterns and their teleporter, a settings pavilion, a firing range and a lookout tower. Pick Quake, Scourge of
   Armagon, Dissolution of Eternity, Dimension of the Past, Dimension of the Machine or Dawn of the Machine and step
   into the teleporter. Its boards and tips explain the
-  basics. (The old hub is `vrstart_old`, in the Debug menu.) From *Advanced VR Options > Play* you can go back to the
+  basics. From *Advanced VR Options > Play* you can go back to the
   hub, the **tutorial** or the **firing range** (weapons to try, both swords, the crowbar, props, and the training
   dummy).
 - **Mission packs:** Hipnotic and Rogue are independent optional packs. Validated installed data is used
   automatically, with its weapons, monsters and maps. Quake, the hub, tutorial and firing range work without
   either pack; unavailable campaign buttons are labelled in the hub. Quake VR's QuakeC contains all three campaigns.
-- **Official campaigns** (Single Player > *Official Campaigns*, or Play): the re-release's Dimension of the
+- **Official campaigns** (the main menu's *Select Campaign*, or Play > Official Campaigns): the re-release's Dimension of the
   Past, Dimension of the Machine (with its Horde mode) and Dawn of the Machine (with its Bloody Nightmare difficulty)
   play natively in VR, in single player, when you own them. See [INSTALL.md](INSTALL.md#official-campaigns).
 - **Map Library** (the main menu, or the corner's *Map Library*): browse [Quaddicted](https://www.quaddicted.com/)'s

@@ -219,6 +219,10 @@ void(float xWhich) VR_Knockdown_Stand =
 };
 
 // Down (self): waits, then tries to get up (room for it: VR_Knockdown_Stand; none: tries again a little later).
+// In water, slime or lava (NOTES.md vrstart_2026-10-09_17-55-49): the engine looks for a floor where its head is out
+// (the shallows' bottom, the bank: vr_knockdown_water_search); none for vr_knockdown_water_giveup s, it gets up where it
+// floats, a walking monster again (it sinks; under water it can drown, vr_liquids.qc), never a ragdoll for good.
+.float vr_kd_wet_since; // when its tries in a liquid began failing (0: not)
 void() VR_Knockdown_Think =
 {
     if(self.health <= 0 || self.vr_knockdown != 1)
@@ -245,14 +249,46 @@ void() VR_Knockdown_Think =
         VR_Knockdown_Stand(0);
         return;
     }
-    float which = ragdollgetup(self, self.vr_kd_frame, self.vr_kd_frame2, self.vr_kd_mins, self.vr_kd_maxs,
-        max(0, cvar_hget(cvarh_vr_knockdown_search)));
+    float search = max(0, cvar_hget(cvarh_vr_knockdown_search));
+    float which = ragdollgetup(self, self.vr_kd_frame, self.vr_kd_frame2, self.vr_kd_mins, self.vr_kd_maxs, search);
+    float floating = FALSE;
     if(!which)
     {
-        self.vr_kd_until = time + max(0.1, cvar_hget(cvarh_vr_knockdown_retry));
-        return;
+        float giveup = cvar_hget(cvarh_vr_knockdown_water_giveup);
+        if(giveup > 0 && VR_Liquid_Level(self) > 0)
+        {
+            if(!self.vr_kd_wet_since)
+            {
+                self.vr_kd_wet_since = time;
+            }
+            if(time >= self.vr_kd_wet_since + giveup)
+            {
+                which = ragdollgetup(self, self.vr_kd_frame, self.vr_kd_frame2, self.vr_kd_mins, self.vr_kd_maxs,
+                    max(48, search), TRUE);
+                floating = which != 0;
+            }
+        }
+        else
+        {
+            self.vr_kd_wet_since = 0;
+        }
+        if(!which)
+        {
+            self.vr_kd_until = time + max(0.1, cvar_hget(cvarh_vr_knockdown_retry));
+            return;
+        }
     }
+    self.vr_kd_wet_since = 0;
     VR_Knockdown_Stand(which);
+    if(floating)
+    {
+        self.flags = self.flags - (self.flags & FL_ONGROUND); // (nothing under it: it sinks)
+        if(cvar_hget(cvarh_vr_knockdown_debug))
+        {
+            dprint(sprintf("knockdown: %s found no floor out of the liquid: up where it floats, at %v\n", self.classname,
+                self.origin));
+        }
+    }
 };
 
 // Knocks `e` down now (its ragdoll made, it lies there): FALSE if it could not be.
@@ -287,6 +323,24 @@ float(entity e) VR_Knockdown_Start =
 };
 
 float VR_KD_LEDGE_STEP = 8;    // units between the points along its way where the ground under it is looked for
+float vr_kd_ledge_past;        // VR_Knockdown_Ledge's last edge found: units along the shove to past it (its half width on)
+
+// How far the shove that just landed on `e` (its velocity VR_Push's: along the shove, and the hop) carries it standing:
+// the hop (2 x up / gravity in the air, at its speed), then the slide (speed^2 / 2 VR_SHOVE_FRICTION; none under
+// VR_SHOVE_MINSPEED, as VR_Push), units.
+float(entity e) VR_Shove_Reach =
+{
+    vector dir = e.velocity;
+    dir_z = 0;
+    float speed = vlen(dir);
+    float g = max(1, cvar_hget(cvarh_sv_gravity) * (e.gravity ? e.gravity : 1));
+    float travel = speed * 2 * max(0, e.velocity_z) / g;
+    if(speed >= VR_SHOVE_MINSPEED)
+    {
+        travel = travel + speed * speed / (2 * VR_SHOVE_FRICTION);
+    }
+    return travel;
+};
 
 // Ledges (vr_knockdown_ledge; Combat > Knockdowns, "Over a Ledge"): whether the shove that just landed on `e` (its
 // velocity VR_Push's: along the shove, and the hop) carries it over the edge of a drop of vr_knockdown_ledge_drop or more.
@@ -310,12 +364,7 @@ float(entity e) VR_Knockdown_Ledge =
         return FALSE;
     }
     dir = dir * (1 / speed);
-    float g = max(1, cvar_hget(cvarh_sv_gravity) * (e.gravity ? e.gravity : 1));
-    float travel = speed * 2 * max(0, e.velocity_z) / g;
-    if(speed >= VR_SHOVE_MINSPEED)
-    {
-        travel = travel + speed * speed / (2 * VR_SHOVE_FRICTION);
-    }
+    float travel = VR_Shove_Reach(e);
     float reach = travel * max(0, cvar_hget(cvarh_vr_knockdown_ledge_reach)) + max(0, cvar_hget(cvarh_vr_knockdown_ledge_margin));
     if(reach < 1)
     {
@@ -355,6 +404,7 @@ float(entity e) VR_Knockdown_Ledge =
         tracebox(q, e.mins, e.maxs, q - '0 0 1' * (q_z + e.mins_z - (ground - height)), TRUE, e);
         if(!trace_startsolid && trace_fraction == 1)
         {
+            vr_kd_ledge_past = d + half;
             if(cvar_hget(cvarh_vr_knockdown_debug))
             {
                 dprint(sprintf("knockdown ledge: %s: an edge %.0f units ahead (reach %.0f, clear %.0f), a drop of %g or more\n",
@@ -371,8 +421,10 @@ float(entity e) VR_Knockdown_Ledge =
 };
 
 // A shove (or a bash) by self (a player) that landed on `e` (VR_Bash_Hit): by chance it knocks it down. xKind: the hit's
-// (QVR_HITKIND_SHOVE or _BASH); xHand -1: both hands.
-float(entity e, vector xForward, float xKind, float xHand) VR_Knockdown_Try =
+// (QVR_HITKIND_SHOVE or _BASH); xHand -1: both hands; xPush: its push (VR_Shove_HandsPush: two hands 1, one 0.7, a counter more,
+// tired less): down, its ragdoll is carried on along xForward and topples over its feet (ragdollshovetopple:
+// vr_knockdown_shove_*).
+float(entity e, vector xForward, float xKind, float xHand, float xPush) VR_Knockdown_Try =
 {
     if(!cvar_hget(cvarh_vr_knockdown) || !(self.flags & FL_CLIENT) || e.health <= 0 || e.vr_knockdown || !e.vr_kd_chance_h ||
        (e.flags & (FL_FLY | FL_SWIM)) || !(e.flags & FL_MONSTER) || !canragdoll(e))
@@ -417,13 +469,24 @@ float(entity e, vector xForward, float xKind, float xHand) VR_Knockdown_Try =
     {
         return FALSE;
     }
-    return VR_Knockdown_Start(e);
+    float reach = ledge ? vr_kd_ledge_past : VR_Shove_Reach(e); // (before its launch is cut: the shove's own)
+    if(!VR_Knockdown_Start(e))
+    {
+        return FALSE;
+    }
+    // Carried on as far as the shove would carry it standing (times vr_knockdown_shove_travel) and turned over about its
+    // feet a quarter turn (vr_knockdown_shove_topple_*); over a ledge, pushed whole so it goes off, turned as it falls
+    // (vr_knockdown_shove_ledge_*).
+    ragdollshovetopple(e, xForward, xPush, ledge, reach);
+    return TRUE;
 };
 
 // For tests (the engine's vr_knockdown_test <mode>), self the player: 0 knocks the nearest monster that can be down
 // (regardless of the chance; pushed away from you), 1 gets every knocked-down one up now (their next try), 2 hits the
 // nearest knocked-down one for 5 (its pain), 3 kills it (a hit for its health), 4 gibs it, 5 lists them, 20 removes every
-// monster, standing, knocked down or dead (the ledge tests' clean slate between trials).
+// monster, standing, knocked down or dead (the ledge tests' clean slate between trials), 21 and 22 shove the nearest with
+// one hand and with two (its chance as a real shove's: vr_knockdown_chance 100 for sure; its topple traced with
+// vr_knockdown_debug).
 void(float xMode) VR_Knockdown_Test =
 {
     if(xMode == 20)
@@ -510,7 +573,8 @@ void(float xMode) VR_Knockdown_Test =
                     x.vr_kd_until = time;
                 }
             }
-            else if(d < bestDist && (xMode == 0 ? (!x.vr_knockdown && x.vr_kd_chance_h) : x.vr_knockdown == 1))
+            else if(d < bestDist && ((xMode == 0 || xMode == 21 || xMode == 22) ? (!x.vr_knockdown && x.vr_kd_chance_h) :
+                                               x.vr_knockdown == 1))
             {
                 best = x;
                 bestDist = d;
@@ -525,6 +589,20 @@ void(float xMode) VR_Knockdown_Test =
     if(best == world)
     {
         dprint("knockdown test: no monster\n");
+        return;
+    }
+    if(xMode == 21 || xMode == 22)
+    {
+        // 21, 22: a one- or two-handed open-palm shove of the nearest (VR_Bash_Hit, as a real one: its push, its stagger,
+        // its chance; vr_knockdown_chance 100 for a sure knockdown), fresh (not tired).
+        vector away = best.origin - self.origin;
+        away_z = 0;
+        vr_bash_exhaust_dmg = 0;
+        vr_bash_exhaust_push = 0;
+        float two = xMode == 22;
+        dprint(sprintf("knockdown test: %s shove of %s\n", two ? "two-handed" : "one-handed", best.classname));
+        VR_Bash_Hit(best, best.origin, normalize(away), QVR_HITKIND_SHOVE, two ? -1 : cVR_MainHand,
+            two ? 1 : VR_BASH_ONE_DAMAGE, VR_Shove_HandsPush(two));
         return;
     }
     if(xMode == 0)

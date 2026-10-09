@@ -134,10 +134,16 @@ keyboard) then says why VR didn't start:
 ## OpenXR runtimes: SteamVR or Virtual Desktop
 
 Quake VR uses whichever OpenXR runtime you pick in **VR Settings > Headset > OpenXR Runtime**. Switching restarts VR
-without restarting the game.
+without restarting the game. The line under it says which runtime is in use and why.
 
+- **Auto** (the default): the runtime whose app is running. Virtual Desktop's Streamer means Virtual Desktop's own
+  runtime (VDXR), or SteamVR's when SteamVR is the OpenXR runtime chosen in the Streamer's options; SteamVR means
+  SteamVR's, the Meta app's server means Meta's. With none running, it's the system's active runtime. If that runtime can't start (no headset connected through it, for example), the game tries the other
+  installed ones before playing flat (*Try Other Runtimes*, an advanced row: an idle SteamVR is tried only with *On,
+  SteamVR too*, as trying it starts SteamVR). The console command `vr_xr_runtime_explain` prints what Auto sees and the
+  order it tries runtimes in. After starting or closing a VR app, *Restart VR* chooses again.
 - **System default:** the runtime that Windows has marked as active. This is usually the one set in SteamVR's or
-  the Meta app's settings, or whatever the `XR_RUNTIME_JSON` environment variable points to.
+  the Meta app's settings. An `XR_RUNTIME_JSON` environment variable the game was started with always wins.
 - **Virtual Desktop (VDXR):** Virtual Desktop's own OpenXR runtime. It skips SteamVR entirely, which can give
   smoother frame pacing on a Quest. In Virtual Desktop's settings, keep *Emulate Index controllers* **off**. The
   first time you use it, check that your guns point where your controllers point (see *Gun Angle* below).
@@ -171,7 +177,7 @@ QuakeC contains Quake, Scourge of Armagon and Dissolution of Eternity; selecting
 
 ## Official campaigns
 
-Open **Single Player > Official Campaigns**, **VR Settings > Official Campaigns**, or the hub's campaign board link.
+Open the main menu's **Select Campaign**, **VR Settings > Official Campaigns**, or the hub's campaign board link.
 The selector shows Quake, the two mission packs, Dimension of the Past (`dopa`), Dimension of the Machine (`mg1`)
 and Dawn of the Machine (`mg3`). Each entry reports missing data, incomplete/corrupt data, or installed data with
 its native gameplay readiness. **Dimension of the Past is ready for native single-player VR**, including authored
@@ -366,7 +372,7 @@ Paths under *Advanced VR Options* need *Menu Detail: Advanced* (the last row of 
 |---|---|
 | Nothing in the headset | Look for the `VR:` lines in the console: they name the OpenXR call that failed. Check that the runtime is running, then `vr_restart`. Try another runtime in VR Settings > Headset. |
 | Guns point the wrong way, hands misplaced | Adjust *Gun Angle* and *Off Hand Angle* in VR Settings. *Weapon Offsets (Held Weapon)* moves a single weapon in the hand. |
-| Double vision, wrong scale | Send the output of `vr_status`, and a screenshot of the desktop mirror with `vr_mirror 2` (both eyes). |
+| Double vision, wrong scale | Send the output of `vr_status`, and a screenshot of the desktop mirror with `vr_window_view 3` (both eyes; Graphics > Recording > Window View > Both Eyes (raw)). |
 | Too tall, too short, floor in the wrong place | *Set Height Now* while standing straight, *World Scale*, *Floor Offset*. |
 | Water isn't see-through | Needs maps relit with the VisPatch files (by the script, or in the game with *See-Through Liquids*), and *Transparency > Water Alpha* below 1 (0.3 by default). See [RELIGHTING.md](RELIGHTING.md#troubleshooting). |
 | No sound | Check the Windows output device (your headset's audio) and Ironwail's volume options. |

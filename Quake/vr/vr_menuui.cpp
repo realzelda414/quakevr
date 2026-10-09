@@ -49,6 +49,7 @@
 #include "vr_stereo.hpp"
 #include "vr_units.hpp"
 #include "vr_window.hpp"
+#include "vr_toolgun.hpp"
 
 #include "Zancle/Container/Vector.hpp"
 #include "Zancle/Math/Ceil.hpp"
@@ -64,6 +65,7 @@ extern "C" {
 extern float m_mousex, m_mousey; // menu.c: the menus' mouse, in menu coordinates
 extern cvar_t ui_mouse;           // menu.c: the desktop mouse in the menus
 int Key_StringToKeynum(const char* str); // keys.c: a key's number from its name (vr_mock_key)
+void Char_Event(int key);                // keys.c: a letter typed (vr_mock_key text)
 extern m_state_e m_skill_prevmenu, m_quit_prevstate; // menu.c: where the skill and quit menus came from
 
 // menu.c: its menus' openers, and its lists for the VR controllers (M_ScrollList: // QVR).
@@ -106,7 +108,8 @@ namespace
 // picture's rows (spacing would move the cursor off them).
 [[nodiscard]] float rowSpacing()
 {
-    switch(m_state)
+    // A confirmation dialog: as the menu under it (drawn under it, not laid out again).
+    switch(m_state == m_confirm ? M_Confirm_PrevState() : m_state)
     {
         case m_main:
         case m_singleplayer:
@@ -200,6 +203,13 @@ struct MockLaser
 };
 MockLaser mockLaser;
 
+// The hand the mock laser is: the main one, or the off hand while the toolgun's menu is on the gun in the main hand (its
+// laser is the other hand's: vr_toolgun.cpp).
+[[nodiscard]] int mockLaserHand()
+{
+    return toolgun::menuOnGun() && toolgun::heldHand() == HAND_MAIN ? HAND_OFF : HAND_MAIN;
+}
+
 // The mock laser's spot on the canvas (v up).
 [[nodiscard]] glm::vec2 mockLaserUv()
 {
@@ -223,7 +233,7 @@ glm::vec2 runtimePanelUv[HAND_COUNT]{};
     {
         return hit;
     }
-    if(mockLaser.on && hand == HAND_MAIN)
+    if(mockLaser.on && hand == mockLaserHand())
     {
         return {true, glm::vec3{0.f}, mockLaserUv(), true};
     }
@@ -263,7 +273,7 @@ glm::vec2 runtimePanelUv[HAND_COUNT]{};
     {
         return intersectRuntimePanel(hand); // (the menu is not in the eyes)
     }
-    if(mockLaser.on && hand == HAND_MAIN)
+    if(mockLaser.on && hand == mockLaserHand())
     {
         const glm::vec2 uv = mockLaserUv();
         return {true, corner + xAxis * uv.x + yAxis * uv.y, uv};
@@ -388,11 +398,18 @@ struct ToolbarLayout
     static constexpr float corner = 4.f;    // true pixels from the panel's edges
     static constexpr float rowCorner = corner; // the row's from the canvas's top edge (as the status box's and the version
                                                // box's from theirs)
-    static constexpr float half = 7.f;      // half a button's height
+    // The headset's column (and the bottom left corner's rows: OBS's, the spectator camera's switch) large for the
+    // laser: 20 tall, 4 apart (the author's note vrstart_2026-10-09_14-57-46: they were 14 and 2, easy to miss and to
+    // press the one next to it); the flat screen's row of icons, under a desktop mouse, as it was.
+    static constexpr float half = 10.f;     // half a button's height (the column's)
     static constexpr float rowHalf = 6.f;   // the row's
-    static constexpr float gap = 2.f;       // between two buttons
+    static constexpr float gap = 4.f;       // between two buttons (the column's)
+    static constexpr float rowGap = 2.f;    // the row's
+    static constexpr float pad = 6.f;       // the column's icon and label from its buttons' ends
+    static constexpr float labelGap = 5.f;  // a label from its icon
     static constexpr float icon = 9.f;      // an icon's width
-    static constexpr float iconButton = 4.f + icon + 4.f; // a button without its label
+    static constexpr float iconButton = 4.f + icon + 4.f; // the row's button (no label)
+    static constexpr float iconColumnButton = pad + icon + pad; // the column's without its label
     static constexpr float columnRight = -136.f; // the labelled column's right edge (menu x): clear of the VR pages'
                                                  // labels up to 38 characters (from x -128) and Ironwail's lists
     static constexpr float columnGap = 8.f;      // at least this clear of the menu's leftmost text (menu x)
@@ -414,7 +431,7 @@ struct ToolbarLayout
     }
 
     // A button's left and right edges.
-    [[nodiscard]] float bx0(int tool) const { return row ? x0 + tool * (iconButton + gap) : x0; }
+    [[nodiscard]] float bx0(int tool) const { return row ? x0 + tool * (iconButton + rowGap) : x0; }
     [[nodiscard]] float bx1(int tool) const { return row ? bx0(tool) + iconButton : x1; }
 
     // The last button's bottom edge (menu y), and the buttons' right edge.
@@ -427,8 +444,8 @@ struct ToolbarLayout
         const bool last = tool == toolsShown() - 1;
         if(row)
         {
-            const float rx0 = tool == 0 ? left : bx0(tool) - gap * 0.5f;
-            const float rx1 = bx1(tool) + (last ? 2.f : gap * 0.5f);
+            const float rx0 = tool == 0 ? left : bx0(tool) - rowGap * 0.5f;
+            const float rx1 = bx1(tool) + (last ? 2.f : rowGap * 0.5f);
             return x >= rx0 && x <= rx1 && y >= top && y <= yc(tool) + (rowHalf + 2.f) / k;
         }
         const float y0 = tool == 0 ? top : yc(tool) - (half + gap * 0.5f) / k;
@@ -457,7 +474,7 @@ struct ToolbarLayout
     {
         widest = za::fmax(widest, 8.f * static_cast<float>(strlen(label)));
     }
-    const float width = 4.f + ToolbarLayout::icon + 4.f + widest + 5.f;
+    const float width = ToolbarLayout::pad + ToolbarLayout::icon + ToolbarLayout::labelGap + widest + ToolbarLayout::pad;
     l.limit = menu::contentLeft() - ToolbarLayout::columnGap;
     l.edge = za::fmin(ToolbarLayout::columnRight, l.limit);
     l.x1 = l.edge;
@@ -473,7 +490,7 @@ struct ToolbarLayout
     {
         l.labels = false;
         l.x0 = l.left + ToolbarLayout::corner;
-        l.x1 = l.x0 + ToolbarLayout::iconButton;
+        l.x1 = l.x0 + (l.row ? ToolbarLayout::iconButton : ToolbarLayout::iconColumnButton);
     }
     return l;
 }
@@ -578,6 +595,10 @@ Remembered remembered;
     {
         state = m_quit_prevstate;
     }
+    else if(state == m_confirm)
+    {
+        state = M_Confirm_PrevState();
+    }
 
     switch(state)
     {
@@ -589,7 +610,8 @@ Remembered remembered;
         case m_slist: return m_multiplayer;
         case m_main:
         case m_skill:
-        case m_quit: return m_none;
+        case m_quit:
+        case m_confirm: return m_none;
         default: return state;
     }
 }
@@ -616,6 +638,10 @@ struct BannerLayout
     const char* text{""};
 };
 
+// A row's light (its middle) and text from its left end, as the column's icons and labels.
+constexpr float bannerLightX = ToolbarLayout::pad + 3.f;
+constexpr float bannerTextX = ToolbarLayout::pad + 6.f + ToolbarLayout::labelGap;
+
 // Its right edge as the buttons' (left of the menu and its help, as far as the panel lets them), the long text where
 // it fits, else the short; else the short in the corner.
 // `row` 0 the spectator camera's switch, 1 OBS's row above it.
@@ -629,7 +655,7 @@ struct BannerLayout
     for(const char* text : texts)
     {
         b.text = text;
-        width = 4.f + 6.f + 4.f + 8.f * static_cast<float>(strlen(text)) + 5.f;
+        width = bannerTextX + 8.f * static_cast<float>(strlen(text)) + ToolbarLayout::pad;
         b.x1 = l.edge;
         b.x0 = b.x1 - width;
         if(b.x0 < l.left + ToolbarLayout::corner)
@@ -855,6 +881,12 @@ float panelHeight()
     return active() ? vid.guiheight / canvasScale() * vr_menu_scale.value : 0.f;
 }
 
+float styledPanelHeight()
+{
+    // (canvasScale with the spacing setting: the most a menu's rows are spaced, the panel's height for every menu)
+    return vr_menu_vr_style.value && vid.guiheight > 0 ? vid.guiheight / canvasScale() * vr_menu_scale.value : 0.f;
+}
+
 int menuHeight()
 {
     return active() ? heightSetting() : 320; // (flat: the menu canvas fits 420 x 320, gl_draw.c CANVAS_MENU)
@@ -929,6 +961,17 @@ void mockLaser_f()
         mockLaser.on = false;
         return;
     }
+    if(float x, y; Cmd_Argc() == 2 && (!q_strcasecmp(Cmd_Argv(1), "yes") || !q_strcasecmp(Cmd_Argv(1), "no")))
+    {
+        if(!M_Confirm_ButtonSpot(q_strcasecmp(Cmd_Argv(1), "yes") ? 1 : 0, &x, &y))
+        {
+            Con_Printf("vr_mock_laser %s: no confirmation dialog is up\n", Cmd_Argv(1));
+            return;
+        }
+        mockLaser = {true, {x, y}};
+        pointingHand = mockLaserHand();
+        return;
+    }
     if(float x, y; Cmd_Argc() == 2 && !q_strcasecmp(Cmd_Argv(1), "kofi"))
     {
         if(!versionLinkSpot(x, y))
@@ -936,7 +979,7 @@ void mockLaser_f()
             Con_Printf("vr_mock_laser kofi: the version box is not shown\n");
         }
         mockLaser = {true, {x, y}};
-        pointingHand = HAND_MAIN;
+        pointingHand = mockLaserHand();
         return;
     }
     if(float x, y; Cmd_Argc() == 2 && !q_strcasecmp(Cmd_Argv(1), "update"))
@@ -946,7 +989,7 @@ void mockLaser_f()
             Con_Printf("vr_mock_laser update: the update notice is not shown\n");
         }
         mockLaser = {true, {x, y}};
-        pointingHand = HAND_MAIN;
+        pointingHand = mockLaserHand();
         return;
     }
     if(Cmd_Argc() == 2 && !q_strcasecmp(Cmd_Argv(1), "obs"))
@@ -958,14 +1001,14 @@ void mockLaser_f()
         }
         const BannerLayout b = obsBannerLayout(toolbarLayout(), o);
         mockLaser = {true, {(b.x0 + b.x1) * 0.5f, b.yc}};
-        pointingHand = HAND_MAIN;
+        pointingHand = mockLaserHand();
         return;
     }
     if(Cmd_Argc() == 2 && !q_strcasecmp(Cmd_Argv(1), "spectator"))
     {
         const BannerLayout b = bannerLayout(toolbarLayout());
         mockLaser = {true, {(b.x0 + b.x1) * 0.5f, b.yc}};
-        pointingHand = HAND_MAIN;
+        pointingHand = mockLaserHand();
         return;
     }
     if(Cmd_Argc() == 2)
@@ -976,7 +1019,7 @@ void mockLaser_f()
             {
                 const ToolbarLayout l = toolbarLayout();
                 mockLaser = {true, {(l.bx0(t) + l.bx1(t)) * 0.5f, l.yc(t)}};
-                pointingHand = HAND_MAIN;
+                pointingHand = mockLaserHand();
                 return;
             }
         }
@@ -984,11 +1027,12 @@ void mockLaser_f()
     if(Cmd_Argc() == 3)
     {
         mockLaser = {true, {Q_atof(Cmd_Argv(1)), Q_atof(Cmd_Argv(2))}};
-        pointingHand = HAND_MAIN;
+        pointingHand = mockLaserHand();
         return;
     }
     Con_Printf("vr_mock_laser <x> <y> | back | search | console | settings | advanced | levels | maps | relighting | "
-               "checklist | spectator | obs | kofi | update | off: the main hand's laser on that spot of the menu\n");
+               "checklist | spectator | obs | kofi | update | yes | no | off: the main hand's laser on that spot of the menu "
+               "(yes, no: a confirmation dialog's buttons)\n");
 }
 
 void mockMouse_f()
@@ -1016,6 +1060,14 @@ void mockMouse_f()
         }
         next = 2;
     }
+    else if(Cmd_Argc() >= 2 && (!q_strcasecmp(Cmd_Argv(1), "yes") || !q_strcasecmp(Cmd_Argv(1), "no")))
+    {
+        if(!M_Confirm_ButtonSpot(q_strcasecmp(Cmd_Argv(1), "yes") ? 1 : 0, &spot.x, &spot.y))
+        {
+            Con_Printf("vr_mock_mouse %s: no confirmation dialog is up\n", Cmd_Argv(1));
+        }
+        next = 2;
+    }
     else if(Cmd_Argc() >= 2)
     {
         const ToolbarLayout l = toolbarLayout();
@@ -1031,7 +1083,8 @@ void mockMouse_f()
     if(next == 0)
     {
         Con_Printf("vr_mock_mouse <x> <y> | back | search | console | settings | advanced | levels | maps | relighting | "
-                   "checklist | kofi | update [click]: the desktop mouse on that spot of the menu, clicked with click\n");
+                   "checklist | kofi | update | yes | no [click]: the desktop mouse on that spot of the menu (yes, no: a "
+                   "confirmation dialog's buttons), clicked with click\n");
         return;
     }
 
@@ -1053,10 +1106,22 @@ void mockMouse_f()
 
 void mockKey_f()
 {
+    if(Cmd_Argc() == 3 && !q_strcasecmp(Cmd_Argv(1), "text"))
+    {
+        // Letters typed, as a keyboard's text input gives them (Char_Event: the console's line, Search's box).
+        char text[128];
+        q_strlcpy(text, Cmd_Argv(2), sizeof(text));
+        for(const char* c = text; *c; c++)
+        {
+            Char_Event(static_cast<unsigned char>(*c));
+        }
+        Con_Printf("vr_mock_key: typed \"%s\"\n", text);
+        return;
+    }
     const int key = Cmd_Argc() == 2 || Cmd_Argc() == 3 ? Key_StringToKeynum(Cmd_Argv(1)) : -1;
     if(key < 0)
     {
-        Con_Printf("vr_mock_key <key> [down|up]: that key pressed and released, or only pressed (held) or released (a "
+        Con_Printf("vr_mock_key <key> [down|up] | text <letters>: that key pressed and released, or only pressed (held) or released (a "
                    "key's name as bind takes it: uparrow, enter, shift...)\n");
         return;
     }
@@ -1140,7 +1205,7 @@ float statusBottom(float contentRight)
     Draw_GetTransformBounds(&t, &left, &top, &right, &bottom);
     const StatusMetrics m = statusMetrics();
     const float x0 = right - ToolbarLayout::corner - m.width(q_max(statusBox.widest, statusReserve));
-    if(contentRight <= x0 - ToolbarLayout::gap)
+    if(contentRight <= x0 - 2.f)
     {
         return -1e9f;
     }
@@ -1509,6 +1574,21 @@ extern "C" int VR_MenuDrawHighlight(int cx, int cy)
     return 0;
 }
 
+// A confirmation dialog's button (M_Confirm): x0..x1 across, round its label's row y; the selected one (the laser's, the
+// keys') lit.
+extern "C" int VR_MenuDrawButton(int x0, int x1, int y, int selected)
+{
+    if(!styled())
+    {
+        return 0;
+    }
+    const Painter p;
+    const float yc = y + 4.f;
+    p.rounded(static_cast<float>(x0), static_cast<float>(x1), yc, 8.f, 3.f, selected ? colors::highlightEdge : colors::boxBorder);
+    p.rounded(x0 + 1.f, x1 - 1.f, yc, 7.f, 2.f, selected ? colors::buttonHover : colors::track);
+    return 1;
+}
+
 void qvr::menuui::drawListHighlight(float x0, float x1, int y)
 {
     const Painter p;
@@ -1755,12 +1835,12 @@ extern "C" void VR_MenuDrawOverlay()
         p.rounded(x0 + 1.f, x1 - 1.f, yc, l.bh() - 1.f, 2.f, hot ? colors::buttonHover : colors::boxFill);
 
         const glm::vec4& ink = hot ? colors::thumb : colors::fill;
-        const float ix = x0 + 4.f;
+        const float ix = x0 + (l.row ? 4.f : ToolbarLayout::pad);
         drawToolIcon(p, t, ix, yc, ink);
 
         if(l.labels)
         {
-            float x = ix + ToolbarLayout::icon + 4.f;
+            float x = ix + ToolbarLayout::icon + ToolbarLayout::labelGap;
             for(const char* c = t == ToolChecklist ? checklistLabel : toolLabels[t]; *c; c++, x += 8.f)
             {
                 Draw_CharacterEx(x, yc - 4.f, 8.f, 8.f, hot ? *c : (*c | 128));
@@ -1794,8 +1874,8 @@ extern "C" void VR_MenuDrawOverlay()
         const bool on = spectatorOn();
         p.rounded(b.x0, b.x1, b.yc, ToolbarLayout::half, 3.f, hot ? colors::highlightEdge : colors::boxBorder);
         p.rounded(b.x0 + 1.f, b.x1 - 1.f, b.yc, ToolbarLayout::half - 1.f, 2.f, hot ? colors::buttonHover : colors::boxFill);
-        p.disc(b.x0 + 7.f, b.yc, 2.5f, on ? colors::recording : colors::boxBorder); // as a camera's recording light
-        float x = b.x0 + 4.f + 6.f + 4.f;
+        p.disc(b.x0 + bannerLightX, b.yc, 2.5f, on ? colors::recording : colors::boxBorder); // as a camera's recording light
+        float x = b.x0 + bannerTextX;
         const char* state = strchr(b.text, ':');
         for(const char* c = b.text; *c; c++, x += 8.f)
         {
@@ -1822,8 +1902,8 @@ extern "C" void VR_MenuDrawOverlay()
                     light.a *= 0.4f;
                 }
             }
-            p.disc(ob.x0 + 7.f, ob.yc, 2.5f, light);
-            float ox = ob.x0 + 4.f + 6.f + 4.f;
+            p.disc(ob.x0 + bannerLightX, ob.yc, 2.5f, light);
+            float ox = ob.x0 + bannerTextX;
             const char* obsState = strchr(ob.text, ':');
             for(const char* c = ob.text; *c; c++, ox += 8.f)
             {
@@ -2084,6 +2164,11 @@ namespace
 
 extern "C" int VR_MenuRunsGame()
 {
+    // The toolgun's menu on the gun: the game goes on (a monster after you too), as the gun's tools do.
+    if(key_dest == key_menu && sv.active && svs.maxclients == 1 && !cl.intermission && qvr::toolgun::menuOnGun())
+    {
+        return 1;
+    }
     if(!ui_live_preview.value || !vrActive() || key_dest != key_menu || !sv.active || svs.maxclients != 1 ||
         cl.intermission)
     {

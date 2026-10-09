@@ -49,6 +49,8 @@
 #include "vr_weight.hpp"
 #include "vr_worldtext.hpp"
 #include "vr_wounds.hpp"
+#include "vr_srvrandom.hpp"
+#include "vr_toolgun.hpp"
 
 #include "Zancle/Base/IntTypes.hpp"
 #include "Zancle/Base/SizeT.hpp"
@@ -646,6 +648,7 @@ void particleTest_f()
 // CL_ReadFromServer, after the temp entities: vr_particle_test quake's sprite.
 extern "C" void VR_TestEffects(void)
 {
+    qvr::toolgun::tempEntities(); // the toolgun's ghost (vr_toolgun.cpp)
     TestSprite& s = testSprite;
     if(!s.model || cl.time > s.until || cl.time < s.start)
     {
@@ -672,6 +675,7 @@ void init()
     Cmd_AddCommand("vr_particle_test", particleTest_f);
     shells::registerCommands();
     explosiondebris::registerCommands();
+    srvrandom::registerCommands();
     serverrules::registerCommands();
     fireparticles::registerCommands();
     Cmd_AddCommand("vr_walltorch_tilt_test", walltorch::tiltTest);

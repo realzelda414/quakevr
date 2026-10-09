@@ -3313,6 +3313,11 @@ void(float xHand, float xWeapon, float xWeaponFlags, float xAttackFinished,
     {
         return;
     }
+    // The toolgun's trigger is the engine's (vr_toolgun.cpp: its tools act on what it points at): nothing here.
+    if(xWeapon == WID_TOOLGUN)
+    {
+        return;
+    }
 
     // A grunt's shotgun or an enforcer's rifle: from its own ammo, its clip (vr_enemyguns.qc).
     if(VR_IsEnemyGun(xWeapon))
@@ -5946,9 +5951,10 @@ void() forcegrabbable_touch =
             float adjDmg = finalDmg * PositionalDamageFactor(posDmgType);
 
             spawn_touchblood(adjDmg);
-            dprint(sprintf("throw hit: %s into %s at %.0f u/s (%.1f m/s; hurts from %.1f): %.1f damage (%.1f before where)\n",
+            dprint(sprintf("throw hit: %s into %s at %.0f u/s (%.1f m/s; hurts from %.1f): %.1f damage (%.1f before where;",
                 self.netname != "" ? self.netname : self.classname, other.classname, vlen(self.velocity),
                 vlen(self.velocity) / VRMetersToUnits(), VR_Thrown_HitSpeed(self) / VRMetersToUnits(), adjDmg, finalDmg));
+            dprint(sprintf(" hands %g: x%.2f)\n", self.vr_throw_2h ? 2 : 1, VR_Thrown_2hMult(self)));
             entity thrower = VR_Throw_Thrower(self); // (its owner; past vr_throw_self_grace the player who threw it)
             if(other == thrower)
             {
@@ -6791,6 +6797,7 @@ void(entity ent, float xHand, float xWeapon, float xWeaponFlags, float xVelScale
 
         if(throwHands == 2 && xVelScale == 1)
         {
+            thrown.vr_throw_2h = 1; // (its hits hurt vr_throw_2h_damage times more: VR_Thrown_Damage)
             VR_Throw_TwoHanded(ent, thrown); // (neither hand strikes in its follow-through)
         }
 

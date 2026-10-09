@@ -14,6 +14,7 @@
 #include "vr_walltorch.hpp"
 
 #include "Zancle/Algorithm/LowerBound.hpp"
+#include "Zancle/Base/Macros.hpp"
 #include "Zancle/Algorithm/StableSort.hpp"
 #include "Zancle/Container/Vector.hpp"
 #include "Zancle/Math/Abs.hpp"
@@ -198,30 +199,8 @@ bool addKey(za::StringView key)
         {
             j++;
         }
-        za::StringView key = list.substrByPosLen(i, j - i);
-        // tips seen on a map under its old name: the island hub's, vrstart2 (vrstart since 2026-10-07; the old hub,
-        // vrstart_old, has other tip names), and the teleporter test map's, vrslipgates (vrteleporters since
-        // 2026-10-08, its welcome tip vrteleporters_welcome): seen under the new names
-        struct Renamed
-        {
-            za::StringView old, now;
-        };
-        constexpr Renamed renamedMaps[] = {{"vrstart2", "vrstart"}, {"vrslipgates", "vrteleporters"}};
-        za::String renamed;
-        for(const Renamed& r : renamedMaps)
-        {
-            if(key.size() > r.old.size() && key.substrByPosLen(0, r.old.size()) == r.old &&
-               (key[r.old.size()] == ':' || key[r.old.size()] == '#'))
-            {
-                renamed = za::String{r.now};
-                const za::StringView rest = key.substrByPosLen(r.old.size(), key.size() - r.old.size());
-                const size_t own = rest.find(r.old); // (vrslipgates:vrslipgates_welcome: the tip's name too)
-                renamed += own == za::StringView::nPos ? za::String{rest}
-                    : za::String{rest.substrByPosLen(0, own)} + za::String{r.now} +
-                          za::String{rest.substrByPosLen(own + r.old.size(), rest.size() - own - r.old.size())};
-            }
-        }
-        added += addKey(renamed.empty() ? key : za::StringView{renamed.cStr()}) ? 1 : 0;
+        const za::StringView key = list.substrByPosLen(i, j - i);
+        added += addKey(key) ? 1 : 0;
         i = j;
     }
     return added;
@@ -697,6 +676,39 @@ void writeAll(sizebuf_t* msg, const za::Vector<MapTip>& list, unsigned int proto
 void serverReset()
 {
     serverTips.clear();
+}
+
+void serverMapStarted(bool fromSave)
+{
+    // The worldspawn's "_vr_tips_reset_on_start" 1 (vrtutorial): a play of the map from its start shows every tip of
+    // it again (each once in that play); a saved game of it keeps the tips its play has shown. Read here, as QC never
+    // sees a key that starts with '_'.
+    if(fromSave || !sv.name[0] || debris::worldspawnValue("_vr_tips_reset_on_start", 0.f) <= 0.f)
+    {
+        return;
+    }
+    loadSeen();
+    const za::String prefix = za::String{sv.name}; // (the key's map is cl.mapname, the same name: seenKeyOf)
+    const za::SizeT before = seenList.keys.size();
+    za::Vector<za::String> kept;
+    for(const za::String& key : seenList.keys)
+    {
+        const za::StringView k{key.cStr()};
+        const bool ofMap = k.size() > prefix.size() && k.substrByPosLen(0, prefix.size()) == za::StringView{prefix.cStr()}
+                           && (k[prefix.size()] == ':' || k[prefix.size()] == '#');
+        if(!ofMap)
+        {
+            kept.emplaceBack(key);
+        }
+    }
+    if(kept.size() == before)
+    {
+        return;
+    }
+    seenList.keys = ZA_MOVE(kept);
+    saveSeen();
+    Con_DPrintf("VR: %s's tips will show again (%d forgotten: _vr_tips_reset_on_start)\n", sv.name,
+        static_cast<int>(before - seenList.keys.size()));
 }
 
 int serverMake()

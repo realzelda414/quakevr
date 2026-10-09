@@ -140,6 +140,14 @@ struct ThrowTrace
     float maxTilt{0.f};
     float tiltHalf{-1.f};
     float maxFeet{0.f};
+    glm::vec3 pelvis0{0.f};
+    const char* kind{"throw"}; // (or "shove": a shove's knockdown, shoveTopple)
+    // Its torso's whole turn (degrees, every frame's added: two turns over are 720, where its tilt is at most 180), and
+    // when its head first dropped below its pelvis's height at the start and when its feet first moved 8 units along.
+    glm::vec3 lastTorso{0.f};
+    float turned{0.f};
+    float headDown{-1.f};
+    float feetGo{-1.f};
 };
 ThrowTrace throwTrace;
 
@@ -465,14 +473,37 @@ bool tryTake(edict_t* player, Holder& hd, int h, const VrMove& move)
            r >= -1.f ? "not hurt enough" : "can't be knocked down now (no ragdoll or get-up, no room, down already)";
 }
 
+// The fall of `m`'s ragdoll, thrown or shoved down towards level `dir`, traced from now (ThrowTrace, `kind` "throw" or
+// "shove"). False: no ragdoll.
+bool startTrace(edict_t* m, const glm::vec3& dir, const char* kind)
+{
+    glm::vec3 pelvis, head, feet;
+    if(!box3d::ragdollStance(NUM_FOR_EDICT(m), pelvis, head, feet))
+    {
+        return false;
+    }
+    throwTrace = ThrowTrace{NUM_FOR_EDICT(m), qcvm->time, 0, dir, feet};
+    throwTrace.pelvis0 = pelvis;
+    throwTrace.lastTorso = head - pelvis;
+    throwTrace.kind = kind;
+    return true;
+}
+
 // `player`'s two-hand throw of `m` towards level `dir` (the QC's VR_FoeGrab_Throw: its result), the hands turning it about
 // the vertical at `twist` rad/s. Knocked down (1), its ragdoll is turned over about its feet towards `dir`, a sweep
-// (box3d::ragdollTopple: vr_foegrab_throw_topple, _topple_hold), spun with the hands' twist (vr_foegrab_throw_spin);
+// (box3d::ragdollTopple: vr_foegrab_throw_topple), its feet swept back (_feet_speed), spun with the hands' twist (vr_foegrab_throw_spin);
 // `trace`: its fall printed (ThrowTrace).
 float throwDown(edict_t* player, edict_t* m, const glm::vec3& dir, float twist, bool trace)
 {
     const float yaw = glm::degrees(za::atan2(dir.y, dir.x));
     const float result = callQc("VR_FoeGrab_Throw", player, m, yaw, throwTier(m), 0.f);
+    // His grunt as he throws it (his note vrfiringrange_2026-10-09_10-56; the training dummy's "would be thrown" too).
+    const bool grunted = result >= 1.f && climb::grunt(player, vr_foegrab_throw_grunt_sound.value, vr_foegrab_throw_grunt.value);
+    if(grunted && debug())
+    {
+        Con_Printf("foegrab: throw grunt %s %.2f\n", climb::gruntSample(vr_foegrab_throw_grunt_sound.value),
+            za::clamp(vr_foegrab_throw_grunt.value, 0.f, 1.f));
+    }
     if(result != 1.f)
     {
         return result;
@@ -481,11 +512,9 @@ float throwDown(edict_t* player, edict_t* m, const glm::vec3& dir, float twist, 
     const float spin = za::clamp(twist * za::max(vr_foegrab_throw_spin.value, 0.f), -maxSpin, maxSpin);
     const float topple = glm::radians(za::clamp(vr_foegrab_throw_topple.value, 0.f, 2000.f));
     const bool toppled = topple > 0.f &&
-                         box3d::ragdollTopple(m, dir, topple, spin, za::clamp(vr_foegrab_throw_topple_hold.value, 0.f, 2.f));
-    glm::vec3 pelvis, head, feet;
-    if(trace && box3d::ragdollStance(NUM_FOR_EDICT(m), pelvis, head, feet))
+                         box3d::ragdollTopple(m, dir, topple, spin, za::clamp(vr_foegrab_throw_feet_speed.value, 0.f, 1000.f));
+    if(trace && startTrace(m, dir, "throw"))
     {
-        throwTrace = ThrowTrace{NUM_FOR_EDICT(m), qcvm->time, 0, dir, feet};
         Con_Printf("throw trace: %s (%d) %s towards yaw %.0f, spin %.0f deg/s (hands' twist %.0f deg/s)\n",
             PR_GetString(m->v.classname), throwTrace.ent, toppled ? "toppled over its feet" : "pushed whole (no topple)", yaw,
             toppled ? glm::degrees(spin) : 0.f, glm::degrees(twist));
@@ -514,6 +543,8 @@ void throwTraceStep()
     const float feetMoved = glm::length(glm::vec2{feet - t.feet0});
     t.maxTilt = za::max(t.maxTilt, tilt);
     t.maxFeet = za::max(t.maxFeet, feetMoved);
+    t.headDown = t.headDown < 0.f && head.z < t.pelvis0.z ? static_cast<float>(age) : t.headDown;
+    t.feetGo = t.feetGo < 0.f && glm::dot(feet - t.feet0, t.dir) > 8.f ? static_cast<float>(age) : t.feetGo;
     if(t.tiltHalf < 0.f && age >= 0.5)
     {
         t.tiltHalf = tilt;
@@ -523,16 +554,27 @@ void throwTraceStep()
         return;
     }
     t.printed++;
+    // (Its turn summed a tenth of a second at a time: a frame's jitter isn't counted; 1800 deg/s is still caught.)
+    if(glm::length(torso) > 1e-3f && glm::length(t.lastTorso) > 1e-3f)
+    {
+        t.turned += glm::degrees(
+            za::acos(za::clamp(glm::dot(glm::normalize(t.lastTorso), glm::normalize(torso)), -1.f, 1.f)));
+    }
+    t.lastTorso = torso;
     const glm::vec3 side = glm::cross(glm::vec3{0.f, 0.f, 1.f}, t.dir);
-    Con_Printf("throw trace: %.2f s tilt %.0f deg, feet moved %.1f, head %.1f along the throw from the feet (%.1f aside), "
-               "%.1f up; pelvis %.1f up\n",
-        age, tilt, feetMoved, glm::dot(head - feet, t.dir), glm::dot(head - feet, side), head.z - feet.z, pelvis.z - feet.z);
+    Con_Printf("%s trace: %.2f s tilt %.0f deg (turned %.0f), feet moved %.1f (%.1f along the %s, %.1f up), pelvis "
+               "%.1f along, head %.1f along the %s from the feet (%.1f aside), %.1f up; pelvis %.1f up\n",
+        t.kind, age, tilt, t.turned, feetMoved, glm::dot(feet - t.feet0, t.dir), t.kind, feet.z - t.feet0.z,
+        glm::dot(pelvis - t.pelvis0, t.dir), glm::dot(head - feet, t.dir), t.kind, glm::dot(head - feet, side),
+        head.z - feet.z, pelvis.z - feet.z);
     if(t.printed >= 15)
     {
-        Con_Printf("throw trace done: tilt at 0.5 s %.0f deg, most %.0f; feet moved %.1f at most; lies %s (head %.1f along "
-                   "the throw)\n",
-            t.tiltHalf, t.maxTilt, t.maxFeet, glm::dot(head - feet, t.dir) > 0.f ? "towards the throw" : "against it",
-            glm::dot(head - feet, t.dir));
+        Con_Printf("%s trace done: tilt at 0.5 s %.0f deg, most %.0f, turned %.0f in all; feet moved %.1f at most, %.1f at "
+                   "the end (%.1f along the %s), its pelvis %.1f along it; its head below its pelvis's start at %.2f s, "
+                   "its feet 8 units on at %.2f s; lies %s (head %.1f along the %s)\n",
+            t.kind, t.tiltHalf, t.maxTilt, t.turned, t.maxFeet, feetMoved, glm::dot(feet - t.feet0, t.dir), t.kind,
+            glm::dot(pelvis - t.pelvis0, t.dir), t.headDown, t.feetGo,
+            glm::dot(head - feet, t.dir) > 0.f ? "towards it" : "against it", glm::dot(head - feet, t.dir), t.kind);
         t.ent = 0;
     }
 }
@@ -895,6 +937,41 @@ void status_f()
 
 } // namespace
 
+bool qvr::foegrab::shoveTopple(edict_t* m, const glm::vec3& dir, float strength, bool ledge, float reach)
+{
+    glm::vec3 level{dir.x, dir.y, 0.f};
+    if(!m || glm::length(level) < 1e-3f)
+    {
+        return false;
+    }
+    level = glm::normalize(level);
+    const float k = za::clamp(strength, 0.f, 3.f);
+    box3d::RagdollShove p;
+    p.ledge = ledge;
+    p.maxSpin = glm::radians(za::clamp(vr_knockdown_shove_max_spin.value, 10.f, 2000.f));
+    p.angle = glm::radians(za::clamp(vr_knockdown_shove_topple_angle.value, 0.f, 180.f));
+    if(ledge)
+    {
+        p.topple = glm::radians(za::clamp(vr_knockdown_shove_ledge_topple.value, 0.f, 2000.f)) * k;
+        p.keep = za::clamp(vr_knockdown_shove_ledge_push.value, 0.f, 3.f);
+        p.reach = za::max(reach, 0.f);
+    }
+    else
+    {
+        p.travel = za::max(reach, 0.f) * za::clamp(vr_knockdown_shove_travel.value, 0.f, 3.f);
+        p.time = za::clamp(vr_knockdown_shove_topple_time.value, 0.05f, 3.f);
+        p.lag = za::clamp(vr_knockdown_shove_feet_lag.value, 0.f, 1.f);
+    }
+    const bool driven = box3d::ragdollShove(m, level, p);
+    if((vr_knockdown_debug.value != 0.f || debug()) && startTrace(m, level, "shove"))
+    {
+        Con_Printf("shove trace: %s (%d) %s%s towards yaw %.0f, strength %.2f, a standing one's shove %.0f units\n",
+            PR_GetString(m->v.classname), throwTrace.ent, driven ? "driven" : "not driven (no ragdoll)",
+            ledge ? " over a ledge" : "", glm::degrees(za::atan2(level.y, level.x)), k, reach);
+    }
+    return driven;
+}
+
 extern "C" void VR_FoeGrabPreThink(edict_t* ent)
 {
     VR_ProfileBegin("foegrab");
@@ -908,6 +985,8 @@ void qvr::foegrab::init()
     Cmd_AddCommand("vr_foegrab_walk_test", walkTest_f);
     Cmd_AddCommand("vr_foegrab_hurt", hurt_f);
     Cmd_AddCommand("vr_foegrab_throw_test", throwTest_f);
+    // vr_foegrab_throw_grunt_test: the throw's grunt as set, heard here (the menu's Hear Throw Grunt).
+    Cmd_AddCommand("vr_foegrab_throw_grunt_test", [] { S_LocalSound(climb::gruntSample(vr_foegrab_throw_grunt_sound.value)); });
 }
 
 void qvr::foegrab::reset()

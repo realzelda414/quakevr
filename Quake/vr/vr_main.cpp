@@ -25,6 +25,7 @@
 #include "vr_backend.hpp"
 #include "vr_throw.hpp"
 #include "vr_client.hpp"
+#include "vr_body.hpp"
 #include "vr_hands.hpp"
 #include "vr_held.hpp"
 #include "vr_highlights.hpp"
@@ -80,6 +81,7 @@
 #include "vr_props.hpp"
 #include "vr_retro.hpp"
 #include "vr_fatigue.hpp"
+#include "vr_xr_runtime.hpp"
 #include "vr_weight.hpp"
 #include "vr_weapons.hpp"
 #include "vr_painknock.hpp"
@@ -92,6 +94,7 @@
 #include "vr_water.hpp"
 #include "vr_wounds.hpp"
 #include "vr_cleanskins.hpp"
+#include "vr_toolgun.hpp"
 
 #include "Zancle/Base/Abort.hpp"
 #include "Zancle/Base/Assert.hpp"
@@ -229,8 +232,8 @@ void startGameCommands()
         {
             // The game started for the first time (the calibration room's way out leads here too: QC changelevel_touch):
             // the tutorial, on Easy (the map sets vr_tutorial_started as it loads: then the hub is where VR starts).
-            Con_Printf("VR: the first start: the tutorial (vrtutorial2)\n");
-            Cbuf_InsertText("maxplayers 1; deathmatch 0; coop 0; skill 0; map vrtutorial2\n");
+            Con_Printf("VR: the first start: the tutorial (vrtutorial)\n");
+            Cbuf_InsertText("maxplayers 1; deathmatch 0; coop 0; skill 0; map vrtutorial\n");
             return;
         }
         Cbuf_InsertText(va("maxplayers 1; deathmatch 0; coop 0; map %s\n", VR_HubMap()));
@@ -1357,6 +1360,18 @@ static void testDialog_f()
     Cmd_ExecuteString("vr_mock_look 0 0", src_command);
 }
 
+// vr_test_confirm: a confirmation dialog with two buttons (M_Confirm, menu.c) over the menu (or the game): the answer
+// printed (the Debug pages' Dialogs: Confirmation Buttons).
+static void testConfirmYes()
+{
+    Con_Printf("test confirm: answered OK\n");
+}
+
+static void testConfirm_f()
+{
+    M_Confirm("A test question: point the laser at\na button and pull the trigger.", "OK", "Cancel", 0.f, testConfirmYes);
+}
+
 extern "C" void VR_NewMap()
 {
     ++qvr::worldGen;
@@ -1422,6 +1437,7 @@ extern "C" void VR_Init()
     weight::registerCommands();
     fatigue::registerCommands();
     painknock::registerCommands();
+    xrruntime::registerCommands(); // (before the backend first starts: XR_RUNTIME_JSON as the game was started with it)
     Cvar_SetCallback(&vr_enabled, onBackendSettingChanged);
     Cvar_SetCallback(&vr_backend, onBackendSettingChanged);
     Cvar_SetCallback(&vr_xr_runtime, onBackendSettingChanged);
@@ -1432,6 +1448,7 @@ extern "C" void VR_Init()
     Cmd_AddCommand("vr_screenshot_frames", screenshotFrames_f);
     menu::init();
     Cmd_AddCommand("menu_vr", menu::command_f);
+    toolgun::registerCommands();
     Cmd_AddCommand("vr_menu_search", menu::search_f);
     Cmd_AddCommand("vr_menu_slider_step", menu::sliderStep_f);
     Cmd_AddCommand("maps_page_stats", menu::mapsPageStats_f); // (the map browser page: vr_menu_maps.inc)
@@ -1506,6 +1523,7 @@ extern "C" void VR_Init()
     Cmd_AddCommand("vr_test_remove", progs::testRemove_f);
     Cmd_AddCommand("vr_model_check", progs::modelCheck_f);
     Cmd_AddCommand("vr_test_dialog", testDialog_f);
+    Cmd_AddCommand("vr_test_confirm", testConfirm_f);
     Cmd_AddCommand("vr_hotspots_legacy", view::hotspotsLegacy_f);
     Cmd_AddCommand("vr_hotspots_check", view::hotspotsCheck_f);
     Cmd_AddCommand("vr_weapon_hotspot_here", view::hotspotHere_f);
@@ -1513,6 +1531,7 @@ extern "C" void VR_Init()
     anchor::registerCommands();
     portals::registerCommands(); // vr_portals_info
     Cmd_AddCommand("vr_torso_report", torso::report_f);
+    Cmd_AddCommand("vr_body_crouch_report", body::crouchReport_f);
     Cmd_AddCommand("vr_decal_count", decals::count_f);
     Cmd_AddCommand("vr_decal_stress", decals::stress_f);
     Cmd_AddCommand("vr_limits", limits::command_f);
@@ -1634,12 +1653,13 @@ extern "C" void VR_BeginFrame()
     profile::overlay();  // the profiler's panel (vr_profile_overlay)
     throwing::filterGrips(state->tracking); // the analog grip's release, before it becomes a key
     input::update(state->tracking.input); // releases held keys when VR is off
-    bullettime::frame(); // the gadget's screen tap for bullet time (the hands as last placed)
-    gearlights::frame(); // the gadget's side button: the gear lights (likewise)
+    bullettime::frame(); // (vr_debug_gadget_button 3: the tap's frame-start check; the tap itself: the view's)
+    gearlights::frame(); // the gear lights eased (the side button: the view's, as the gadget is drawn)
     flashlight::flicks(); // the held torch turned over by a flick of the wrist (likewise)
 
     // Update the hands now, before the move is built (it carries the aim in the view angles).
     input::roomscaleJump(hands::current());
+    toolgun::frame(hands::current()); // the toolgun's tools, with the hands of this frame
 }
 
 extern "C" int VR_IsActive()
@@ -1713,6 +1733,30 @@ static void applyUnpacedSwap()
     }
 }
 
+// vr_test_modal_answer 1 or 0: the next confirmation dialog (SCR_ModalMessage's, M_Confirm's) answered yes or no once it
+// has shown for half a second (tests); asked each of its frames.
+extern "C" int VR_TestModalAnswer()
+{
+    if(vr_test_modal_answer.value < 0.f)
+    {
+        modalAnswerSince = 0.0;
+        return -1;
+    }
+    if(modalAnswerSince <= 0.0)
+    {
+        modalAnswerSince = Sys_DoubleTime();
+        return -1;
+    }
+    if(Sys_DoubleTime() - modalAnswerSince < 0.5)
+    {
+        return -1;
+    }
+    const int answer = vr_test_modal_answer.value != 0.f ? 1 : 0;
+    Cvar_SetValueQuick(&vr_test_modal_answer, -1.f);
+    modalAnswerSince = 0.0;
+    return answer;
+}
+
 extern "C" int VR_ModalMessageFrame()
 {
     if(!VR_IsActive())
@@ -1724,21 +1768,18 @@ extern "C" int VR_ModalMessageFrame()
     // a frame for the profiler too: else its GPU timer queries piled up (64 more at a time) for as
     // long as the dialog was up.
     VR_ProfileFrame();
+    // And a frame of its own (host_framecount): what is made once a frame and kept for it (the particles' records, ropes'
+    // and bent meshes' rings, uploaded into the frame's own GL_Upload space; the shadow maps, the AO's occluders) is made
+    // again for it. Counted as the host frame's, every one of the dialog's frames drew the records uploaded before it
+    // opened, from a buffer two frames later refilled with other data: garbage, in odd colours, flickering (NOTES.md
+    // vrstart_2026-10-09_18-21-02; vr_debug_glstate prints such draws). SCR_ModalMessage counts one more after the last.
+    ++host_framecount;
     // vr_test_modal_answer: the dialog answered by itself once it has shown for half a second (tests).
-    if(vr_test_modal_answer.value >= 0.f)
+    if(const int answer = VR_TestModalAnswer(); answer >= 0)
     {
-        if(modalAnswerSince <= 0.0)
-        {
-            modalAnswerSince = Sys_DoubleTime();
-        }
-        else if(Sys_DoubleTime() - modalAnswerSince >= 0.5)
-        {
-            const int key = vr_test_modal_answer.value != 0.f ? K_ABUTTON : K_BBUTTON;
-            Cvar_SetValueQuick(&vr_test_modal_answer, -1.f);
-            modalAnswerSince = 0.0;
-            Key_Event(key, true);
-            Key_Event(key, false);
-        }
+        const int key = answer ? K_ABUTTON : K_BBUTTON;
+        Key_Event(key, true);
+        Key_Event(key, false);
     }
     int shot = -1; // vr_test_dialog: this frame's eye images (0 the first, 1 the last)
     if(dialogTest.on)

@@ -448,9 +448,10 @@ void mockLook_f()
 // "vr_mock_hand_to <main|off> spot <index> [<height cm>]": at its hotspot `index` (a grip's point, a blade's zone's middle:
 // view::groundHotspotPoint), `height` cm over it (vr_weapon_grab_hotspots tests). "vr_mock_hand_to <main|off> button":
 // its fingertip on the wrist gadget's side button (the gear lights: vr_gearlights.cpp), or `units` off its face ("button
-// <units>"). "vr_mock_hand_to <main|off> screen <cm> [<side cm>]": its middle (palm) `cm` over the gadget screen's middle
-// along its normal, `side cm` along its right ("screenbutt": the butt of the gun it holds instead): steps down the normal
-// make a tap (vr_bullettime_tap), steps along the right a swing across it. "vr_mock_hand_to <main|off> carried": at
+// <units>"). "vr_mock_hand_to <main|off> screen <cm> [<side cm>] [<part>]": its middle (palm) `cm` over the gadget
+// screen's middle along its normal, `side cm` along its right ("screenbutt", or the part "butt": the butt of the gun it
+// holds instead; a part of the drawn hand, its point furthest towards the screen: palmskin, back, knuckles, fingers, tips,
+// thumb): steps down the normal make a tap (vr_bullettime_tap), steps along the right a swing across it. "vr_mock_hand_to <main|off> carried": at
 // the handle of the weapon the other hand carries (taking it back). "vr_mock_hand_to <main|off> held <fraction> [<cm>]": in the
 // weapon the other hand holds or carries, `fraction` of the way from its handle to its tip, `cm` over it
 // "vr_mock_hand_to <main|off> heldspot <index>": at hotspot `index` of the weapon the other hand holds, as drawn
@@ -629,7 +630,7 @@ void mockHandTo_f()
     const bool inHeld = Cmd_Argc() >= 4 && !q_strcasecmp(Cmd_Argv(2), "held");
     const bool button = (Cmd_Argc() == 3 || Cmd_Argc() == 4) && !q_strcasecmp(Cmd_Argv(2), "button");
     const bool screenButt = (Cmd_Argc() == 4 || Cmd_Argc() == 5) && !q_strcasecmp(Cmd_Argv(2), "screenbutt");
-    const bool wrist = screenButt || ((Cmd_Argc() == 4 || Cmd_Argc() == 5) && !q_strcasecmp(Cmd_Argv(2), "screen"));
+    const bool wrist = screenButt || (Cmd_Argc() >= 4 && Cmd_Argc() <= 6 && !q_strcasecmp(Cmd_Argv(2), "screen"));
     const bool heldSpot = Cmd_Argc() == 4 && !q_strcasecmp(Cmd_Argv(2), "heldspot");
     const bool ragdollPart = Cmd_Argc() >= 4 && !q_strcasecmp(Cmd_Argv(2), "ragdoll");
     const bool by = Cmd_Argc() == 6 && !q_strcasecmp(Cmd_Argv(2), "by");
@@ -836,7 +837,7 @@ void mockHandTo_f()
                    "       vr_mock_hand_to <main|off> carried\n"
                    "       vr_mock_hand_to <main|off> held <fraction> [<cm>]\n"
                    "       vr_mock_hand_to <main|off> button [<units off its face>]\n"
-                   "       vr_mock_hand_to <main|off> screen|screenbutt <cm> [<side cm>]\n"
+                   "       vr_mock_hand_to <main|off> screen|screenbutt <cm> [<side cm>] [<part>]\n"
                    "       vr_mock_hand_to <main|off> heldspot <hotspot index>\n"
                    "       vr_mock_hand_to <main|off> mag <along -1..1> [<units off its side>]\n"
                    "       vr_mock_hand_to <main|off> ragdoll <part|near|head> [<units over it>]\n"
@@ -867,10 +868,11 @@ void mockHandTo_f()
         Con_Printf("vr_mock_hand_to: no gadget shown\n");
         return;
     }
-    if(wrist && !bullettime::tapHandTarget(hand, Q_atof(Cmd_Argv(3)), Cmd_Argc() == 5 ? Q_atof(Cmd_Argv(4)) : 0.f,
-                    screenButt, target))
+    const char* const part = screenButt ? "butt" : Cmd_Argc() == 6 ? Cmd_Argv(5) : nullptr;
+    if(wrist && !bullettime::tapHandTarget(hand, Q_atof(Cmd_Argv(3)), Cmd_Argc() >= 5 ? Q_atof(Cmd_Argv(4)) : 0.f, part,
+                    target))
     {
-        Con_Printf("vr_mock_hand_to: no gadget shown%s\n", screenButt ? ", or no gun in that hand" : "");
+        Con_Printf("vr_mock_hand_to: no gadget shown%s\n", part ? ", or no such part (no gun in that hand)" : "");
         return;
     }
     if(!carried && !weapon && !spot && !inHeld && !button && !wrist && !heldSpot)
@@ -908,7 +910,7 @@ void mockHandTo_f()
 
 // vr_mock_hand_aim <main|off> <x> <y> <z> | monster | off: keeps the hand turned (every frame, until "off") so that
 // what it holds aims (hands::State::aimRot, from its muzzle) at that world point, or at the middle of the live monster
-// nearest the player: scripted shooting (vrtutorial2's playthrough, Misc/quakevr/maps/vrtutorial2_playtest.py).
+// nearest the player: scripted shooting (vrtutorial's playthrough, Misc/quakevr/maps/vrtutorial_playtest.py).
 struct MockAim
 {
     bool on{false};
@@ -1004,7 +1006,7 @@ void aimFrame()
     }
 }
 
-// vr_mock_walk_to <x> <y> [<radius>] | off: an autopilot for scripted walks (vrtutorial2_playtest.py): every frame the
+// vr_mock_walk_to <x> <y> [<radius>] | off: an autopilot for scripted walks (vrtutorial_playtest.py): every frame the
 // head turns to face the point (vr_movement_mode 1: the stick moves you where the head looks) and the moving stick is
 // pushed forward, until the player's origin is within `radius` (16) of it ("vr_mock_walk_to: arrived at x y z") or has
 // come no nearer for 2 seconds ("vr_mock_walk_to: stuck at x y z"); then the stick lets go. The head keeps its pitch.

@@ -56,6 +56,9 @@
 .entity mainhand_fgpulled;
 .float offhand_fgrearm;   // 1 after a pull, until the trigger is let go
 .float mainhand_fgrearm;
+.float offhand_fgheldfoe; // the last time the hand held an enemy (vr_foegrab.qc): no force grab for a moment after
+.float mainhand_fgheldfoe;
+float cVR_Forcegrab_AfterFoe = 0.5; // s: that moment (a judo throw's follow-through)
 
 // On the object pulled.
 .entity fg_player;
@@ -240,6 +243,11 @@
 // ----------------------------------------------------------------------------
 
 .float vr_parry_stagger_until; // successful parry: no remaining melee hits or AI until this time (combat.qc)
+.float vr_parry_stagger_start; // ... when it began (its sway's phase: VR_Parry_Pose)
+.float vr_parry_frame0;  // ... the first frame of the pain animation it steps through (VR_Parry_Pose)
+.float vr_parry_frames;  // ... how many frames of it (0: none, its pose held)
+.float vr_parry_step;    // ... its steps so far
+.float vr_parry_sway;    // ... its sway, degrees (0: none, its angles as they were)
 .float vr_parry_last;    // (a monster) when a blow of its was last parried: within vr_parry_cooldown, no new parry (VR_Parry)
 .float vr_melee_begun;   // (a monster) when its melee attack running began (its th_melee called; 0: none, ai_run clears it):
                          // a blow of the attack its last parried blow was in is no new parry (VR_Parry, vr_parry_cooldown_attack)

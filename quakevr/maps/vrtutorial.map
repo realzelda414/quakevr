@@ -1,6 +1,6 @@
 // Game: Quake VR
 // Format: Valve
-// Written by Misc/quakevr/maps/vrtutorial2_gen.py: edit that, not this.
+// Written by Misc/quakevr/maps/vrtutorial_gen.py: edit that, not this.
 // entity 0
 {
 "classname" "worldspawn"
@@ -21,6 +21,7 @@
 "_vr_debris" "0"
 "_vr_crates" "0"
 "_qvr_prelit" "1"
+"_vr_tips_reset_on_start" "1"
 // brush 0
 {
 ( -16 528 -16 ) ( -16 -16 0 ) ( -16 -16 -16 ) black [ 0 1 0 0 ] [ 0 0 -1 0 ] 0 1 1
@@ -24044,7 +24045,7 @@
 {
 "classname" "func_worldtext_banner"
 "origin" "2380 956 120"
-"worldtext" "LESSON 3: JUMPING AND CLIMBING\n\nJUMP: press A (the right controller).\nJump the low barriers."
+"worldtext" "LESSON 3: JUMPING AND CLIMBING\n\nJUMP: press A (the right controller).\nOr jump for real: you jump in the game.\nJump the low barriers."
 "worldtext_halign" "1"
 "worldtext_scale" "0.32"
 "angle" "270"
@@ -24072,7 +24073,7 @@
 "classname" "func_vr_tip"
 "origin" "2500 704 56"
 "tipname" "t2_jump"
-"message" "Press A to jump.\nJump over the yellow barriers."
+"message" "Press A, or jump for real, to jump.\nJump over the yellow barriers."
 "distance" "220"
 }
 // entity 98
@@ -25452,7 +25453,7 @@
 {
 "classname" "func_worldtext_banner"
 "origin" "4640 164 -24"
-"worldtext" "LESSON 9: DARKNESS\nYour flashlight hangs at your hip:\ngrip it; pull the trigger to switch\nit on or off."
+"worldtext" "LESSON 9: DARKNESS\nYour flashlight hangs on your torso:\ngrip it; pull the trigger to switch\nit on or off."
 "worldtext_halign" "1"
 "worldtext_scale" "0.28"
 "angle" "90"
@@ -25462,7 +25463,7 @@
 "classname" "func_vr_tip"
 "origin" "4640 200 -84"
 "tipname" "t2_torch"
-"message" "Take your flashlight: grip at your hip\n(the side set by TORCH SIDE), trigger\nto switch it on."
+"message" "Take your flashlight: grip it on your torso\n(the side set by FLASHLIGHT SIDE), trigger\nto switch it on."
 "distance" "200"
 "targetname" "r9v_in"
 "spawnflags" "8"
@@ -25475,7 +25476,7 @@
 "speed" "50"
 "lip" "4"
 "sounds" "1"
-"worldtext" "TORCH SIDE"
+"worldtext" "FLASHLIGHT\nSIDE"
 "worldtext_halign" "1"
 "worldtext_scale" "0.2"
 "buttonEffect" "3"
@@ -25745,7 +25746,7 @@
 {
 "classname" "func_worldtext_banner"
 "origin" "3264 -348 -24"
-"worldtext" "GRENADES\nWith rockets in your pack, reach behind you:\nthe pouch at the small of your back gives a grenade.\nTrigger pulls the pin; throw it. Or drop it\nwhere they will come: a trap. No launcher needed."
+"worldtext" "GRENADES\nWith rockets in your pack, reach behind you:\nthe pouch on your lower back gives a grenade.\nTrigger pulls the pin; throw it.\nOr drop one, pin in, where they will come:\na trap you can shoot to set off. No launcher needed."
 "worldtext_halign" "1"
 "worldtext_scale" "0.26"
 "angle" "90"
@@ -25755,7 +25756,7 @@
 "classname" "func_vr_tip"
 "origin" "3264 -296 -80"
 "tipname" "t2_grenade"
-"message" "Take the rockets (hold the box to a holster).\nThen reach to the small of your back\nfor a grenade."
+"message" "Take the rockets (hold the box to a holster).\nThen reach for the pouch on your lower\nback: a grenade."
 "distance" "180"
 }
 // entity 258

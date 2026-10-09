@@ -6,6 +6,8 @@
 
 #include "vr_engine.hpp"
 
+#include "Zancle/Vocabulary/FunctionRef.hpp"
+
 namespace qvr::box3d
 {
 
@@ -67,8 +69,42 @@ bool damp(edict_t* ent, const glm::vec3& relativeTo, float keep, float keepSpin,
 void beforeLoad();
 void finishLoads();
 
-// Forgets the world and everything made for it (a new server: its bodies are rebuilt from the entities).
+// Forgets the world and everything made for it (a new server: its bodies are rebuilt from the entities), the toolgun's
+// pins and joints too.
 void reset();
+
+// A map entity made by its spawn function (`classname`) at `origin`, turned `angles` (set before it: a monster's
+// ideal_yaw is taken from them), its "model" `model` and the float field `key` set to `value` first when given (a rock's
+// model, func_weapon_grabbable's weapon). Null if there is no such spawn function, or it removed itself. vr_physics_spawn's
+// and the toolgun's.
+edict_t* spawnClass(const char* classname, const glm::vec3& origin, const glm::vec3& angles, const char* model = nullptr,
+    const char* key = nullptr, float value = 0.f);
+
+// The toolgun's (vr_toolgun.cpp). A prop pinned is a kinematic body where its entity is (as a pickup hanging), until
+// unpinned: frozen, or moved by the physgun's beam (its entity moved, its body follows and pushes the others). Edict
+// numbers; forgotten when the entity goes (toolForget) or the server is new (reset).
+void setPinned(int num, bool pinned);
+[[nodiscard]] bool isPinned(int num);
+int unpinAll(); // how many there were
+// Joints between two props' bodies (loose or pinned), kept across their bodies being made again: a weld, a ball and a
+// hinge (turning about `axis`) and a slider (along `axis`) at `atB`; a rope (no longer than now) and a spring (that long
+// at rest) from `atA` on `a` to `atB` on `b`. World units. False if either has no body (not a prop) or a == b.
+enum class ToolJoint : int
+{
+    Weld,
+    Ball,
+    Hinge,
+    Slider,
+    Rope,
+    Spring,
+    Count
+};
+bool addToolJoint(int a, int b, ToolJoint kind, const glm::vec3& atA, const glm::vec3& atB, const glm::vec3& axis);
+int removeToolJoints(int num); // `num`'s (0: all); how many
+[[nodiscard]] int toolJointCount(int num); // made now (0: all)
+// Each joint made now: where it holds each body (world units), and its kind (the toolgun draws them: a rope as a rope).
+void forEachToolJoint(za::FunctionRef<void(const glm::vec3& atA, const glm::vec3& atB, ToolJoint kind)> fn);
+void toolForget(int num);
 
 // An explosion of `damage` at `at` (T_RadiusDamage's, through the physicsblast builtin): the props within its reach
 // that it sees are thrown.
@@ -143,13 +179,46 @@ bool holdClear(int num, const glm::vec3& fromPos, const glm::quat& fromRot, glm:
 // chosen), its origin and yaw set there.
 [[nodiscard]] bool canRagdoll(edict_t* ent);
 bool ragdollKnockdown(edict_t* ent);
-int ragdollGetUp(edict_t* ent, int frameA, int frameB, const glm::vec3& mins, const glm::vec3& maxs, float range);
+int ragdollGetUp(edict_t* ent, int frameA, int frameB, const glm::vec3& mins, const glm::vec3& maxs, float range,
+    bool anywhere = false);
 // The two-hand throw's topple (vr_foegrab_throw_topple; ROUND21.md, "Holding enemies"): `ent`'s ragdoll (just made by
 // ragdollKnockdown) turned over about its feet towards level `dir`, a sweep: its parts' shared launch (the throw's push and
 // lift) shared out by height (the feet none, the top all), `topple` rad/s about the level axis through its feet across
-// `dir`, `spin` rad/s about the vertical through its middle; its lowest parts held on the floor (level motion none) for
-// `hold` s. False: no ragdoll.
-bool ragdollTopple(edict_t* ent, const glm::vec3& dir, float topple, float spin, float hold);
+// `dir` (its top's speed), `spin` rad/s about the vertical through its middle. Its feet (its lowest parts) are swept
+// back against `dir` at `feet` units/s, the turn about a pivot raised to match (the top as fast as before, the whole
+// turning faster: it spins in place); `feet` 0: held on the floor (level motion none) for `hold` s (swept: at most that
+// long, until it has turned a quarter). The throw's (vr_foegrab_throw_topple), and a shove's over a ledge (ragdollShove).
+// False: no ragdoll.
+// `launch`: the share of that launch its top keeps (its parts by height: the feet none), 1 the throw's; less, it topples
+// over slower from the launch. (`hold` 0.5 s: the throw's, the author's Feet Held before the sweep replaced it.)
+// `whole`: every part keeps its launch, its level part times `launch`, and none is held (`feet` and `hold` unused), the
+// turn about the floor under its feet added: it goes on over a ledge, turning over as it falls (a shove's over a ledge:
+// ragdollShove).
+bool ragdollTopple(edict_t* ent, const glm::vec3& dir, float topple, float spin, float feet, float hold = 0.5f,
+    float launch = 1.f, bool whole = false);
+// A shove's knockdown (vr_knockdown_shove_*; ROUND21.md, "A shove's knockdown: travel and a quarter turn"): `ent`'s
+// ragdoll (just made by ragdollKnockdown) driven for the shove's length (box3d's driveShove), its travel apart from its
+// turn: its middle carried `travel` units along level `dir` (the turn about its feet's own share of that included),
+// slowing evenly from at most the launch's speed; turned `angle` rad about its feet towards `dir` over `time` s (a
+// gravity-like curve, landing flat at a quarter), never faster than `maxSpin` rad/s, its feet `lag` of the travel behind.
+// `ledge`: shoved over one: pushed whole (its level launch times `keep`, at least `minSpeed` u/s) and turned `topple`
+// rad/s about the floor under its feet (ragdollTopple's whole), kept going so until it has gone `reach` units (past the
+// edge) or dropped, its turn kept at `topple` until it leans `angle`, never faster than `maxSpin`, until it lands.
+// False: no ragdoll.
+struct RagdollShove
+{
+    float travel{0.f};
+    float angle{1.5707963f};
+    float time{0.6f};
+    float lag{0.3f};
+    float maxSpin{5.2f};
+    bool ledge{false};
+    float keep{1.f};
+    float minSpeed{80.f};
+    float reach{0.f};
+    float topple{0.f};
+};
+bool ragdollShove(edict_t* ent, const glm::vec3& dir, const RagdollShove& p);
 // Tests (the throw's trace): `num`'s ragdoll's pelvis, head (its rig's head, else its highest part) and feet (the middle of
 // the parts ragdollTopple held, else of those in its lowest quarter at the first call), units. False: no ragdoll.
 bool ragdollStance(int num, glm::vec3& pelvis, glm::vec3& head, glm::vec3& feet);

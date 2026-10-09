@@ -6,8 +6,8 @@
 // writes into the backend's eye image instead of the window (at a vr_render_scale other than 1,
 // into a texture of the scaled size, resampled into the image: bilinear, FSR 1 or NIS, vr_upscale.cpp).
 // The scene is shaded coarser away from the lens centre with vr_foveated (vr_foveated.cpp). The eye's
-// UI is drawn over the final image at its full size. The left eye is then mirrored to the window, where
-// the 2D layer is drawn as usual.
+// UI is drawn over the final image at its full size. The eye the window shows (or both: vr_window_view) is then
+// mirrored to it, where the 2D layer is drawn as usual.
 
 #include "vr_bench.hpp"
 #include "vr_fgfx.hpp"
@@ -185,7 +185,7 @@ void ensureSceneTargets(SceneTargets& t, int width, int height, float fsaa)
 // post-processing does them (vr_bloom.cpp, vr_tonemap.cpp), so the window shows what the headset does (the window's
 // own post-processing then applies the desktop's gamma and contrast). Each window pixel reads the scene through Map:
 // the window's rectangle (-1..1) to the scene's uv, homogeneous (a crop, or the smoothed mirror's turn, a
-// homography). The left eye as it is (Params.x 0) reads the nearest texel as it always has; the smoothed mirror and
+// homography). An eye as it is (Params.x 0) reads the nearest texel as it always has; the smoothed mirror and
 // the spectator camera read it filtered (Catmull-Rom: sharp at any sub-pixel offset, so a slowly turning view does not
 // pulse between sharp and soft as a bilinear read would; bilinear from a spectator camera larger than the window),
 // black outside the scene, with the eyes' underwater wobble and blur (gl_shaders.h's post-process).
@@ -208,7 +208,7 @@ layout(binding = 3) uniform sampler3D GradeLUT;
 layout(location = 1) uniform vec4 Dest;   // the window's rectangle: x0, y0, 1 / width, 1 / height
 layout(location = 2) uniform float BloomStrength;
 layout(location = 3) uniform vec4 Tone;   // as the post-process's (vr_tonemap.hpp: tonemap::bind)
-layout(location = 4) uniform vec4 Params; // x: 0 nearest (the left eye as it is), 1 Catmull-Rom, 2 bilinear
+layout(location = 4) uniform vec4 Params; // x: 0 nearest (an eye as it is), 1 Catmull-Rom, 2 bilinear
 layout(location = 5) uniform vec4 WaterParams; // the post-process's: time, wobble, blur (both 0: not under water)
 layout(location = 6) uniform vec4 WaterProj;   // ndc x = x + y * left / forward, ndc y = z + w * up / forward
 layout(location = 7) uniform vec3 WaterFwd;    // the scene's view axes in the world
@@ -312,7 +312,7 @@ void main()
 
 enum class Sampling
 {
-    Nearest,    // the left eye as it is
+    Nearest,    // an eye as it is
     CatmullRom, // the smoothed mirror, the spectator camera at the window's size or below
     Bilinear,   // the spectator camera above the window's size
 };
@@ -418,39 +418,39 @@ void drawToWindow(const SceneTargets& source, const SceneLook& look, const glm::
         glm::vec3{x0 + 0.5f * w, y0 + 0.5f * h, 1.f}};
 }
 
-// The window's view of the eye just rendered: the left eye (or each, vr_mirror 2) cropped to the window's aspect
-// ratio, or the smoothed mirror of the left eye.
+// The window's view of the eye just rendered: the shown eye (or each, side by side: vr_window_view) cropped to the
+// window's aspect ratio, or the smoothed mirror of the shown eye.
 void mirrorToWindow(int eye, GLuint windowTarget, int windowWidth, int windowHeight)
 {
     const window::View view = window::view();
+    const int shown = window::eye();
     if(view == window::View::Smoothed)
     {
-        if(eye != 0)
+        if(eye != shown)
         {
             return;
         }
         QVR_GPU_PROFILE("mirror");
         Backend* be = backend();
-        const HiddenArea* hidden = be && vr_visibility_mask.value != 0.f ? be->hiddenArea(0) : nullptr;
+        const HiddenArea* hidden = be && vr_visibility_mask.value != 0.f ? be->hiddenArea(eye) : nullptr;
         if(hidden && hidden->indices.empty())
         {
             hidden = nullptr;
         }
-        const glm::mat3 map = window::mirrorMap(frameState().eyes[0].fov,
+        const glm::mat3 map = window::mirrorMap(frameState().eyes[eye].fov,
             static_cast<float>(windowWidth) / static_cast<float>(windowHeight), hidden);
         drawToWindow(eyeTargets, sceneLook(), map, Sampling::CatmullRom, windowTarget, 0, windowWidth, windowHeight);
         return;
     }
 
-    const int mode = static_cast<int>(vr_mirror.value);
-    if(view != window::View::Raw || mode <= 0 || (mode == 1 && eye != 0))
+    if(view != window::View::Raw || (shown >= 0 && eye != shown))
     {
         return;
     }
     QVR_GPU_PROFILE("mirror");
 
     int dx0 = 0, dx1 = windowWidth;
-    if(mode >= 2)
+    if(shown < 0)
     {
         dx0 = eye * windowWidth / 2;
         dx1 = dx0 + windowWidth / 2;
@@ -498,12 +498,9 @@ void drawUi(const glm::vec3& viewOrigin, GLuint fbo, int width, int height, bool
     switch(window::view())
     {
     case window::View::Raw:
-    {
-        const int mode = static_cast<int>(vr_mirror.value);
-        return mode >= 2 || (mode == 1 && eye == 0);
-    }
+        return window::eye() < 0 || window::eye() == eye;
     case window::View::Smoothed:
-        return eye == 0;
+        return window::eye() == eye;
     default:
         return false;
     }
@@ -828,6 +825,16 @@ extern "C" int VR_RenderView()
         return 0; // the backend ends the frame without layers
     }
 
+    // The runtime's menu has the focus (vr_xr_unfocused): its last frame shown again, the GPU left to the menu. The
+    // window keeps its last image.
+    if(frame.hold)
+    {
+        profile::begin("xr submit", true); // xrEndFrame
+        be->endFrame(true);
+        profile::end();
+        return 1;
+    }
+
     // The eye images' size (the runtime's, fixed for the session), and the size the eyes are
     // rendered at (vr_render_scale times it), resampled into the images when it differs.
     int imageWidth = 0, imageHeight = 0;
@@ -861,21 +868,41 @@ extern "C" int VR_RenderView()
     body::queueDebug(hands::current());
     envmap::update(); // the weapons' reflections: a face of the cube, once for both eyes (vr_envmap.cpp)
 
-    int eyesRendered = 0;
-    for(int eye = 0; eye < 2; eye++)
+    // The eye's image from the runtime, attached to the target framebuffer (the post-processing's, the UI's). The
+    // runtime's calls are GPU scopes too: the GPU time between the eyes' own scopes (the runtime's work on this context,
+    // and the GPU idle while the CPU waits in them).
+    const auto acquire = [be](int eye, bool keepBinding)
     {
-        // The runtime's calls are GPU scopes too: the GPU time between the eyes' own scopes
-        // (the runtime's work on this context, and the GPU idle while the CPU waits in them).
         profile::begin("xr acquire", true); // xrWaitSwapchainImage
         const unsigned image = be->acquireEyeImage(eye);
         profile::end();
-        if(!image)
+        if(image)
+        {
+            GLint bound = 0;
+            if(keepBinding)
+            {
+                glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
+            }
+            GL_BindFramebufferFunc(GL_FRAMEBUFFER, stereo::targetFbo);
+            GL_FramebufferTexture2DFunc(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image, 0);
+            if(keepBinding)
+            {
+                GL_BindFramebufferFunc(GL_FRAMEBUFFER, static_cast<GLuint>(bound));
+            }
+        }
+        return image;
+    };
+    // vr_xr_late_acquire: only once the scene is drawn (it writes into the eye's own targets), so the runtime's wait
+    // for the image overlaps the scene's drawing.
+    const bool lateAcquire = vr_xr_late_acquire.value != 0.f;
+
+    int eyesRendered = 0;
+    for(int eye = 0; eye < 2; eye++)
+    {
+        if(!lateAcquire && !acquire(eye, false))
         {
             continue;
         }
-
-        GL_BindFramebufferFunc(GL_FRAMEBUFFER, stereo::targetFbo);
-        GL_FramebufferTexture2DFunc(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image, 0);
 
         framebufs = stereo::eyeTargets.fb;
         vid.width = width;
@@ -895,6 +922,11 @@ extern "C" int VR_RenderView()
         V_RenderView();
         foveated::endScene(); // begun after the scene's clear (VR_DrawHiddenArea)
         bloom::apply(framebufs.composite.color_tex, width, height); // added by GL_PostProcess
+        if(lateAcquire && !acquire(eye, true))
+        {
+            stereo::renderingEye = false;
+            continue;
+        }
 
         // vr_eyeshot 1 takes the eye's final image (after the resample and vr_foveated_debug, before the UI); 2 the
         // rendered one (before the resample) with its float scene; 3 the final image with the UI (the HUD panel, the
@@ -928,6 +960,8 @@ extern "C" int VR_RenderView()
         // The UI over the eye's final image, at its full size: after the post-processing, it is not warped or blurred
         // under water (vr_water.cpp), the glow is not added over it, nor the eye's gamma. The wrist gadget and all
         // else in the world are in the scene. Over the scene's colours too, for the mirror.
+        const Fov& eyeFov = frame.eyes[eye].fov; // (the canvas's size: vr_menu_resolution)
+        panel::noteEyeImage(static_cast<float>(imageHeight) / za::max(1e-3f, za::tan(eyeFov.up) - za::tan(eyeFov.down)));
         stereo::drawUi(hands::current().eyeOrigin[eye], stereo::targetFbo, imageWidth, imageHeight, !recordingClean()); // (recording mode: no head text)
         if(shotUi)
         {

@@ -1,12 +1,12 @@
-# vrtutorial2_gen.py -- writes quakevr/maps/vrtutorial2.map, Quake VR's tutorial (a military base by day), and with
+# vrtutorial_gen.py -- writes quakevr/maps/vrtutorial.map, Quake VR's tutorial (a military base by day), and with
 # --compile builds it (qbsp 0.18.1, ericw-tools 2.0's vis and light; presets "fast" and "final", as vrstart_gen.py).
 #
-#   python Misc/quakevr/maps/vrtutorial2_gen.py [--compile [--preset fast|final] [--check RAYS]] [--tools DIR] [--qbsp EXE]
+#   python Misc/quakevr/maps/vrtutorial_gen.py [--compile [--preset fast|final] [--check RAYS]] [--tools DIR] [--qbsp EXE]
 #   (first: python Misc/trenchbroom/make_id_wad.py, the id textures' WAD; the sky: make_day_sky.py)
 #
 # Everything in the map is made here (reproducible; the .map opens in TrenchBroom): edit this script, not the .map.
 #
-# How it is built (MAPPING.md, "vrtutorial2"):
+# How it is built (MAPPING.md, "vrtutorial"):
 #   - the rooms, halls, doorways and pools are boxes of AIR (Air); the structural world is their shells (each box grown
 #     by the walls' thickness T on every side) minus every air box, cut into disjoint boxes (carve()) and at the walls'
 #     bands' heights. Each face's texture is the style of the air it faces (Air.face_spec): floors, ceilings, the wall's
@@ -41,7 +41,7 @@ DEFAULT_TOOLS = "C:/OHWorkspace/ericw-tools-2.0.0-alpha11-win64"  # vis, light
 # qbsp: ericw-tools 0.18.1's, as vrstart's (the author's decision, 2026-10-07: 2.0-alpha11's lost faces at slivers;
 # 0.18.1's makes faces by CSG). ROUND21.md, "vrstart on ericw-tools 2.0 again".
 DEFAULT_QBSP = "C:/OHWorkspace/ericw-tools-v0.18.1-32-g6660c5f-win64/bin/qbsp.exe"
-MAPNAME = "vrtutorial2"
+MAPNAME = "vrtutorial"
 OUT = os.path.join(ROOT, "quakevr", "maps", MAPNAME + ".map")
 WADS = ["quakevr/wads/id_textures.wad", "quakevr/wads/quakevr_dev.wad"]
 
@@ -426,7 +426,7 @@ _late = [False]
 class late:
     """Entities made inside `with late():` are written after every other: added to a room after the playthrough's
     takes were recorded, they leave the others' edict numbers (and the free slots the game's own spawns take, its
-    physics' order) as they were (vrtutorial2_playtest.py's gates are sensitive to them)."""
+    physics' order) as they were (vrtutorial_playtest.py's gates are sensitive to them)."""
 
     def __enter__(self):
         _late[0] = True
@@ -1008,12 +1008,13 @@ def build_room3():
     arrows([(3248, 704), (3328, 704), (3400, 704)], UP)
     wall_arrow("-x", R3_PLAT, 768, 96, "up", 40)
     banner(N.join(["LESSON 3: JUMPING AND CLIMBING", "", "JUMP: press A (the right controller).",
-                   "Jump the low barriers."]), 2380, r["y1"] - 4, 120, 270, "0.32")
+                   "Or jump for real: you jump in the game.", "Jump the low barriers."]),
+           2380, r["y1"] - 4, 120, 270, "0.32")   # (jumping in the room: vr_roomscale_jump, on as shipped)
     banner(N.join(["CLIMB: grip a rung or a ledge with an empty hand", "and pull yourself up, hand over hand.",
                    "Pull up at the top to climb onto it."]), R3_PLAT - 4, 840, 112, 180, "0.28")
     banner(N.join(["TOO HIGH TO REACH?", "Jump, and grab the edge", "at the top of the jump."]),
            R3_WALL - 4, 600, R3_PLAT_Z + 120, 180, "0.3")
-    tip("t2_jump", "Press A to jump." + N + "Jump over the yellow barriers.", 2500, 704, 56, 220)
+    tip("t2_jump", "Press A, or jump for real, to jump." + N + "Jump over the yellow barriers.", 2500, 704, 56, 220)
     tip("t2_climb", "Grip a rung with an empty hand, pull" + N + "down; grip the next one with the other.",
         R3_PLAT - 16, 704, 70, 150)
     tip("t2_climb_off", "Can't take hold? Climbing may be off:" + N + "press CLIMBING to turn it on.",
@@ -1300,14 +1301,14 @@ def build_room9():
     room("room9v", r["x0"], r["y0"], r["x1"], r["y1"], LOW, LOW + 192, bands(TX["panel2"]))
     lamp_grid(out, r["x0"], r["y0"], r["x1"], r["y1"], LOW + 192, 1, 1, 260)
     checkpoint("cp9", 4704, 288, LOW, 180)
-    banner(N.join(["LESSON 9: DARKNESS", "Your flashlight hangs at your hip:", "grip it; pull the trigger to switch",
+    banner(N.join(["LESSON 9: DARKNESS", "Your flashlight hangs on your torso:", "grip it; pull the trigger to switch",
                    "it on or off."]), 4640, r["y0"] + 4, LOW + 120, 90, "0.28")
     # (a tip shows through a closed door: each in this room and the course waits till the player is in it)
     with late():
         trigger("r9v_in", (4544, 176, LOW), (4736, 336, LOW + 96), target="r9v_in")
-    tip("t2_torch", "Take your flashlight: grip at your hip" + N + "(the side set by TORCH SIDE), trigger" + N +
-        "to switch it on.", 4640, 200, LOW + 60, 200, trig="r9v_in")
-    setting_button("TORCH SIDE", "torch", 4592, r["y0"], LOW + 52, 270)
+    tip("t2_torch", "Take your flashlight: grip it on your torso" + N + "(the side set by FLASHLIGHT SIDE), trigger" +
+        N + "to switch it on.", 4640, 200, LOW + 60, 200, trig="r9v_in")
+    setting_button("FLASHLIGHT" + N + "SIDE", "torch", 4592, r["y0"], LOW + 52, 270)
     d = doorway("room9_in", R9["x1"], 192, R9["x1"] + 16, 320, LOW, out)
     sliding_door(d, None)
     # the course: no lamps; dark metal
@@ -1368,10 +1369,11 @@ def build_room10():
     for x in (3232, 3296):
         item("item_rockets", x, -296, LOW + 36)
     restock("item_rockets", 3264, -296, LOW + 36, distance=96, wait=8)
-    banner(N.join(["GRENADES", "With rockets in your pack, reach behind you:", "the pouch at the small of your back gives a grenade.",
-                   "Trigger pulls the pin; throw it. Or drop it", "where they will come: a trap. No launcher needed."]),
+    banner(N.join(["GRENADES", "With rockets in your pack, reach behind you:", "the pouch on your lower back gives a grenade.",
+                   "Trigger pulls the pin; throw it.", "Or drop one, pin in, where they will come:",
+                   "a trap you can shoot to set off. No launcher needed."]),
            3264, r["y0"] + 4, LOW + 120, 90, "0.26")
-    tip("t2_grenade", "Take the rockets (hold the box to a holster)." + N + "Then reach to the small of your back" + N + "for a grenade.",
+    tip("t2_grenade", "Take the rockets (hold the box to a holster)." + N + "Then reach for the pouch on your lower" + N + "back: a grenade.",
         3264, -296, LOW + 64, 180)
     d = doorway("room10_exit", r["x0"] - 16, -256, r["x0"], -128, LOW, out)
     sliding_door(d, "r10_open")
@@ -1566,6 +1568,9 @@ WORLD_KEYS = {
     "sky": "qvrday", "light": "0", "_sunlight": "260", "_sunlight_mangle": "225 -55 0",
     "_sunlight_color": "1 0.96 0.88", "_sunlight2": "420", "_sunlight2_color": "0.6 0.72 1.0", "_bounce": "1",
     "_vr_debris": "0", "_vr_crates": "0", "_qvr_prelit": "1",
+    # each start of the tutorial (map, the hub's button, the menu, a new game) shows every tip again, each once in that
+    # play; a saved game of it keeps the tips its play has shown (the author, 2026-10-09: not every time he comes near)
+    "_vr_tips_reset_on_start": "1",
 }
 
 
@@ -1660,7 +1665,7 @@ def write_map():
         mw.detail("painted", classname="func_detail_illusionary").extend(ILLUSION)
     for keys, brushes in ENTS + LATE:
         mw.add(keys, brushes)
-    header = "// Game: Quake VR\n// Format: Valve\n// Written by Misc/quakevr/maps/vrtutorial2_gen.py: edit that, not this.\n"
+    header = "// Game: Quake VR\n// Format: Valve\n// Written by Misc/quakevr/maps/vrtutorial_gen.py: edit that, not this.\n"
     mw.write(OUT, WORLD_KEYS, header)
     nb = len(mw.world) + sum(len(b) for _, b in mw.groups) + sum(len(b) for _, b in mw.entities)
     print("wrote %s: %d brushes (%d structural), %d entities (%.1f s)" % (OUT, nb, len(mw.world), len(mw.entities),
@@ -1711,7 +1716,7 @@ def compile_map(tools, work, preset, check=0, qbsp=DEFAULT_QBSP):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Writes quakevr/maps/vrtutorial2.map; with --compile also its .bsp, .lit and .lux (qbsp 0.18.1, "
+        description="Writes quakevr/maps/vrtutorial.map; with --compile also its .bsp, .lit and .lux (qbsp 0.18.1, "
                     "2.0's vis and light).",
         epilog="Presets (--preset): fast = vis -fast, light -lit -lux and a 128-unit light grid; final = full vis, "
                "light %s: the shipped build. Check a build for holes: --check 1000000 (bsp_holes.py)."

@@ -175,6 +175,7 @@
 		15 : "Shotgun (a grunt's; its own shells)"
 		16 : "Laser rifle (an enforcer's; its own shots)"
 		17 : "Crowbar"
+		19 : "Toolgun (debug and sandbox)"
 	]
 	weaponflags(choices) : "Variant" : 0 : "The weapon's variant: its alternative ammunition (Dissolution of Eternity's), or the hell knight's sword." =
 	[
@@ -222,6 +223,7 @@ does by default)."
 	_vr_debris(float) : "Rocks and bricks" : 1 : "Quake VR's loose rocks and bricks, placed at the foot of walls by what the textures are made of (natural ground and rock walls: rocks; brick walls: bricks). 0: none in this map; another number times their chance (0.5 half as many places, 2 twice). The player's settings (Carrying: Rocks and Bricks) apply on top."
 	_vr_crates(float) : "Wooden crates" : 1 : "Quake VR's wooden crates, placed by walls and in corners (sometimes two stacked), clear of every entity and never narrowing a passage. 0: none in this map; another number times their chance. The player's settings (Carrying: Crates) apply on top."
 	_vr_tips_repeat(float) : "Repeat map tips" : 0 : "1: every func_vr_tip in this map shows again every time the player comes near it, instead of once (a tutorial map)."
+	_vr_tips_reset_on_start(float) : "Tips again each start" : 0 : "1: every func_vr_tip in this map shows again each time the map is started (map, changelevel, restart, a new game into it), once in each play; loading a saved game of it keeps the tips its play has shown (a tutorial map)."
 	_minlight_color(color1) : "Minimum light colour" :  : "The colour of the minimum light (R G B, 0 to 1)."
 	_sunlight_color(color1) : "Sun colour" :  : "ericw-tools: the sun's colour (R G B, 0 to 1)."
 	_sunlight_penumbra(float) : "Sun penumbra" :  : "ericw-tools: degrees of soft shadow edge."
@@ -618,6 +620,16 @@ Floats at torso height in VR (vr_item_float_height); taken by a hand's grip."
 
 Floats at torso height in VR (vr_item_float_height); taken by a hand's grip."
 [
+]
+
+@PointClass base(Appearflags) color(0 128 204) size(-16 -16 0, 16 16 32) model({ "path": "progs/v_toolgun.mdl" }) =
+	weapon_toolgun : "Toolgun (Quake VR)
+
+A debug and sandbox tool held as a pistol, as Garry's Mod's (docs/vr-port/TOOLGUN.md): it spawns, removes, moves,
+freezes, scales and joins things, and its menu (B or Y) has the cheats. It drops from its origin and settles on the
+floor, a physics object as func_weapon_grabbable's weapons (the same as one with weapon 19). It uses no ammunition."
+[
+	angles(string) : "Pitch yaw roll" :  : "How it lies before it falls (none: any way)."
 ]
 
 //
@@ -2436,7 +2448,7 @@ ANGRY: they go for the player who used it at once."
 
 @SolidClass color(204 128 51) =
 	func_vr_target : "Quake VR: a target board (a brush) that breaks into splinters when it is shot, struck or blown up ('health', default
-10), firing its 'target' (the activator: what broke it). vrtutorial2's firing range: a trigger_counter opens the way on."
+10), firing its 'target' (the activator: what broke it). vrtutorial's firing range: a trigger_counter opens the way on."
 [
 	health(integer) : "Health" :  : "If set, it must be shot (this much damage) instead of touched."
 ]
@@ -2519,6 +2531,7 @@ func_weapon_grabbable). Only the standard variant. A point entity, despite its n
 		15 : "Shotgun (a grunt's; its own shells)"
 		16 : "Laser rifle (an enforcer's; its own shots)"
 		17 : "Crowbar"
+		19 : "Toolgun (debug and sandbox)"
 	]
 ]
 
@@ -3233,7 +3246,7 @@ Variable sized single use trigger that requires a key to trigger targets. Must b
 ]
 
 @SolidClass color(128 128 128) =
-	trigger_vr_health_gate : "Quake VR: fires its 'target' once, when the player touches it at full health (his max_health, or 'health' if set: a door that opens only then, as vrtutorial2's). Below it, 'message' is centerprinted (every 2 seconds while he stays in it)."
+	trigger_vr_health_gate : "Quake VR: fires its 'target' once, when the player touches it at full health (his max_health, or 'health' if set: a door that opens only then, as vrtutorial's). Below it, 'message' is centerprinted (every 2 seconds while he stays in it)."
 [
 ]
 

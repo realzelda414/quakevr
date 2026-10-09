@@ -15,6 +15,8 @@
 #include "Zancle/String/StringView.hpp"
 #include "vr_zancle.hpp"
 
+extern "C" cvar_t gl_texture_anisotropy; // gl_texmgr.c
+
 namespace qvr
 {
 
@@ -525,8 +527,122 @@ const DefaultChange defaultChanges[] = {
     {107, &vr_swim_stroke_pitch, "-8"}, // -10
     {107, &vr_water_jump, "1"}, // 0
     {107, &vr_weapon_grab_slack, "5"}, // 0
+    // 108: the OpenXR runtime chosen automatically, Auto (4), by default (the author, 2026-10-09: ROUND21.md, "OpenXR
+    // runtime: Auto"): a config still at the old default, the system's active runtime (0), takes Auto.
+    {108, &vr_xr_runtime, "0"}, // 4
+    // 109: the author's settings of the morning of 2026-10-09 (vrfiringrange_2026-10-09_10-56: "I've tweaked values
+    // for the judo throws and the struggling effect; they feel much better"; ROUND21.md, "The author's settings of the
+    // morning of 2026-10-09 are the defaults"): the two-hand throw, the knocked-down struggle and time down, and what he
+    // tuned since config 107 (bullet time's screen tap and trails, barrels, the gadget's side button, the front reload).
+{109, &vr_bullettime_tap_angle, "40"}, // 10
+    {109, &vr_bullettime_tap_depth, "6"}, // 6.5
+    {109, &vr_bullettime_tap_height, "1"}, // 0.75
+    {109, &vr_bullettime_tap_margin, "2"}, // 1
+    {109, &vr_bullettime_tap_speed, "1.2"}, // 0.5
+    {109, &vr_bullettime_tap_stop, "0.5"}, // 1
+    {109, &vr_bullettime_tap_window, "0.25"}, // 0.5
+    {109, &vr_bullettime_tap_z, "0"}, // -3.5
+    {109, &vr_bullettime_trails_fade, "0.6"}, // 1
+    {109, &vr_bullettime_trails_length, "4"}, // 15
+    {109, &vr_bullettime_trails_life, "0.7"}, // 2
+    {109, &vr_bullettime_trails_width, "20"}, // 8
+    {109, &vr_crates_barrel_lying, "0.3"}, // 0.15
+    {109, &vr_crates_barrels, "0.3"}, // 0.15
+    {109, &vr_foegrab_throw_lift, "100"}, // 170
+    {109, &vr_foegrab_throw_push, "220"}, // 190
+    {109, &vr_foegrab_throw_speed, "1"}, // 2.5
+    {109, &vr_foegrab_throw_spin, "0.5"}, // 0.55
+    {109, &vr_foegrab_throw_topple, "120"}, // 300
+    {109, &vr_foegrab_throw_twist, "150"}, // 140
+    {109, &vr_gadget_button_cooldown, "0.6"}, // 0.2
+    {109, &vr_gadget_button_size, "3"}, // 1.25
+    {109, &vr_gadget_button_y, "0"}, // 0.5
+    {109, &vr_knockdown_time_max, "2.5"}, // 3.5 (vr_defaults.cfg)
+    {109, &vr_knockdown_time_min, "1.25"}, // 1.75 (vr_defaults.cfg)
+    {109, &vr_knockdown_wiggle, "1"}, // 1.5
+    {109, &vr_knockdown_wiggle_frequency, "2.2"}, // 1.5
+    {109, &vr_knockdown_wiggle_pause, "0"}, // 0.5
+    {109, &vr_reload_front_angle, "45"}, // 40.5
+    {109, &vr_reload_front_hold_pitch, "90"}, // 45
+    // 110: the author's settings of the afternoon of 2026-10-09 (vrfiringrange_2026-10-09_12-29-53, 12-40-36, 12-42-10:
+    // "all bullet time values"; ROUND21.md, "The author's settings of the afternoon of 2026-10-09 are the defaults"):
+    // bullet time's screen tap (the double tap by default), the stealth AI's senses and noises, holding enemies, and
+    // 16x anisotropic filtering (vr_defaults.cfg).
+    {110, &vr_bullettime_tap_gesture, "0"},       // 1: the double tap
+    {110, &vr_bullettime_tap_angle, "10"},        // 80
+    {110, &vr_bullettime_tap_butt_depth, "4"},    // 6
+    {110, &vr_bullettime_tap_depth, "6.5"},       // 5
+    {110, &vr_bullettime_tap_double_speed, "0.4"}, // 0.2
+    {110, &vr_bullettime_tap_double_window, "0.4"}, // 0.8
+    {110, &vr_bullettime_tap_height, "0.75"},     // 0.85
+    {110, &vr_bullettime_tap_margin, "1"},        // 0.5
+    {110, &vr_bullettime_tap_width, "1"},         // 0.95
+    {110, &vr_foegrab_break, "35"},               // 20
+    {110, &vr_foegrab_drag, "10"},                // 20
+    {110, &vr_foegrab_drag_speed, "200"},         // 300
+    {110, &vr_foegrab_leniency, "1.5"},           // 1
+    {110, &vr_stealth_graze, "64"},               // 72
+    {110, &vr_stealth_light_bright, "80"},        // 64
+    {110, &vr_stealth_light_dark, "20"},          // 16
+    {110, &vr_stealth_lose_time, "20"},           // 14
+    {110, &vr_stealth_meter_decay, "0.2"},        // 0.15
+    {110, &vr_stealth_meter_time, "1"},           // 0.5
+    {110, &vr_stealth_noise_blasts, "1"},         // 1.75
+    {110, &vr_stealth_noise_guns, "1"},           // 1.5
+    {110, &vr_stealth_noise_props, "1200"},       // 1500
+    {110, &vr_stealth_noise_wall, "0.5"},         // 0.6
+    {110, &gl_texture_anisotropy, "8"},           // 16 (vr_defaults.cfg)
+    // 111: the author's settings of 2026-10-09 15:00-15:50 (vrfiringrange_2026-10-09_15-02-52, 15-45-02, vrstart 15-18-36,
+    // e5m4 15-35-30; ROUND21.md, "The author's melee, throwing and menu settings of 2026-10-09 are the defaults"):
+    // melee and throwing "more viable and impactful", bullet time's throws, the screen tap's click, the menus' sharpness.
+    {111, &vr_2h_throw_velocity_mult, "1.0"},      // 1.3
+    {111, &vr_bash_damage, "8"},                   // 10
+    {111, &vr_bullettime_tap_sound, "0.6"},        // 0.4
+    {111, &vr_chainsaw_damage, "80"},              // 100
+    {111, &vr_counter_damage, "1.5"},              // 1.75
+    {111, &vr_dmg_chainsaw_swing, "20"},           // 22
+    {111, &vr_dmg_laser, "18"},                    // 20
+    {111, &vr_enfrifle_damage, "15"},              // 16
+    {111, &vr_gib_spawn_harmless, "0.3"},          // 0.5
+    {111, &vr_gruntgun_damage, "5"},               // 6
+    {111, &vr_headbutt_damage, "32"},              // 24
+    {111, &vr_melee_bloodlust_mult, "0.5"},        // 0.35
+    {111, &vr_melee_dmg_multiplier, "1.0"},        // 1.1
+    {111, &vr_melee_speed, "3"},                   // 3.2
+    {111, &vr_menu_distance, "100"},               // 150 (vr_defaults.cfg)
+    {111, &vr_menu_scale, "0.18"},                 // 0.25 (vr_defaults.cfg)
+    {111, &vr_menu_sharpen, "0.5"},                // 1
+    {111, &vr_parry_stagger, "0.75"},              // 0.8
+    {111, &vr_parry_stamina_cost, "30"},           // 20
+    {111, &vr_parry_unarmed_reduction, "0.5"},     // 0.45
+    {111, &vr_prop_drop_grace, "0.5"},             // 0.75
+    {111, &vr_quad_melee_damage, "1"},             // 1.1
+    {111, &vr_strike_stamina_cost_2h, "6"},        // 12
+    {111, &vr_strike_stamina_punch, "4"},          // 6
+    {111, &vr_sword_damage_mult, "1"},             // 1.1 (vr_defaults.cfg)
+    {111, &vr_throw_slowmo_flick, "1"},            // 0.9
+    {111, &vr_throw_slowmo_long_travel, "0.2"},    // 0.5
+    {111, &vr_throw_slowmo_short_travel, "0.15"},  // 0.25
+    {111, &vr_weapon_throw_damage_mult, "0.35"},   // 0.4
+    {111, &vr_weight_damage_exp, "0.4"},           // 0.375
+    {111, &vr_weight_lenient, "0.5"},              // 0.515
+    // 112: shoves (his notes vrfiringrange_2026-10-09_15-11-36, 15-47-01, 15-48-52, vrstart 15-16-00; ROUND21.md, "A
+    // shove's knockdown: travel and a quarter turn"): a shove over a ledge turns less as it falls.
+    {112, &vr_knockdown_shove_ledge_topple, "150"}, // 100
+    // ... a shove (or a bash) goes 20% less far (its hands: vr_shove_push_onehand, _twohand, new).
+    {112, &vr_bash_push, "1"},                       // 0.9 (the distance goes as its square: 0.81)
+    // ... and a parry pushes the attacker back about half as far (a counter can reach it).
+    {112, &vr_parry_push_enemy, "0.8"},              // 0.55 (vr_defaults.cfg; a weapon parry's distance 0.47x)
+    // 114: spawns, slimes and centroids (scorpions) never thrown (no knockdown get-up), out of the when-hurt list
+    // (2026-10-09, his call): a config still holding the list before it takes the new one.
+    {114, &vr_foegrab_throw_when_hurt,
+        "monster_hell_knight monster_ogre monster_ogre_marksman monster_ogre_rocket monster_demon1 monster_tarbaby monster_slime "
+        "monster_scourge monster_ranged_knight"},
+    // 115: world scale 1.2 is normal (vr_defaults.cfg's since 2026-10-04; the author, 2026-10-09): the compiled default
+    // and the tutorial's and the hub's World Scale buttons' "normal" were still 1.25, so a config at 1.25 takes 1.2.
+    {115, &vr_world_scale, "1.25"},
 };
-constexpr int configVersion = 107;
+constexpr int configVersion = 115;
 
 // Two settings' values the same (as numbers when both are).
 [[nodiscard]] bool sameValue(const char* a, const char* b)
@@ -813,16 +929,23 @@ void migrateConfig()
         Con_DPrintf("VR: vr_flashlight_cord: 1, the low-poly chain (was %s)\n", vr_flashlight_cord.string);
         Cvar_SetQuick(&vr_flashlight_cord, "1");
     }
-    // 99: the island hub vrstart2 is vrstart now (the old vrstart is vrstart_old): a config naming vrstart2 names vrstart.
-    if(from < 99 && !strcmp(vr_hub_map.string, "vrstart2"))
-    {
-        Con_DPrintf("VR: vr_hub_map: vrstart (was vrstart2: the island hub's old name)\n");
-        Cvar_SetQuick(&vr_hub_map, "vrstart");
-    }
-    // 103: a new install starts in the tutorial (vrtutorial2) once; a config from before has played: the hub, as before.
+    // 103: a new install starts in the tutorial (vrtutorial) once; a config from before has played: the hub, as before.
     if(from < 103)
     {
         Cvar_SetValueQuick(&vr_tutorial_started, 1.f);
+    }
+    // 113: the window's view is vr_window_view's alone (both eyes, the left or the right, raw or smoothed, the spectator
+    // camera); vr_mirror only turns the mirror on or off. Its "Left Eye (raw)" with vr_mirror 2 showed both eyes: now
+    // Both Eyes (raw), 3. vr_mirror 2 is 1.
+    if(from < 113 && vr_mirror.value >= 2.f)
+    {
+        if(static_cast<int>(vr_window_view.value) == 0)
+        {
+            Con_DPrintf("VR: vr_window_view: 3, both eyes (was 0 with vr_mirror 2)\n");
+            Cvar_SetQuick(&vr_window_view, "3");
+        }
+        Con_DPrintf("VR: vr_mirror: 1 (was %s; vr_window_view says what it shows)\n", vr_mirror.string);
+        Cvar_SetQuick(&vr_mirror, "1");
     }
     Cvar_SetValueQuick(&vr_cfg_version, static_cast<float>(configVersion));
 }
@@ -951,6 +1074,14 @@ void registerCvars()
 constexpr const char* retiredCvars[] = {
     "vr_throw_lookahead", // 2026-10-06: unused since the throw's window ends at the release (ROUND21.md, "Throws at any frame rate")
     "vr_throw_slowmo_flick_spin", // 2026-10-08: vr_throw_slowmo_flick_arm (ROUND21.md, "Wrist flicks in bullet time: the arm tells the tempo")
+    "vr_foegrab_throw_topple_hold", // 2026-10-09: vr_foegrab_throw_feet_speed (ROUND21.md, "The judo throw sweeps the feet")
+    // 2026-10-09: vr_knockdown_shove_travel, _topple_angle, _topple_time, _feet_lag, _max_spin (ROUND21.md, "A shove's
+    // knockdown: travel and a quarter turn").
+    "vr_knockdown_shove_topple",
+    "vr_knockdown_shove_topple_push",
+    "vr_knockdown_shove_feet_speed",
+    "vr_knockdown_shove_feet_hold",
+    "vr_hub_map", // 2026-10-09: the hub is vrstart, the only one (the old hub, vrstart_old, removed)
 };
 
 // Settings renamed: the old name still reads and sets the new one (Cvar_FindVar asks here when a name is not found):

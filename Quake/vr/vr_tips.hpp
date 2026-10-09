@@ -34,7 +34,7 @@ enum Flags : int
     Repeat = 1 << 0,   // shown every time you come near, not remembered
     Hologram = 1 << 1, // in the wrist gadget's hologram, not the floating screen
     AnyAngle = 1 << 2, // shown even out of vr_tips_view_angle or hidden by the world
-    Waiting = 1 << 3   // not shown yet: a TRIGGERED tip not used (QC VR_Tip_Use clears it; vrtutorial2's)
+    Waiting = 1 << 3   // not shown yet: a TRIGGERED tip not used (QC VR_Tip_Use clears it; vrtutorial's)
 };
 
 // MapTip::ent for a tip whose entity is gone (freed, or its slot taken by another): it never shows again.
@@ -59,6 +59,10 @@ struct MapTip
 
 // Server side (the vr_tip_* builtins, while the map spawns; QC/vr_tips.qc func_vr_tip).
 void serverReset();
+// A map spawned (SV_SpawnServer, after its entities): a worldspawn "_vr_tips_reset_on_start" 1 forgets the map's
+// tips shown (tips_seen.txt's <mapname>:... and <mapname>#...), so each play of it from its start (map, changelevel,
+// restart, a new game into it) shows them all again; not for a saved game of it (fromSave), which keeps its play's.
+void serverMapStarted(bool fromSave);
 [[nodiscard]] int serverMake();
 void serverSetName(int handle, const char* name);
 void serverSetText(int handle, const char* text);

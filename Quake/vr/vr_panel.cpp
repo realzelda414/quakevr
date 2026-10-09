@@ -30,9 +30,15 @@
 
 #include "Zancle/Base/Exchange.hpp"
 #include "Zancle/Container/Vector.hpp"
+#include "Zancle/Math/Ceil.hpp"
 #include "Zancle/Math/Exp.hpp"
+#include "Zancle/Math/Floor.hpp"
+#include "Zancle/Math/Fmax.hpp"
+#include "Zancle/Math/Fmin.hpp"
+#include "Zancle/Math/Lround.hpp"
 #include "Zancle/Math/Remainder.hpp"
 #include "vr_zancle.hpp"
+#include "vr_toolgun.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -47,6 +53,10 @@ constexpr glm::vec4 noMask{0.f, 0.f, 0.f, 0.f};
 
 gfx::Target canvas;
 bool drawingToCanvas = false;
+
+// The headset's eye images: their pixels per unit of tangent up the view (their projection's), from the last eye
+// rendered; 0 before one was. What the canvas is sized for (vr_menu_resolution).
+float eyePixelsPerTan = 0.f;
 
 // The canvas's quads, each draw (the main thread).
 struct PanelScratch
@@ -162,6 +172,23 @@ void facingQuad(const hands::State& s, const glm::vec3& angles, float height, gl
     corner = centre - right * (width * 0.5f) - up * (height * 0.5f);
     xAxis = right * width;
     yAxis = up * height;
+}
+
+// The toolgun's menu on the gun (vr_toolgun.cpp menuFrame): its centre and axes there, vr_toolgun_menu_height high, as
+// wide as the canvas's shape.
+[[nodiscard]] bool toolgunQuad(const hands::State& s, glm::vec3& corner, glm::vec3& xAxis, glm::vec3& yAxis)
+{
+    glm::vec3 centre, right, up;
+    if(!canvas.texture || !toolgun::menuFrame(s, centre, right, up))
+    {
+        return false;
+    }
+    const float height = za::fmax(vr_toolgun_menu_height.value, 2.f);
+    const float width = height * static_cast<float>(canvas.width) / za::fmax(static_cast<float>(canvas.height), 1.f);
+    corner = centre - right * (width * 0.5f) - up * (height * 0.5f);
+    xAxis = right * width;
+    yAxis = up * height;
+    return true;
 }
 
 // The canvas on that panel (`mask` as drawCanvas's): the menus' and the in-game HUD's.
@@ -280,6 +307,31 @@ void drawHud(const hands::State& s, const glm::vec4& mask)
     drawFacing(s, {hudAngles.x, hudAngles.y, 0.f}, 200.f * vr_menu_scale.value, mask);
 }
 
+// The canvas's size in pixels. In the eyes with vr_menu_resolution, that many of its pixels to each of the eye image's
+// across the panel seen head-on (the menu panel's height or the HUD panel's, the larger: one size for both, made once),
+// mipmapped (trilinear, anisotropic): drawn smaller than it is, the text keeps whole edges instead of being stretched
+// and smoothed over the eye's pixels (NOTES.md vrstart_2026-10-09_10-42-28: the menu looked blurry). Its shape is the
+// window's: the 2D pass lays out on the window's virtual screen (vid.guiwidth x vid.guiheight). Else (0, or the
+// runtime's own panel before a map) the window's size, as before.
+[[nodiscard]] glm::ivec2 canvasPixels()
+{
+    const glm::ivec2 window{vid.width, vid.height};
+    const float resolution = CLAMP(0.f, vr_menu_resolution.value, 3.f);
+    if(resolution <= 0.f || !stereoThisFrame || eyePixelsPerTan <= 0.f || window.x <= 0 || window.y <= 0)
+    {
+        return window;
+    }
+    const float height = za::fmax(menuui::styledPanelHeight(), 200.f * vr_menu_scale.value);
+    const float pixels = resolution * eyePixelsPerTan * height / za::fmax(1.f, vr_menu_distance.value);
+
+    // Whole steps of 64 rows (a slider dragged doesn't make it again each frame), at most 4096 across (about 50 MB with its mipmaps).
+    constexpr float maxSide = 4096.f;
+    const float aspect = static_cast<float>(window.x) / static_cast<float>(window.y);
+    float h = za::fmin(za::ceil(za::fmax(pixels, 64.f) / 64.f) * 64.f, maxSide);
+    h = za::fmin(h, za::floor(maxSide / aspect));
+    return {static_cast<int>(za::lround(h * aspect)), static_cast<int>(h)};
+}
+
 // The canvas into the backend's panel image, when it has one.
 void copyToRuntimePanel()
 {
@@ -301,6 +353,11 @@ namespace qvr::panel
 void setStereoThisFrame(bool stereo)
 {
     stereoThisFrame = stereo;
+}
+
+void noteEyeImage(float pixelsPerTan)
+{
+    eyePixelsPerTan = pixelsPerTan;
 }
 
 void drawInEye(const hands::State& s, bool headText)
@@ -336,7 +393,15 @@ void drawInEye(const hands::State& s, bool headText)
     }
     hudAnglesValid = false;
 
-    drawFacing(s, menuAngles(), panelHeight());
+    glm::vec3 gunCorner, gunX, gunY;
+    if(toolgunQuad(s, gunCorner, gunX, gunY))
+    {
+        drawCanvas(gfx::sceneViewProjection() * quad(gunCorner, gunX, gunY)); // (the toolgun's menu, on the gun)
+    }
+    else
+    {
+        drawFacing(s, menuAngles(), panelHeight());
+    }
     panelInEyesTime = realtime;
     menuui::drawInEye(s); // the laser pointer, over the panel
 }
@@ -348,7 +413,10 @@ bool menuQuad(const hands::State& s, glm::vec3& corner, glm::vec3& xAxis, glm::v
     {
         return false;
     }
-    facingQuad(s, menuAngles(), panelHeight(), corner, xAxis, yAxis);
+    if(!toolgunQuad(s, corner, xAxis, yAxis))
+    {
+        facingQuad(s, menuAngles(), panelHeight(), corner, xAxis, yAxis);
+    }
     return true;
 }
 
@@ -381,7 +449,20 @@ extern "C" void VR_Begin2D()
     savedCrosshair = crosshair.value;
     crosshair.value = 0.f;
 
-    gfx::beginCanvas(canvas, vid.width, vid.height);
+    const glm::ivec2 size = canvasPixels();
+    const bool own = size.x != vid.width || size.y != vid.height;
+    gfx::beginCanvas(canvas, size.x, size.y, own, -CLAMP(0.f, vr_menu_sharpen.value, 1.f));
+}
+
+extern "C" int VR_CanvasPixels(int* width, int* height)
+{
+    if(!drawingToCanvas || !canvas.texture)
+    {
+        return 0;
+    }
+    *width = canvas.width;
+    *height = canvas.height;
+    return 1;
 }
 
 extern "C" int VR_SbarInCanvas()
@@ -421,7 +502,7 @@ extern "C" void VR_End2D(void (*windowHud)())
     // Not over the smoothed mirror or the spectator camera (vr_window.cpp), for recording: the window shows the HUD and
     // the menus as the headset does, in the world; the console still, while it is down.
     const bool recording = stereoThisFrame && (view == window::View::Smoothed || view == window::View::Spectator);
-    // Nor, in game, over the Left Eye view with vr_mirror_hide_hud_text: in game the canvas holds only the head-locked
+    // Nor, in game, over an eye's raw view with vr_mirror_hide_hud_text: in game the canvas holds only the head-locked
     // text (centre prints, notify lines), which the mirrored eye leaves out too (vr_stereo.cpp).
     const bool headTextHidden = stereoThisFrame && view == window::View::Raw && vr_mirror_hide_hud_text.value != 0.f &&
                                 !panelVisible();

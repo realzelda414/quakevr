@@ -241,6 +241,13 @@ struct BroadcastRoom
     // ... and the most in the second
     double since;
     int peakSize, peakReliable, peakEntities;
+
+    // Whole messages the engine's console commands broadcast (vr_physics_blast's explosion: server::queueBroadcast). A
+    // command runs before the server frame, whose SV_ClearDatagram would drop what it wrote; they open the next frame's.
+    static constexpr int maxQueued = 16;
+    byte queued[512];
+    int queuedEnds[maxQueued]; // each message's end in queued
+    int numQueued;
 };
 
 BroadcastRoom broadcastRoom{};
@@ -375,6 +382,35 @@ extern "C" void VR_BroadcastClear()
     b.msgAt = 0;
     b.qcDropped = b.qcDrops = b.unsent = b.entities = 0;
     SZ_Clear(&sv.datagram);
+
+    // The messages queued since the last frame (server::queueBroadcast) open this one, each whole (an explosion's
+    // launches its chunks, as QuakeC's does).
+    int from = 0;
+    for(int i = 0; i < b.numQueued; i++)
+    {
+        const int at = sv.datagram.cursize;
+        const int len = b.queuedEnds[i] - from;
+        SZ_Write(&sv.datagram, b.queued + from, len);
+        if(tempEntityLength(at) == len)
+        {
+            noteExplosion(at);
+        }
+        broadcastMark(sv.datagram.cursize);
+        from = b.queuedEnds[i];
+    }
+    b.numQueued = 0;
+}
+
+void qvr::server::queueBroadcast(const byte* data, int len)
+{
+    BroadcastRoom& b = broadcastRoom;
+    const int used = b.numQueued > 0 ? b.queuedEnds[b.numQueued - 1] : 0;
+    if(len <= 0 || b.numQueued >= BroadcastRoom::maxQueued || used + len > static_cast<int>(sizeof(b.queued)))
+    {
+        return; // (unreliable, as the datagram is: none when full)
+    }
+    memcpy(b.queued + used, data, static_cast<size_t>(len));
+    b.queuedEnds[b.numQueued++] = used + len;
 }
 
 // PR_ExecuteProgram, a run of the server's QuakeC from the engine (not nested in a builtin): QuakeC is between messages.
@@ -806,6 +842,23 @@ extern "C" void VR_CalcStats(client_t* client, int* statsi, float* statsf)
 constexpr int weaponFlagNoMag = 16;
 // QC's QVR_WPNFLAG_SSG_OPEN (vr_defs.qc): a super shotgun broken open (vr_reload.qc).
 constexpr int weaponFlagSsgOpen = 32;
+
+// A stepping monster in the air (a dog's leap, a fall off a ledge, a knock: not on the ground, not a flyer or a
+// swimmer; SV_Physics_Step's free fall) moves every server frame, not at its thinks: its move is drawn over the frame
+// (the U_LERPFINISH byte, in 255ths of a second), not to its next think. (Drawn to the think, each frame's move began
+// before the last was drawn: with vr_monster_lerp_continue 1 the drawn dog fell behind, ~26 units by the leap's end,
+// and caught up in a frame or two as its think came: a 9.7-unit snap on landing; Quake's drawing snapped each frame.)
+// -1: Quake's rule (the next think), and always with vr_monster_lerp_continue 0.
+extern "C" int VR_StepLerpInterval(edict_t* ent)
+{
+    if(static_cast<int>(ent->v.movetype) != MOVETYPE_STEP || vr_monster_lerp_continue.value == 0.f ||
+       (static_cast<int>(ent->v.flags) & (FL_ONGROUND | FL_FLY | FL_SWIM)) != 0)
+    {
+        return -1;
+    }
+    const int interval = static_cast<int>(host_frametime * 255.0 + 0.5);
+    return interval < 1 ? 1 : interval > 25 ? 25 : interval;
+}
 
 extern "C" int VR_EntityUpdateBits(edict_t* ent)
 {

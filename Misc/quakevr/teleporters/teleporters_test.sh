@@ -10,8 +10,9 @@
 #          (vr_stealth_meter 0): the stealth meter takes seconds to fill on a still player, this test needs it hostile
 #          before he moves (the stealth AI's own tests: vr_stealth_test)
 #          Expected: the dogs and fiends through (the sill-32 dog bumps the sill, slides along the wall and takes the
-#          sill-16 gate: 165-270 frames, now and then not within the 480); the grunt never: it stands and shoots through
-#          the gate (PORTAL_AI.md)
+#          sill-16 gate: 165-270 frames, now and then not within the 480: up to TRIES=3 runs each, sv_random_seed SEED=1,
+#          2, 3: the same verdicts every time); the grunt never: it
+#          stands and shoots through the gate (PORTAL_AI.md). PASS/FAIL a line; exits 1 on a chase FAIL
 #   views  a screenshot of both eyes from 64 units in front of a gate of each kind (scratch/teleporter_views.png)
 AGENT=${1:?agent}; WHAT=${2:-all}; ONLY=$3  # ONLY: a chase's name (framed_large) to run only it
 KIT=C:/OHWorkspace/qvr-kit
@@ -61,20 +62,40 @@ PY
 fi
 
 if [ "$WHAT" = chase ] || [ "$WHAT" = all ]; then
+    # Each dog or fiend: up to TRIES runs (3), PASS when one reaches the north room within the 480 frames (Quake's AI is
+    # random). The runs are repeatable: fixed frames (vr_fixed_frames 1, a server frame with each) and the server's random
+    # numbers seeded (sv_random_seed: SEED, 1, for the first try, SEED+1 for the second...), so a verdict is the same every
+    # time (until 2026-10-09 the draws came from the C library's rand() the client's effects share, with frames by the
+    # wall clock: 3 of 18 single runs did not get through). The grunt: PASS when it stays in its room
+    # and shoots through the gate (a snapshot in its shooting frames, 81-89, after he moved): by design (PORTAL_AI.md:
+    # ranged monsters shoot through a gate, navigation stays local; a melee one runs through, VR_Stealth_ChaseGate).
     for t in "7 dog -256 flush_player" "7 dog 1180 framed_sill16" "7 dog 1360 framed_sill32" "9 demon 0 flush_large" "9 demon 1580 framed_large" "0 soldier -256 flush_player"; do
         [ -n "$ONLY" ] && [[ "$t" != *"$ONLY"* ]] && continue
         set -- $t
-        S="developer 1;map vrteleporters;wait60;god;vr_stealth_meter 0;setpos $3 600 24 0 270 0;wait5;noclip 0;wait5;vr_test_spawn $1;vr_test_spawn_dist 200;impulse 241;wait40;echo MOVE;setpos $3 1150 24 0 270 0;wait5;noclip 0"
+        S="developer 1;vr_fixed_frames 1;sv_random_seed __SEED__;map vrteleporters;wait60;god;vr_stealth_meter 0;setpos $3 600 24 0 270 0;wait5;noclip 0;wait5;vr_test_spawn $1;vr_test_spawn_dist 200;impulse 241;wait40;echo MOVE;setpos $3 1150 24 0 270 0;wait5;noclip 0"
         for i in $(seq 1 32); do S="$S;wait15;echo SNAP $i;entities"; done
-        run -Script "$S;toggleconsole;quit"
-        awk -v m="progs/$2.mdl:" -v what="$2 at $4" '/^SNAP/{s=$2} index($0, m) && s {split($0, a, "("); split(a[2], b, ","); y=b[2]+0
-             if (y > 928 && !done) {printf "chase %s: in the north room after %d frames, at (%s,%s\n", what, s * 15, b[1], b[2]; done=1}
-             last=a[2]} END{if (!done) printf "chase %s: never reached the north room; last at (%s\n", what, last}' "$LOG" | cut -d')' -f1 | sed 's/$/)/'
+        tries=${TRIES:-3}; [ $2 = soldier ] && tries=1
+        for try in $(seq 1 $tries); do
+            run -Script "${S//__SEED__/$((${SEED:-1} + try - 1))};toggleconsole;quit"
+            line=$(awk -v m="progs/$2.mdl:" -v what="$2 at $4" '/^SNAP/{s=$2} index($0, m) && s {split($0, a, "("); split(a[2], b, ","); y=b[2]+0
+                 split($0, f, ":"); fr=f[3]+0; if (fr >= 81 && fr <= 89) shots++
+                 if (y > 928 && !done) {printf "chase %s: in the north room after %d frames, at (%s,%s)", what, s * 15, b[1], b[2]; done=1}
+                 last=a[2]} END{if (!done) {sub(/\).*/, "", last); printf "chase %s: never reached the north room; last at (%s), %d snapshots shooting", what, last, shots}}' "$LOG")
+            echo "$line" | grep -q "in the north room" && break
+        done
+        if [ $2 = soldier ]; then
+            echo "$line" | grep -qE "never reached.* [1-9][0-9]* snapshots shooting" && v=PASS || v=FAIL
+            echo "$v $line (expected: it stays and shoots through the gate)"
+        else
+            echo "$line" | grep -q "in the north room" && v=PASS || v=FAIL
+            echo "$v $line (try $try of $tries, seed $((${SEED:-1} + try - 1)))"
+        fi
+        [ $v = FAIL ] && chasefail=1
     done
 fi
 
 if [ "$WHAT" = views ] || [ "$WHAT" = all ]; then
-    S="map vrteleporters;wait60;vr_mirror 2;vr_window_view 0"
+    S="map vrteleporters;wait60;vr_mirror 1;vr_window_view 3"
     for n in flush_crate flush_player flush_large flush_wide framed_player framed_wide loop turn90 turn45 heights; do
         p=$(pos $n 2); set -- $p
         # 96 units further back than the walk's place, along the way he faces
@@ -82,3 +103,4 @@ if [ "$WHAT" = views ] || [ "$WHAT" = all ]; then
     done
     bash $KIT/run.sh $AGENT -Clean -Out teleporter_views.png -Script "$S;toggleconsole;quit" -Filter composed | tail -1
 fi
+exit ${chasefail:-0}
