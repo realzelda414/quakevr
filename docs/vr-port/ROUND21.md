@@ -34078,3 +34078,46 @@ Whether that churn upset the driver is not known.
 
 In the headset: the toolgun menu's joint list again (Physgun active, a crate held); if the driver error comes back,
 the time and Windows' Application log entry tell it apart from an engine crash (which writes qvr_crash.txt).
+## The runtime's menu pauses the game (2026-10-09)
+
+- **Pause** (`vr_xr_unfocused_pause` 1; Advanced > Headset > Runtime Menu Pauses: Pause the Game / Keep Running):
+  while the runtime's own menu has the focus (the session VISIBLE, not FOCUSED: SteamVR's dashboard, Virtual
+  Desktop's or Meta's menu; `Backend::runtimeMenuOpen`) a single player game pauses as the game's own menu pauses it:
+  `Host_ServerFrame` skips `SV_Physics` and `SV_RunClients` the player's think (`VR_RuntimeMenuPause`), so the game's
+  time stands still; the slow motion meter waits too. It resumes as the focus comes back. Multiplayer runs on (the
+  server isn't one player's to pause): only the held frame (`vr_xr_unfocused`). Decided each host frame in
+  `VR_BeginFrame` after the runtime's events (`runtimeMenuFrame`, vr_main.cpp), before the server's frame.
+- **Sounds**: the whole mix faded to `vr_xr_unfocused_volume` (0: silent; Runtime Menu Volume) over a tenth of a
+  second (`audio::setDuck`, applied first in `VR_SndLimit`, with or without the spatial audio; no click), back as it
+  resumes; the music paused (`BGM_Pause`; resumed unless the game was paused with `pause` meanwhile).
+- The console says each change: "VR: the runtime's menu has the focus" (with why the game runs on, if it does),
+  "VR: the game paused at <time>", "VR: the game resumed after <s>, <n> frames: game time <a> -> <b>; the sounds
+  down to <gain>".
+- Debug: `vr_debug_runtime_menu 1` (Debug > Profiling: Act as if the Runtime's Menu Were Open) acts as if the
+  runtime's menu had the focus, on any backend (the mock's too), for the pause and the fade (not the held frame).
+- Test: `xr_runtime_test.sh` part 5, on the fake runtime (FAKEXR_UNFOCUS=200-300, with sound): paused at 2.412 s,
+  resumed after 0.40 s and 100 frames with the game's time still 2.412, the sounds down to 0.00; the debug pause
+  later at 8.089 (the time ran on in between); `vr_xr_unfocused_pause 0`: "the game runs on", never paused. Part 4's
+  check split: the second's timing line with the frames shown again may come after the focus is back (it did, with
+  the paused game's quicker frames).
+
+## The eyes' size against the headset's panel, in the status box (2026-10-09)
+
+- Eye Image Size stays one global setting. The menus' status box (top right; `vr_menu_status`) now says, in VR:
+  "Eyes WxH (n Mpx)" (the size rendered), "= runtime's WxH xA xB" (the runtime's recommended size times Eye Image
+  Size, as the images came out, times Render Scale), and with the panel known "Panel WxH: runtime P%, eyes Q%" (the
+  runtime's own supersampling, SteamVR's Render Resolution or Virtual Desktop's quality, and the eyes' rendered pixels,
+  as shares of the panel's).
+- Over `vr_xr_res_warn` (1.3) times the panel's pixels (the panel unknown: over `vr_xr_res_warn_mpx`, 6 million an
+  eye) a warning, white on a red band (a hue alone is lost under the menus' tint): "! Eyes 2.2x the panel's pixels:
+  lower" / "! Eye Image Size (Advanced: Headset)" (or "Render Scale, Eye Image Size" when that is over 1) / "! or
+  SteamVR's Render Resolution" (Virtual Desktop's quality, Meta's, by the runtime's name).
+- The panel: `vr_xr_panel` "WxH" (archived; "" by the headset's name), else looked up by OpenXR's systemName (its
+  letters and digits: Quest 3S, 3, Pro, 2, 1; Rift S, Rift; Index; Vive Pro 2, Pro, Vive; Reverb G2; Pico 4; Bigscreen
+  Beyond; Pimax Crystal). SteamVR names the driver, not the headset ("SteamVR/OpenXR : oculus"): there it takes
+  `vr_xr_panel` (a Quest 3: `vr_xr_panel 2064x2208`), else the 6 Mpx budget. Virtual Desktop's and Meta's
+  names are expected to carry the model (not checked on them: worth a look at qvr_openxr.txt's "system" line).
+- `vr_status` prints the same lines ("status: ..."). The fake runtime takes a name (`FAKEXR_SYSTEM`);
+  `xr_runtime_test.sh` part 6: a Quest 3 at 3096x3312 (150% each side): "runtime 225%, eyes 225%", the warning;
+  `vr_xr_eye_scale 0.66`: "eyes 98%", none. By hand: an unknown name, no panel line; `vr_xr_panel 500x500` with Render
+  Scale 1.2: "runtime 154%, eyes 221%", the Render Scale hint; "Quest 2 (VDXR)" found (1832x1920).

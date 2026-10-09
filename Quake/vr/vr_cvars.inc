@@ -471,10 +471,27 @@ QVR_CVAR(vr_xr_keep_graphics_dlls, "1", CVAR_NONE)
 // or Meta's menu): 1 the eyes are not rendered, the last frame is shown again (world-locked: the runtime reprojects
 // it; the GPU left to the runtime's menu); 0 they are rendered as usual.
 QVR_CVAR(vr_xr_unfocused, "1", CVAR_ARCHIVE)
+// While the runtime's own menu has the focus (as vr_xr_unfocused): 1 a single player game paused as the game's own
+// menu pauses it (the world and its time stand still; the sounds faded to vr_xr_unfocused_volume, the music paused),
+// resumed as the focus comes back; 0 it runs on (multiplayer always does: the server isn't paused for one player).
+QVR_CVAR(vr_xr_unfocused_pause, "1", CVAR_ARCHIVE)
+// The game's volume while vr_xr_unfocused_pause holds it (0 silent .. 1 unchanged), faded over a tenth of a second.
+QVR_CVAR(vr_xr_unfocused_volume, "0", CVAR_ARCHIVE)
+// Debug: 1 the game acts as if the runtime's menu had the focus (vr_xr_unfocused_pause's pause, on any backend: the
+// mock's too); 0 only the runtime says.
+QVR_CVAR(vr_debug_runtime_menu, "0", CVAR_NONE)
 // The eye images' size, times the runtime's recommended (each side; SteamVR's includes its own resolution setting, 150%
 // of the panel's area on Auto), at the next VR start: smaller images cost less to render, copy (SteamVR's OpenGL path
 // copies each into its own textures) and keep in video memory. 0.5 .. 1.
 QVR_CVAR(vr_xr_eye_scale, "1", CVAR_ARCHIVE)
+// The headset panel's pixels per eye, "WxH", for the menu's status box (the runtime's resolution and the eyes' as a
+// share of it, and its warning); "" looked up by the headset's name (Quest 2, 3, 3S, Pro, Index, Vive, Reverb G2,
+// Pico 4...: SteamVR names none, Virtual Desktop and Meta do).
+QVR_CVAR(vr_xr_panel, "", CVAR_ARCHIVE)
+// The status box warns that the eyes are rendered too large (and says what lowers them) over this many times the
+// panel's pixels (vr_xr_panel; 0 never) or, the panel unknown, over vr_xr_res_warn_mpx million pixels an eye (0 never).
+QVR_CVAR(vr_xr_res_warn, "1.3", CVAR_ARCHIVE)
+QVR_CVAR(vr_xr_res_warn_mpx, "6", CVAR_ARCHIVE)
 // 1: each eye's image acquired from the runtime only once its scene is drawn (before the post-processing writes it):
 // the runtime's wait for the image (SteamVR's OpenGL path: its copy out of it) overlaps the scene's drawing; 0 before
 // the scene (the old order, for comparison).

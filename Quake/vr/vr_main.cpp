@@ -295,6 +295,15 @@ void VR_Status_f()
                "%dx%d, largest %dx%d)\n",
         renderWidth, renderHeight, vr_render_scale.value, imagePixels > 0.0 ? 100.0 * pixels / imagePixels : 0.0,
         sizes.width, sizes.height, sizes.recommendedWidth, sizes.recommendedHeight, sizes.maxWidth, sizes.maxHeight);
+    // The menu's status box's eye lines: the panel and the runtime's share of it, a warning if too large.
+    {
+        za::Vector<za::String> lines;
+        qvr::eyeSizeLines(*state->backend, lines);
+        for(const za::String& line : lines)
+        {
+            Con_Printf("  status: %s\n", line.cStr());
+        }
+    }
 
     // The lenses' hidden area (vr_visibility_mask): its share of the image, and its bounds in the
     // eye's tangent space against the eye's field of view (they should lie within it).
@@ -1109,6 +1118,79 @@ Backend* backend()
     return state ? state->backend.get() : nullptr;
 }
 
+// The runtime's own menu (SteamVR's dashboard, Virtual Desktop's or Meta's menu: the session VISIBLE, not FOCUSED)
+// pausing a single player game as the game's menu does (vr_xr_unfocused_pause): no physics, no player moves (host.c,
+// sv_user.c: VR_RuntimeMenuPause), the game's time still; the sounds faded (vr_xr_unfocused_volume), the music paused.
+// Multiplayer runs on (the server isn't one player's to pause): only the frame held (vr_xr_unfocused).
+struct RuntimeMenuState
+{
+    bool open{false};      // the runtime's menu has the focus (or vr_debug_runtime_menu)
+    bool paused{false};    // the game paused for it
+    bool music{false};     // the music paused by it, resumed with the game
+    double since{0.0};     // realtime it paused
+    double gameTime{0.0};  // sv.qcvm.time then
+    int frames{0};         // host frames while paused
+    float quietest{1.f};   // the sounds' lowest volume then (audio::duckGain)
+};
+RuntimeMenuState runtimeMenu;
+
+bool runtimeMenuOpen()
+{
+    return runtimeMenu.open;
+}
+
+bool runtimeMenuPaused()
+{
+    return runtimeMenu.paused;
+}
+
+// Once a host frame, after the runtime's events (VR_BeginFrame): before the server's frame reads it.
+void runtimeMenuFrame()
+{
+    RuntimeMenuState& m = runtimeMenu;
+    const Backend* b = backend();
+    const bool open = (b && b->runtimeMenuOpen()) || vr_debug_runtime_menu.value != 0.f;
+    const bool single = sv.active && svs.maxclients == 1 && !cls.demoplayback;
+    const bool pause = open && single && vr_xr_unfocused_pause.value != 0.f;
+    if(open != m.open)
+    {
+        Con_Printf("VR: the runtime's menu %s%s\n", open ? "has the focus" : "gave the focus back",
+            !open || pause ? "" : !single ? " (not a single player game: it runs on)" : " (vr_xr_unfocused_pause 0: the game runs on)");
+    }
+    if(pause && !m.paused)
+    {
+        m.since = realtime;
+        m.gameTime = sv.qcvm.time;
+        m.frames = 0;
+        m.quietest = 1.f;
+        Con_Printf("VR: the game paused at %.3f s (vr_xr_unfocused_pause; volume %g)\n", sv.qcvm.time,
+            static_cast<double>(CLAMP(0.f, vr_xr_unfocused_volume.value, 1.f)));
+        m.music = !cl.paused;
+        if(m.music)
+        {
+            BGM_Pause();
+        }
+    }
+    else if(!pause && m.paused)
+    {
+        Con_Printf("VR: the game resumed after %.2f s, %d frames: game time %.3f -> %.3f; the sounds down to %.2f\n",
+            realtime - m.since, m.frames, m.gameTime, sv.qcvm.time, static_cast<double>(m.quietest));
+        if(m.music && !cl.paused)
+        {
+            BGM_Resume();
+        }
+        m.music = false;
+    }
+    if(pause)
+    {
+        m.frames++;
+        m.quietest = za::min(m.quietest, audio::duckGain());
+    }
+    m.open = open;
+    m.paused = pause;
+    audio::setDuck(pause ? vr_xr_unfocused_volume.value : 1.f);
+}
+
 bool backendRestartPending()
 {
     return state && state->restartRequested;
@@ -1151,6 +1233,122 @@ bool frameRate(FrameRate& out)
     return valid;
 }
 
+// A headset's panel (pixels per eye), by a part of the name the runtime gives it (OpenXR's systemName, its letters and
+// digits in lower case: "Meta Quest 3" -> "metaquest3"); the more particular names first. SteamVR names none of them
+// ("SteamVR/OpenXR : oculus"): vr_xr_panel.
+struct KnownPanel
+{
+    const char* name;
+    int width, height;
+};
+constexpr KnownPanel knownPanels[] = {
+    {"quest3s", 1832, 1920}, {"quest3", 2064, 2208}, {"questpro", 1800, 1920}, {"quest2", 1832, 1920},
+    {"quest", 1440, 1600}, {"rifts", 1280, 1440}, {"rift", 1080, 1200}, {"index", 1440, 1600},
+    {"vivepro2", 2448, 2448}, {"vivepro", 1440, 1600}, {"vive", 1080, 1200}, {"reverbg2", 2160, 2160},
+    {"pico4", 2160, 2160}, {"beyond", 2560, 2560}, {"crystal", 2880, 2880},
+};
+
+// The panel's pixels per eye: vr_xr_panel ("WxH"), else looked up by the headset's name; false if unknown.
+[[nodiscard]] bool panelSize(const Backend& b, int& width, int& height)
+{
+    width = height = 0;
+    if(vr_xr_panel.string[0])
+    {
+        return sscanf(vr_xr_panel.string, "%dx%d", &width, &height) == 2 && width > 0 && height > 0;
+    }
+    char key[64];
+    int n = 0;
+    for(const char* c = b.systemName(); *c && n < static_cast<int>(sizeof(key)) - 1; c++)
+    {
+        const char lower = *c >= 'A' && *c <= 'Z' ? static_cast<char>(*c - 'A' + 'a') : *c;
+        if((lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9'))
+        {
+            key[n++] = lower;
+        }
+    }
+    key[n] = '\0';
+    for(const KnownPanel& p : knownPanels)
+    {
+        if(strstr(key, p.name))
+        {
+            width = p.width;
+            height = p.height;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The status box's eye lines: the size the eyes are rendered at (and its pixels), as the runtime's recommended size
+// times Eye Image Size (vr_xr_eye_scale: the images') times Render Scale (vr_render_scale: the eyes' in them); the
+// panel's size, if known, with the runtime's size (its own supersampling: SteamVR's Render Resolution, Virtual
+// Desktop's quality) and the eyes' as a share of its pixels; and a warning (its lines begin with '!', drawn white on red: see
+// VR_MenuDrawStatus) over vr_xr_res_warn times the panel's pixels (vr_xr_res_warn_mpx million, the panel unknown), with
+// what lowers them.
+void eyeSizeLines(const Backend& b, za::Vector<za::String>& out)
+{
+    char line[160];
+    const EyeSizes s = b.eyeSizes();
+    const int w = scaledEyeSize(s.width, s.maxWidth), h = scaledEyeSize(s.height, s.maxHeight);
+    const double eyePixels = static_cast<double>(w) * h;
+    q_snprintf(line, sizeof(line), "Eyes %dx%d (%.1f Mpx)", w, h, eyePixels * 1e-6);
+    out.pushBack(za::String{line});
+    const double imageScale = s.recommendedWidth > 0 ? static_cast<double>(s.width) / s.recommendedWidth : 1.0;
+    const double renderScale = s.width > 0 ? static_cast<double>(w) / s.width : 1.0;
+    q_snprintf(line, sizeof(line), "= runtime's %dx%d x%.2f x%.2f", s.recommendedWidth, s.recommendedHeight, imageScale,
+        renderScale);
+    out.pushBack(za::String{line});
+
+    int pw = 0, ph = 0;
+    const bool panel = panelSize(b, pw, ph);
+    const double panelPixels = static_cast<double>(pw) * ph;
+    double over = 0.0; // the eyes' pixels over the warning's threshold (a ratio; 0 under it)
+    if(panel)
+    {
+        const double runtimeShare = static_cast<double>(s.recommendedWidth) * s.recommendedHeight / panelPixels;
+        q_snprintf(line, sizeof(line), "Panel %dx%d: runtime %.0f%%, eyes %.0f%%", pw, ph, runtimeShare * 100.0,
+            eyePixels / panelPixels * 100.0);
+        out.pushBack(za::String{line});
+        if(vr_xr_res_warn.value > 0.f && eyePixels > panelPixels * vr_xr_res_warn.value)
+        {
+            over = eyePixels / panelPixels;
+        }
+    }
+    else if(vr_xr_res_warn_mpx.value > 0.f && eyePixels > vr_xr_res_warn_mpx.value * 1e6)
+    {
+        over = eyePixels * 1e-6;
+    }
+    if(over <= 0.0)
+    {
+        return;
+    }
+    if(panel)
+    {
+        q_snprintf(line, sizeof(line), "! Eyes %.1fx the panel's pixels: lower", over);
+    }
+    else
+    {
+        q_snprintf(line, sizeof(line), "! Eyes %.1f Mpx, over %g: lower", over, static_cast<double>(vr_xr_res_warn_mpx.value));
+    }
+    out.pushBack(za::String{line});
+    // What made them large: Render Scale over 1, Eye Image Size, the runtime's own setting (by its name).
+    const char* rt = b.runtimeName();
+    const char* setting = strstr(rt, "SteamVR")                                           ? "SteamVR's Render Resolution"
+                          : (strstr(rt, "VirtualDesktop") || strstr(rt, "VDXR"))          ? "VD's quality (Streaming tab)"
+                          : strstr(rt, "Oculus") || strstr(rt, "Meta")                    ? "Meta's Render Resolution"
+                                                                                          : "the runtime's resolution";
+    if(renderScale > 1.001)
+    {
+        out.pushBack(za::String{"! Render Scale, Eye Image Size"});
+    }
+    else
+    {
+        out.pushBack(za::String{"! Eye Image Size (Advanced: Headset)"});
+    }
+    q_snprintf(line, sizeof(line), "! or %s", setting);
+    out.pushBack(za::String{line});
+}
+
 // The menu's status box (vr_menu_status, vr_menuui.cpp): the mode, the runtime, the resolution rendered, the target
 // rate, and the frames' cost and the memory held. The memory is sampled once a second (its GL queries are not free).
 void statusLines(za::Vector<za::String>& out)
@@ -1178,11 +1376,7 @@ void statusLines(za::Vector<za::String>& out)
     double targetHz = 0.0;
     if(vr)
     {
-        const EyeSizes s = b->eyeSizes();
-        const int w = scaledEyeSize(s.width, s.maxWidth), h = scaledEyeSize(s.height, s.maxHeight);
-        q_snprintf(line, sizeof(line), "Eyes %dx%d (runtime %dx%d x%.2f)", w, h, s.width, s.height,
-            static_cast<double>(CLAMP(0.25f, vr_render_scale.value, 2.f)));
-        out.pushBack(za::String{line});
+        eyeSizeLines(*b, out);
         targetHz = periodMs > 0.0 ? 1000.0 / periodMs : 0.0;
         if(targetHz > 0.0)
         {
@@ -1634,6 +1828,7 @@ extern "C" void VR_BeginFrame()
         angvel::fix(state->tracking, motion::playing() ? motion::playSource() : state->backend->runtimeName());
         timescale::filterHands(state->tracking); // slow motion: the hands slowed with the world (not the head)
     }
+    runtimeMenuFrame(); // the runtime's menu pausing the game (before the server's frame)
 
     sampleCounts(); // vr_memstats: the last frame's, before its texts are cleared
     lines::clear(); // queued anew every frame (teleport aim, crosshairs)
@@ -1660,6 +1855,11 @@ extern "C" void VR_BeginFrame()
     // Update the hands now, before the move is built (it carries the aim in the view angles).
     input::roomscaleJump(hands::current());
     toolgun::frame(hands::current()); // the toolgun's tools, with the hands of this frame
+}
+
+extern "C" int VR_RuntimeMenuPause()
+{
+    return runtimeMenuPaused() ? 1 : 0;
 }
 
 extern "C" int VR_IsActive()

@@ -196,8 +196,51 @@ L="$OUT/headset_openxr.txt"
 check $L "the fake headset's session logged" "extensions enabled: XR_KHR_opengl_enable" "system \"FakeXR headset\"" \
     "layers: a projection layer in stage space" "eyes: recommended 600x640" "formats offered .*: GL_RGBA8 GL_SRGB8_ALPHA8" \
     "format chosen: GL_SRGB8_ALPHA8" "xrCreateSwapchain: 480x512 GL_SRGB8_ALPHA8, 3 images" "eye images 480x512 .*vr_xr_eye_scale 0.8" \
-    "session FOCUSED" "xr 1\.[0-9]s: [0-9]+ frames \([0-9]+ rendered" "session VISIBLE \(no input focus" "[1-9][0-9]* last again" "session FOCUSED"
+    "session FOCUSED" "xr 1\.[0-9]s: [0-9]+ frames \([0-9]+ rendered" "session VISIBLE \(no input focus" "session FOCUSED"
+# (The second's timing line with the frames shown again may come before or after the focus is back.)
+check $L "the last frame shown again while unfocused" "session VISIBLE \(no input focus" "[1-9][0-9]* last again"
 check "$LOG" "unfocused: the last frame shown again, valid layers" "the focus lost" "the focus back" \
     "xrDestroySession: [0-9]+ frames: [0-9]+ projection layers \((9[0-9]|10[0-9]) without an image released"
 if grep -q "LAYER_INVALID" "$LOG"; then echo "FAIL: a layer without a released image"; fails=$((fails + 1)); else echo "PASS: no invalid layer"; fi
+
+# 5. The runtime's menu pausing a single player game (vr_xr_unfocused_pause 1): the focus lost for xrWaitFrame 200-300
+# (FAKEXR_UNFOCUS): paused, the game's time still, resumed as it comes back (and running on: vr_debug_runtime_menu
+# pauses it again later; with sound: faded to vr_xr_unfocused_volume 0); vr_xr_unfocused_pause 0: the game runs on.
+LOG="$OUT/pause_fake.log"; : > "$LOG"
+export FAKEXR_LOG="$(cygpath -w "$LOG")" FAKEXR_HEADSET=fakexr_steam FAKEXR_UNFOCUS=200-300
+unset FAKEXR_FAIL_INSTANCE FAKEXR_D3D11 FAKEXR_EYE
+P="vr_xr_test 1;vr_xr_runtime 0;vr_xr_runtime_fallback 0;vr_xr_test_runtimes \"$ST\";vr_xr_test_active \"$ST\";vr_xr_test_processes vrserver.exe;vr_backend openxr;map start"
+S="$P;vr_xr_unfocused_pause 1;wait500;vr_debug_runtime_menu 1;wait5;vr_debug_runtime_menu 0;wait5;toggleconsole;quit"
+bash "$KIT/run.sh" "$NAME" -Script "$S" -Full -Sound -Filter "VR: the|session lost" > "$OUT/pause_on.log"
+S="$P;vr_xr_unfocused_pause 0;wait500;toggleconsole;quit"
+bash "$KIT/run.sh" "$NAME" -Script "$S" -Full -Filter "VR: the|session lost" > "$OUT/pause_off.log"
+unset FAKEXR_HEADSET FAKEXR_UNFOCUS
+L="$OUT/pause_on.log"
+check $L "the runtime's menu pauses the game, resumes it" "VR: the runtime's menu has the focus$" "VR: the game paused at [0-9.]+ s" \
+    "VR: the runtime's menu gave the focus back" "VR: the game resumed after [0-9.]+ s, [0-9]+ frames: game time [0-9.]+ -> [0-9.]+; the sounds down to 0\.0" \
+    "VR: the game paused at" "VR: the game resumed"
+# The game's time still while paused, on after: the second pause (vr_debug_runtime_menu) later than the first.
+T=( $(grep -oE "game time [0-9.]+ -> [0-9.]+" $L | grep -oE "[0-9.]+") )
+if [ "${#T[@]}" -ge 4 ] && [ "${T[0]}" = "${T[1]}" ] && [ "${T[2]}" = "${T[3]}" ] && awk "BEGIN{exit !(${T[2]} > ${T[1]} + 0.05)}"; then
+    echo "PASS: the game's time still while paused (${T[0]} -> ${T[1]}), on after (${T[2]})"
+else echo "FAIL: the game's time while paused: ${T[*]}"; fails=$((fails + 1)); fi
+L="$OUT/pause_off.log"
+check $L "vr_xr_unfocused_pause 0: the game runs on" "VR: the runtime's menu has the focus \(vr_xr_unfocused_pause 0: the game runs on\)" \
+    "VR: the runtime's menu gave the focus back"
+if grep -q "VR: the game paused" $L; then echo "FAIL: paused with vr_xr_unfocused_pause 0"; fails=$((fails + 1)); else echo "PASS: not paused with vr_xr_unfocused_pause 0"; fi
+
+# 6. The menu's status box's eye lines (vr_status prints them): a Quest 3 by its name (FAKEXR_SYSTEM) at 150% each side
+# (2.25 times the panel's pixels): the panel, the runtime's share, the warning and its hint; Eye Image Size 0.66: none.
+export FAKEXR_LOG="$(cygpath -w "$OUT/status_fake.log")" FAKEXR_HEADSET=fakexr_steam FAKEXR_SYSTEM="Meta Quest 3" FAKEXR_EYE=3096x3312
+P="vr_xr_test 1;vr_xr_runtime 0;vr_xr_runtime_fallback 0;vr_xr_test_runtimes \"$ST\";vr_xr_test_active \"$ST\";vr_xr_test_processes vrserver.exe;vr_backend openxr;wait30;vr_status"
+S="vr_xr_panel \"\";vr_render_scale 1;vr_xr_eye_scale 1;$P;vr_restart;vr_xr_eye_scale 0.66;wait5;vr_restart;wait30;echo SCALED;vr_status;vr_xr_eye_scale 1;toggleconsole;quit"
+bash "$KIT/run.sh" "$NAME" -Script "$S" -Full -Filter "status:|SCALED" > "$OUT/status.log"
+unset FAKEXR_HEADSET FAKEXR_SYSTEM FAKEXR_EYE
+L="$OUT/status.log"
+check $L "the status box: a Quest 3's panel, the eyes too large" "status: Eyes 3096x3312 \(10\.3 Mpx\)" "status: = runtime's 3096x3312 x1\.00 x1\.00" \
+    "status: Panel 2064x2208: runtime 225%, eyes 225%" "status: ! Eyes 2\.2x the panel's pixels: lower" "status: ! Eye Image Size" \
+    "status: ! or the runtime's resolution"
+check $L "Eye Image Size 0.66: the eyes at the panel's size, no warning" "SCALED" "status: = runtime's 3096x3312 x0\.66 x1\.00" \
+    "status: Panel 2064x2208: runtime 225%, eyes 98%"
+if sed -n '/SCALED/,$p' $L | grep -q "status: !"; then echo "FAIL: a warning at Eye Image Size 0.66"; fails=$((fails + 1)); else echo "PASS: no warning at 0.66"; fi
 echo "xr_runtime_test: $fails failed"
