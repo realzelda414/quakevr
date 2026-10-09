@@ -243,7 +243,7 @@ a death's reload (`restart`, the autosave's `load`), a changelevel back, the sam
 `restart` 2.1 s to 0.4 s, ad_grendel's 1.3 s to 0.3 s). `vr_hull_keep` (default 1, Debug > Keep Hitboxes for Reloads) is how many maps are
 kept; 0 is off. A width changed in between is compiled again; external `.bsp` models' brushes and trees are made
 again. `vr_hull_keeptest` rebuilds everything from scratch and checks the hashes match. Details and numbers:
-[PROFILING_2026-10.md](PROFILING_2026-10.md), "Hull build, follow-up".
+the removed PROFILING_2026-10.md (git history), "Hull build, follow-up".
 
 ### Kept on disk (`vr_hull_cache`, 2026-10-07)
 
@@ -628,6 +628,6 @@ Sizes that first appear later (a monster spawned after load) still build on dema
 demand-filled.
 
 Checks: `vr_hull_preloadtest` compares traces against freshly built trees without filling the cache;
-`vr_hull_audit 1` prints the preparation's counts, bytes and time; `vr_startup_times` includes the phase;
-`Misc/quakevr/hull_preload_test.py` runs both over `vrfiringrange,e1m1,e2m2,start` (`--traverse` for a scripted
-walk). The full report, `HULL_PRELOAD_20261005.md`, was removed 2026-10-06 and is in git history.
+`vr_hull_audit 1` prints the preparation's counts, bytes and time; `vr_startup_times` includes the phase.
+(`Misc/quakevr/hull_preload_test.py`, which ran both over several maps, was removed 2026-10-09 with the perf_suite
+scripts it built on; git history.) The full report, `HULL_PRELOAD_20261005.md`, was removed 2026-10-06 and is in git history.

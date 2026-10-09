@@ -114,8 +114,6 @@ vector(vector xAngles) VRForwardOf =
     return forward;
 }
 
-// TODO VR: (P2) move:
-
 typedef void() NullaryFn;
 typedef void(entity, float) PainFn;
 
@@ -132,9 +130,6 @@ NullaryFn(PainFn fn) fromPainToTouchFn =
 //
 //
 //
-// ----------------------------------------------------------------------------
-// TODO VR: (P2) refactor like above
-// ----------------------------------------------------------------------------
 
 VR_IMPL_MAKE_FLOAT_GETTER(VRGetMeleeHitSoundPlayed,
                           self.offhand_melee_hit_sound_played,
@@ -289,11 +284,6 @@ void(entity e, float xHand, float v) VRSetEntWeaponFlags =
     else                     e.weaponflags = v;
 }
 
-void(float xHand, float v) VRSetWeapon =
-{
-    VRSetEntWeapon(self, xHand, v);
-}
-
 inline float(entity e, float xHand) VRGetEntWeapon =
 {
     return VR_IMPL_SELECT(xHand, e.weapon2, e.weapon);
@@ -402,8 +392,6 @@ float(entity entTarget) VRGetHandtouchHand =
 
     return entTarget.handtouch_hand;
 }
-
-// TODO VR: (P2) organize bits
 
 inline float(float flags, float bit) VRHasBit =
 {

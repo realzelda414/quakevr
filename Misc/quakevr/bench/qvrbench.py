@@ -30,7 +30,7 @@ def waits(n):
     return ["wait"] * int(n)
 
 
-# The firing range: the spawn looks down the range (-x); the perf suite's fixtures (perf_suite.py) are round it.
+# The firing range: the spawn looks down the range (-x); the old perf suite's fixtures (perf_suite.py, git history) are round it.
 RANGE = "vrfiringrange"
 MIXED = ("monster_army", "monster_ogre", "monster_knight", "monster_wizard")
 
@@ -401,7 +401,7 @@ def scenarios():
             "entities. Monsters asleep (notarget).", body=tour_body(pts), warm=60, load_wait=180)
     add("tour_warden_flat", ["maps", "flat"], "warden's tour in flat mode", "warden", "tour_warden, flat.",
         body=tour_body(TOURS["warden"]), warm=60, flat=True, load_wait=180)
-    # ---- Dawn of the Machine (MG3_PLAN.md M3-28): the whole map's monsters (vr_test_monsters: 4 the deferred ones
+    # ---- Dawn of the Machine (MG3.md M3-28): the whole map's monsters (vr_test_monsters: 4 the deferred ones
     # brought in, 2 all of them woken, 3 all killed at once), at the spawn; the ragdoll cap as shipped (8) and raised.
     for m, pts in MG3_TOURS.items():
         add(f"tour_mg3_{m}", ["mg3", "maps"], f"Dawn of the Machine's {m}: 6 places x 4 directions, monsters asleep", m,

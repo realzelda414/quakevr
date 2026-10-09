@@ -1,4 +1,4 @@
-// vr_stealth_defs.qc -- the stealth AI's fields and entry points (vr_stealth.qc; docs/vr-port/STEALTH_PLAN.md), ahead
+// vr_stealth_defs.qc -- the stealth AI's fields and entry points (vr_stealth.qc; docs/vr-port/STEALTH.md), ahead
 // of ai.qc and combat.qc, which call them.
 
 // On a monster:
@@ -15,8 +15,7 @@
 .float stl_phase_time;  // when the phase began
 .float stl_alert_time;  // when it was last disturbed
 .float stl_alert_power; // and how strongly (a noise's reach over its distance; a sighting 1)
-.float stl_post_set;    // its post recorded:
-.vector stl_post;       // where it stood,
+.vector stl_post;       // its post recorded: where it stood,
 .float stl_post_yaw;    // facing,
 .entity stl_post_goal;  // and its movetarget (a path_corner: the path it walked)
 .float stl_post_walk;   // it was walking that path

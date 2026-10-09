@@ -2135,10 +2135,10 @@ float lighting::lightContrast()
 
 // The room's own fill light (vr_ambient_light): a share of Quake's full light added to the baked
 // light before the contrast, so a map reads clearly lit without the flashlight while its lamps stay
-// brighter. 0 keeps Quake's; the Debug A/B (vr_ambient_light_ab) takes it off at once, to compare.
+// brighter. 0 keeps Quake's.
 float lighting::ambientFloor()
 {
-    return vr_ambient_light_ab.value != 0.f ? 0.f : za::clamp(vr_ambient_light.value, 0.f, 1.f);
+    return za::clamp(vr_ambient_light.value, 0.f, 1.f);
 }
 
 // The curve onto a lightmap value (R_LightPoint: 128 is Quake's full light): the fill light first,
@@ -2428,8 +2428,8 @@ void lighting::applyPreset(int preset)
         {2, 256, 0, 512, 1, 4096, 1024, 1, 1, 1, 1, 1, 0, 0},
         // medium
         {4, 512, 2, 512, 1, 4096, 1536, 1, 1, 1, 1, 1, 1, 1},
-        // high
-        {6, 512, 4, 512, 2, 4096, 2048, 1, 1, 1, 1, 1, 1, 1},
+        // high (8192: its 10 shadowed lights' 512 faces fill only 8 of 4096's 3x2-face blocks)
+        {6, 512, 4, 512, 2, 8192, 2048, 1, 1, 1, 1, 1, 1, 1},
         // ultra
         {8, 1024, 4, 1024, 3, 8192, 3072, 1, 1, 1, 1, 1, 1, 1},
     };

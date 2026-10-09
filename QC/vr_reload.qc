@@ -2,7 +2,7 @@
 //
 //
 // ----------------------------------------------------------------------------
-// Immersive reloading (vr_reload_mode 3; docs/vr-port/RELOAD_PLAN.md)
+// Immersive reloading (vr_reload_mode 3; docs/vr-port/RELOAD.md)
 // ----------------------------------------------------------------------------
 //
 // The guns that load by hand (VR_Reload_ManualFor: the shotgun so far) take their rounds from the ammo pouch on the front
@@ -688,13 +688,6 @@ entity(float xWid, float xAid, float xCount, vector xOrg, vector xAngles) VR_Rel
         r.nextthink = time + 0.1;
     }
     return r;
-};
-
-// A new launcher's round for `xFront` (WID_*) of ammo `xAid` (VR_Reload_MakeRound).
-entity(float xFront, float xAid, vector xOrg, vector xAngles) VR_Reload_MakeFront =
-{
-    vr_reload_make_front = xFront;
-    return VR_Reload_MakeRound(0, xAid, 1, xOrg, xAngles);
 };
 
 // ----------------------------------------------------------------------------

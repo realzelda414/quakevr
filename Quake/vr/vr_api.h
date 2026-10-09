@@ -248,7 +248,6 @@ enum { QVR_DLIGHT_MUZZLE, QVR_DLIGHT_ROCKET, QVR_DLIGHT_EXPLOSION };
 void VR_DecalTempEntity (int scorch, const float *pos);	// cl_tent.c: a wall hit (0) or an explosion (1) leaves a mark
 int VR_GibTrail (int ent, int zombie);					// CL_RelinkEntities: a gib's blood (a trail, drops on the floor, splats where it hits); nonzero if it drew the trail (not Quake's)
 void VR_ExplosionDebrisTrail (int ent);					// CL_RelinkEntities, an entity without a trail of Quake's: an explosion's chunk's fire trail (vr_explosiondebris.cpp)
-int VR_RoundTrail (int ent);							// CL_RelinkEntities: a launcher's grenade round armed (the pouches' grenades: vr_grenade.qc) smokes as a grenade
 int VR_GrenadeTrail (int ent);						// CL_RelinkEntities: whether a grenade model smokes (not a hand grenade with its pin in: vr_grenade.qc)
 int VR_BulletHoleSprite (int ent);						// CL_RelinkEntities: Hipnotic's bullet hole sprite, a chip decal instead; nonzero if it is not drawn
 void VR_TuneDlight (int kind, int ent, void *dlight);	// after Quake sets a muzzle flash, rocket or explosion light up: size, colour, fade (the local player's flash at the gun)
@@ -259,7 +258,6 @@ void VR_HazeExplosion (const float *pos, float size);	// cl_tent.c: an explosion
 int VR_ModelSpins (int ent);							// CL_RelinkEntities: nonzero to spin a model as EF_ROTATE (a weapon pickup drawn as its prop)
 int VR_SuppressModelRotate (int ent);					// CL_RelinkEntities: nonzero to keep an EF_ROTATE model's angles (rigid bodies)
 void VR_RelinkHeld (void);								// end of CL_RelinkEntities: the local player's held objects drawn in the hands (vr_held.cpp)
-void VR_DebugDrawnBoxes (void);							// end of CL_RelinkEntities: vr_debug_item_sizes (vr_client.cpp)
 float VR_BeamScale (struct qmodel_s *model);				// CL_UpdateTEnts: scale of a beam's segments
 int VR_UpdateBeam (int ent, float *start, float *end);	// CL_UpdateTEnts: moves the player's own beams with the gun; nonzero: a rope (no random roll)
 int VR_BeamGone (int ent);								// CL_UpdateTEnts: nonzero if a hand's lightning outlived its gun there (thrown, dropped, holstered): ended at once

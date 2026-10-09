@@ -537,7 +537,7 @@ bool campaignMultiplayerRequested()
 }
 
 // The ready native campaigns accepted for single player only: Dimension of the Past, Dimension of the Machine
-// (its Horde coop passed two-process tests, not yet a session with two headsets) and Dawn of the Machine (MG3_PLAN.md
+// (its Horde coop passed two-process tests, not yet a session with two headsets) and Dawn of the Machine (MG3.md
 // decision 6: single player first; its co-op and dm1 later). Their multiplayer stays on the developer path
 // (vr_campaign_native).
 [[nodiscard]] bool soloOnly(int index)
@@ -1202,12 +1202,17 @@ extern "C" int VR_CanLoadCampaignSave(const char* text)
     if(!gameDirAlreadyAdded(vrGameDir)) { return 1; }
     constexpr const char* key = "\"vr_save_packmask\"";
     const char* marker = strstr(text, key);
-    int saved = 4; // Legacy merged VR progs precached both packs on every map.
-    if(marker)
+    const char* context = strstr(text, "\"vr_save_campaign\"");
+    if(!marker || !context)
     {
-        COM_Parse(marker + strlen(key));
-        saved = Q_atoi(com_token);
+        // (world.qc has written both since 2026-10-05: an older save's or another game's.)
+        Con_Printf("VR: this save lacks the mission-pack and campaign keys every Quake VR save has had since 2026-10-05 "
+                   "(vr_save_packmask, vr_save_campaign): an older build's or another game's save, not loaded.\n");
+        SCR_CenterPrint("Saved game from an older build\nor another game: not loaded\n(see the console)");
+        return 0;
     }
+    COM_Parse(marker + strlen(key));
+    const int saved = Q_atoi(com_token);
     const int installed = 1 + (packStatus[0] == 1) + 2 * (packStatus[1] == 1);
     if(saved != installed)
     {
@@ -1215,7 +1220,6 @@ extern "C" int VR_CanLoadCampaignSave(const char* text)
             "Restore the same owned packs before loading; start a new game to use this installation.\n", saved, installed);
         return 0;
     }
-    if(const char* context = strstr(text, "\"vr_save_campaign\""))
     {
         COM_Parse(context + strlen("\"vr_save_campaign\""));
         const int savedCampaign = Q_atoi(com_token);
@@ -1313,7 +1317,7 @@ extern "C" int VR_CampaignDataAvailable(const char* dir)
     return i >= 3 && campaigns[i].status == 1;
 }
 
-// A file of an owned pack read in place without mounting it (MG3_PLAN.md, "Decisions": an expansion's weapons usable
+// A file of an owned pack read in place without mounting it (MG3.md, "Decisions": an expansion's weapons usable
 // in any campaign when its data is there): "owned/<folder>/<path>" names <path> in that discovered Dopa/MG1/MG3 folder
 // (its loose file, else its highest pak that has it), whichever campaign is active; the pack's own files never shadow
 // Quake VR's (its progs/v_hammer.mdl is the Super Axe, Quake VR's the Hipnotic Mjolnir). Nothing is copied or written.

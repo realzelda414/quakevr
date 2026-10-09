@@ -2,7 +2,7 @@
 
 The overnight profiling run's open questions: optimizations with a trade-off (a visual, behaviour, memory or default
 change) and leads not done, each with what was measured. The uncontroversial fixes are committed (BENCHMARKS.md,
-"Profiling run (2026-10-08)"). Earlier list: PROFILING_2026-10.md, "Decision list".
+"Profiling run (2026-10-08)"). Earlier list: the removed PROFILING_2026-10.md, "Decision list".
 
 Setup: i9-13900K, RTX 4090, the author's settings of 2026-10-06 (`his_cfg_20261006_1237.cfg`, through
 `bench.sh --settings`), mock eyes 2048 square, paced at 90 Hz, exclusive; CPU = `cpu_busy_ms` (the frame's work less
@@ -70,7 +70,7 @@ stops it again). Before this run's trace fix the debris' traces were 15% of `ai_
 `ai_crowd_64` (64 monsters awake, entities not drawn) against `ai_crowd_64_quakeai` (the same with Quake's AI):
 CPU 2.57 against 1.76 ms before this run's fixes; the server's share 0.85 against 0.56 ms, the rest is the fight
 going differently (more blood particles and debris: vr particles 0.41 against 0.25 ms, view entities 0.67 against
-0.42). The stealth scopes themselves are small (STEALTH_PLAN.md: 0.02-0.06 ms a server frame). Not a decision: the
+0.42). The stealth scopes themselves are small (STEALTH.md: 0.02-0.06 ms a server frame). Not a decision: the
 feature's cost, measured; nothing in it stood out in VTune (no stealth function in the top 30).
 
 ### 5. Retro particles' fill (decided 2026-10-08: tried, left off)
@@ -246,3 +246,50 @@ Still open (no trade-off unless said):
   rockets, muzzle flashes), so the win is mostly the benchmark's. Not done.
 - **NVML's start**: the first VRAM read (`gpustats::requestVram`) initialises NVML on a worker (0.12 s, once); fine
   as it is, noted because it shows in every window's VTune profile.
+
+## Video memory (2026-10-09)
+
+The author's session memstats (`memstats_2026-10-09_17-50` .. `18-42`: 19-20 GB of the 4090's 24.5 GB "used", 1 GB
+free under SteamVR earlier) were the whole GPU's (NVML): every program's. `vr_vram_report` (Debug > Memory > Video
+Memory Report) now sizes every GL object of the game and reads Windows' per-process counters. His logs show the jump:
+10-12 GB used on 2026-10-08/09 night, 19-22 GB from 10:42 on 2026-10-09 with the game's own textures unchanged
+(texture_mb 420-640 throughout). On this machine now: Resolve.exe 14.1 GB, a system process 2.6 GB, OBS 1.3 GB,
+Chrome 0.4 GB, the game ~1.0-1.3 GB. The new log columns (`vram_quake_mb`, `vram_programs`) will say whose it is
+in his next session.
+
+The game at his settings (mock eyes 2782 square ~ his 2688x2880, vid_fsaa 0, vr_shadow_atlas 8192, vrfiringrange):
+**1277 MB** for the process (Windows), 1138 MB of it in GL objects:
+
+| category | MB |
+|---|---|
+| shadow atlases (8192 dynamic 256, 6144x4096 static 96) | 352 |
+| eye scene targets (scene + composite colour RGBA16F, depth, oit accum/revealage, distances; one eye's size, shared) | 286 |
+| model skins (mdl, HD replacements, limbs) | 162 |
+| authored normal maps (`*_norm_vrnorm`: vrbody, hands, crates at 1024) | 142 |
+| text screens, panel canvas (3868x2176 with mips, 43), world text boards, gadgets | 60 |
+| swapchain images (mock: 2; a real runtime's 3 an eye + the panel's: ~210) | 59 |
+| wounds (256x256x129 RGBA8), decals/particle atlases, effects, post, world, lightmaps, buffers | ~77 |
+| driver's own, not in GL objects | 139 |
+
+Leaks: none found. Three rounds of vrstart -> vrfiringrange -> e1m1 -> menu -> render scale 0.7/1 ->
+vrteleporters -> vrstart: the second and third reports identical (1151 MB in GL objects, 936 textures, 392 buffers).
+The first round's +93 MB are targets made once and kept (the stereo layered scene 32 MB, the menu banner, the
+upscaled eye, a tip screen). Churn fixed: the ammo screens' images (keyed by their text now; ROUND21, "Video
+memory"): 450 targets made in a 54-step walk along vrfiringrange's racks -> 0.
+
+Decided (the author, 2026-10-09): **`vr_shadow_atlas` stays 8192, the default** (compiled in now; vr_defaults.cfg
+already shipped it; a config at the old compiled 4096 takes 8192, config version 117; the High and Ultra presets set
+it, Off to Medium 4096). 8192 keeps full-size (1024) shadow tiles for up to 8 lights; 4096 would save 192 MB (shadow
+atlases 352 -> 160 MB) but holds only 8 lights' 512 faces (2 x 4 of the packer's 3x2-face blocks), so more lights, or
+bigger faces, halve every tile (visible on the retro one-tap shadows).
+
+Options (trade-offs, not done):
+
+- **MSAA** (`vid_fsaa 4`, off in his cfg): eye scene targets 286 -> 859 MB (+573 MB at his eyes): a cost to know
+  before turning it on.
+- **Composite and scene targets both full size**: Ironwail keeps a scene framebuffer (effects) and a composite one
+  (post-process) at the eye's size, ~96 MB of each other's at his eyes (RGBA16F + D32F_S8). Making one lazy is an
+  engine change to the frame's framebuffer flow: not done.
+- **Eye size** (`vr_xr_eye_scale`, the runtime's supersampling): the eye targets scale with the pixels (0.8 a side:
+  -36%).
+

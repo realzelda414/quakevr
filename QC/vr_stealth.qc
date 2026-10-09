@@ -1,7 +1,7 @@
 // vr_stealth.qc -- the monsters' stealth AI: Idle, Alert (investigating) or Hostile (Quake's: an enemy); a suspicion
 // meter for sight (light, distance, facing, movement, crouching), touch, noises heard through the level, shots grazing,
 // flashlight beams, torches, bodies; Alert monsters turn, walk to what disturbed them, search, go back to their post.
-// docs/vr-port/STEALTH_PLAN.md has the rules and their cvars (Combat > Stealth AI). vr_ai_enhanced 0 is Quake's AI.
+// docs/vr-port/STEALTH.md has the rules and their cvars (Combat > Stealth AI). vr_ai_enhanced 0 is Quake's AI.
 // The engine's side (vr_stealth.cpp): stealthlight, flashlightbeam, pvsvisible; the props' knocks call
 // VR_Stealth_PropNoise (vr_physsound.cpp).
 
@@ -126,7 +126,7 @@ void(entity m, float xWalking) VR_Stealth_Anim =
 entity(entity m, vector at) VR_Stealth_MarkerAt;
 
 // ----------------------------------------------------------------------------
-// Teleporters (vr_stealth_gates; seamless teleporters' paired gates, vr_portals.cpp; docs/vr-port/STEALTH_PLAN.md,
+// Teleporters (vr_stealth_gates; seamless teleporters' paired gates, vr_portals.cpp; docs/vr-port/STEALTH.md,
 // "Teleporters"): what a monster sees or hears through a gate is its image there (beyond the gate's face, in its own room's
 // terms). It walks into the gate and through, and its points go through with it (VR_Stealth_Crossed): the one beyond
 // is then in its room, the ones it left behind beyond the face back, so it walks on instead of back.
@@ -764,30 +764,10 @@ void(entity m, entity p, vector eye) VR_Stealth_Beam =
 
 // A lit torch taken from its wall (held or thrown) or a body or gib (STL_NOTICE_BODY) m sees in front of it.
 // The next entity after `start` with `flags` in `fld` whose box's centre is within `range` of `eye` and ahead of it
-// (v_forward, cos 0.3): findflagsinview. vr_edictindex_verify: QuakeC's own test too, any difference printed.
+// (v_forward, cos 0.3): findflagsinview.
 entity(entity start, .float fld, float flags, vector eye, float range) VR_Stealth_InView =
 {
-    entity got = findflagsinview(start, fld, flags, eye, range, 0.3);
-    if(cvar_hget(cvarh_vr_edictindex_verify))
-    {
-        entity e;
-        vector at;
-        for(e = findflags(start, fld, flags); e; e = findflags(e, fld, flags))
-        {
-            at = (e.absmin + e.absmax) * 0.5;
-            if(vlen(at - eye) > range || normalize(at - eye) * v_forward < 0.3)
-            {
-                continue;
-            }
-            break;
-        }
-        if(e != got)
-        {
-            bprint(sprintf("vr_edictindex ERROR: findflagsinview after %s at %v: %s at %v, QuakeC's %s at %v\n",
-                start.classname, start.origin, got.classname, got.origin, e.classname, e.origin));
-        }
-    }
-    return got;
+    return findflagsinview(start, fld, flags, eye, range, 0.3);
 };
 
 void(entity m, vector eye) VR_Stealth_LookAbout =

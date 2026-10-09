@@ -151,7 +151,7 @@ about a screenful each. Pages marked (D) show only at Menu Detail: Developer.
 | **Weapon Damage** | Each weapon's damage, the enemies' weapons and throws |
 | **Enemy Weapons** | Ogres' chainsaws (fuel, the engine, the cord), grunts' burst rifles, enforcers' laser rifles |
 | **Enemy Shoves** | Enemies shoving you when you are too close: delay, cooldown, damage, push |
-| **Knockdowns** | Shove knockdowns: the chance (per monster, damage, one or two hands, stamina, over a ledge), time down, struggling, getting up ([vr-port/KNOCKDOWNS_2026-10-04.md](vr-port/KNOCKDOWNS_2026-10-04.md)) |
+| **Knockdowns** | Shove knockdowns: the chance (per monster, damage, one or two hands, stamina, over a ledge), time down, struggling, getting up ([vr-port/KNOCKDOWNS.md](vr-port/KNOCKDOWNS.md)) |
 | **Bullet Time** | Slow motion on demand: trigger (a stick press, a wrist tap, the gadget's button), time scale, duration, recharge, the Sandevistan mode and the look |
 | **Burning** | Burn damage and time, flames spreading to monsters, corpses and crates, lava nails, torches, the flames' look |
 
@@ -496,6 +496,6 @@ changed yourself is left alone.
 | `developer 1` | More messages: force grab pulls and catches, throws, compatibility mode |
 
 For the rest, the developer notes in [vr-port/](vr-port/) describe each system and its variables:
-[TESTING.md](vr-port/TESTING.md) (the playtest guide), [LIGHTING.md](vr-port/LIGHTING.md),
+[PLAYTEST.md](vr-port/PLAYTEST.md) (the playtest guide), [LIGHTING.md](vr-port/LIGHTING.md),
 [GRAPHICS.md](vr-port/GRAPHICS.md), [THROWING.md](vr-port/THROWING.md), [IK.md](vr-port/IK.md), and the
 `ROUND*.md` notes.

@@ -183,7 +183,6 @@ void() OnSpawnServerAfterLoad =
 void() OnLoadGame =
 {
     VR_CVars_InitAllHandles();
-    WeaponInst_EnsureAll(); // (a save from before the weapons' records: their weapons get theirs, empty)
     VR_Tips_Reapply(); // (TRIGGERED tips used before the save: shown again)
 }
 
@@ -1923,7 +1922,6 @@ void() CheckPowerups =
         self.frame = 0;
         self.modelindex = modelindex_eyes;
     }
-// TODO VR: (P2) maybe check for mission pack 1 support here
 //MED 12/04/96 added mjolnir stuff
     else if(self.weapon == WID_MJOLNIR)
         self.modelindex = modelindex_hammer;   // don't use eyes
@@ -2637,8 +2635,6 @@ void(entity targ, entity attacker) ClientObituary =
             bprint("\n");
             return;
             }
-
-            // TODO VR: (P2) elses...
 
             if(attacker.flags & FL_MONSTER)
             {

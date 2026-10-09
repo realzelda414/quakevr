@@ -971,7 +971,7 @@ int campaignsBloodyShown = -1;
     };
 }
 
-// Knockdowns (QC vr_knockdown.qc; vr_box3d.cpp, "Knockdowns"; docs/vr-port/KNOCKDOWNS_2026-10-04.md): a shove can
+// Knockdowns (QC vr_knockdown.qc; vr_box3d.cpp, "Knockdowns"; docs/vr-port/KNOCKDOWNS.md): a shove can
 // knock a monster down as a ragdoll, alive; it gets up after a while.
 [[nodiscard]] za::Vector<Item> pageKnockdowns()
 {
@@ -4433,7 +4433,7 @@ void hologramTestMessage()
 // - Tools: a command rebuilding, reloading, writing a file or showing a test effect;
 // - Tests: what tests are done with in the headset (a monster ahead, a projectile at you, cheats).
 // Mock-headset commands (vr_mock_*) and the automated tests' settings (vr_fixed_frames, vr_particle_seed,
-// sv_random_seed, vr_debug_weight_stamina, vr_window_log...) stay in the console: they mean nothing in the headset.
+// sv_random_seed...) stay in the console: they mean nothing in the headset.
 // Checklist (vr_checklist.hpp; the corner's "Checklist" button, Debug > Checklist): what to test in the headset or give
 // feedback on, from quakevr/checklist.txt, each item ticked by picking it; its long texts on the lines under it.
 int checklistGeneration = -1; // the list's generation the page was built for
@@ -4623,21 +4623,9 @@ za::Vector<Item> pageDebugViews()
             .help("On: an animated texture's frames (the wall buttons' lit and dim frames) share one surface: the same "
                   "bumps, parallax depth, sheen and detail, only their colours and glow change. Off: each frame its own "
                   "(the relief and sheen pulsed with the frames). At once."),
-        toggle("External Maps A/B", vr_extmaps_ab)
-            .help("Hides the external pack's normal, specular and glow maps (Graphics: External Maps) at once, to compare "
-                  "with the made bumps and Quake's glow; off again shows them. Without a reload."),
-        toggle("Retro Textures A/B", vr_retro_ab)
-            .help("Hides the retro textures (Graphics > Retro Textures) at once, to compare with the textures as they "
-                  "were; off again shows them."),
         command("Retro Textures: List", "vr_retro_list")
             .help("vr_retro_list: prints each model drawn now with its retro textures kind (Graphics > Retro Textures), its "
                   "set and its skin's size, to the console."),
-        toggle("Retro Lighting A/B", vr_retrolight_ab)
-            .help("Hides retro lighting (Graphics > Retro Lighting) at once, to compare with the smooth light; off again "
-                  "shows it."),
-        toggle("Ambient Light A/B", vr_ambient_light_ab)
-            .help("Takes the room's own fill light (Graphics > Lights: Ambient Light) off at once, to compare the map as "
-                  "its own lamps light it; off again shows it. Without a reload."),
         command("Light Probe", "vr_light_probe")
             .help("vr_light_probe: the baked light at six points round you, as the map has it and as it is drawn with the "
                   "current Ambient Light and Light Contrast (128 is Quake's full light). The same numbers light a model "
@@ -4716,9 +4704,6 @@ za::Vector<Item> pageDebugViews()
         cycle("Log Hand Offsets", vr_debug_hand_offset, {{0.f, "Off"}, {1.f, "When Moved"}, {2.f, "Every Frame"}})
             .help("Each hand drawn away from where it is tracked, and by what (walls, the weight's spring, models, the body, "
                   "a held thing against a wall, the other hand's weapon or held thing), in the console."),
-        toggle("Log Weapon Wall Collisions", vr_debug_gun_wall)
-            .help("Each frame a held weapon is held out of the level: how far the hand is moved (up, across), the depth left "
-                  "and the muzzle's height over the surface below it, in the console."),
         open("Flashlight Zones: Flashlight - On a Gun or Head", pageIndex(pageFlashlightMounts)).help("Showing the flashlight zones is on Flashlight > On a Gun or Head."),
         command("Flashlight to Left Hand", "vr_flashlight_give left")
             .help("vr_flashlight_give left: the chest flashlight into the left controller's hand, as if gripped there (that "
@@ -4802,10 +4787,6 @@ za::Vector<Item> pageDebugLogging()
         toggle("Axe Sticks", vr_debug_axestick)
             .help("Each thrown axe's blade striking something: stuck (how fast, how deep, at what angles) or why it bounced; "
                   "its bleeding, its fall, its pull. Needs Developer Messages for the last."),
-        cycle("Spin in the Air", vr_debug_spin_align, {{0.f, "Off"}, {1.f, "Each Throw"}, {2.f, "Every Step"}})
-            .help("Each throw's spin as it leaves the hand (its inertia, how long and flat it is, how fast its spin "
-                  "settles: Spin Alignment) and how far off end over end it is when its flight ends; every step: each "
-                  "step of its flight."),
         cycle("Climbing", vr_climb_debug, {{0.f, "Off"}, {1.f, "Holds"}, {2.f, "Every Frame"}, {3.f, "And Shoulders"}})
             .help("Holds taken, released, mantles; every frame: the body, the hands, the pull, the holds' reach (a lot)."),
         cycle("Hands", vr_debug_hands, {{0.f, "Off"}, {1.f, "When They Change"}, {2.f, "Every Frame"}})
@@ -4824,8 +4805,6 @@ za::Vector<Item> pageDebugLogging()
         toggle("Wounds", vr_wounds_debug).help("Each wound painted on a model."),
         cycle("Grasp", vr_debug_grasp, {{0.f, "Off"}, {1.f, "Each Solve"}, {2.f, "Each Finger"}})
             .help("Each grasp solve of the jointed hands (and each finger's stops)."),
-        toggle("Holster Draw Blend", vr_debug_draw_blend)
-            .help("Each frame of a gun easing between a holster and a hand: the turn and the distance left."),
         cycle("Put-Away Transition", vr_debug_collect_fx, {{0.f, "Off"}, {1.f, "Each Thing"}, {2.f, "Each Frame"}})
             .help("Each thing put away at a holster or pouch (its model, from where, the holster) and when it has gone "
                   "in; or also each frame's size and distance left."),
@@ -4854,17 +4833,9 @@ za::Vector<Item> pageDebugLogging()
         cycle("Crates Placement", vr_debug_crates, {{0.f, "Off"}, {1.f, "A Line a Map"}, {2.f, "Each Crate"}, {3.f, "Each Spot Rejected"}})
             .help("vr_debug_crates: where the crates went (and why not), each crate's clearance in front of it. Also Developer "
                   "Messages print each crate's damage and breaking, the pieces and what it held."),
-        toggle("Box Sizes", vr_debug_item_sizes)
-            .help("vr_debug_item_sizes: each ammo or health box's scale as it is first drawn (after a map loads, out of a "
-                  "crate), and each change of it after: they should be drawn at their final size from the first frame."),
-        toggle("Torch Lights", vr_debug_torch_lights)
-            .help("Every torch light lit, every frame: which (a wall torch, a taken one), where, its radius and colour, shadowed."),
         cycle("Arm IK", vr_debug_arm, {{0.f, "Off"}, {1.f, "Print Once"}, {2.f, "Trace File"}})
             .help("Each drawn arm's joints once (shoulder, elbow, wrist in the body's axes, the elbow's swing, the wrist's bend "
                   "and twist, and the swing's cost every 15 degrees: armcost); or arm_trace.txt every frame."),
-        toggle("Heavy Weapon Wrenched Out", vr_debug_weight_drop)
-            .help("Twice a second, each hand's fastest turn against its heavy weapon's limit (above half of it), and each "
-                  "weapon wrenched out (Weapon Weights: Wrenched Out)."),
         cycle("Two-Handed Grip", vr_debug_2h_grip, {{0.f, "Off"}, {1.f, "Taken and Let Go"}, {2.f, "And Where"}})
             .help("Each grip the helping hand takes (a sword's or the crowbar's: below the hand or along the blade) and why "
                   "it let go of a weapon (the check, its number and limit), the stickiness then (Aiming: 2H Grip "
@@ -4932,25 +4903,13 @@ za::Vector<Item> pageDebugProfiling()
             .help("profile_qc 30: the 30 QuakeC functions and builtins that took the most time a frame since the last "
                   "report (Time QuakeC Functions on), in the console; then all are zeroed. Press it, do the thing, press "
                   "it again."),
-        toggle("Edict Index", vr_edictindex)
-            .help("vr_edictindex: find() by classname and findflags() on monsters, clients, items, lit torches and "
-                  "bodies step straight to the next match instead of walking every entity (the same results). Off: "
-                  "they walk, as Quake did."),
-        toggle("Verify Edict Index", vr_edictindex_verify)
-            .help("vr_edictindex_verify: every indexed search walks as well and any difference is counted and printed "
-                  "(the walk's answer is used). Edict Index Stats prints the counts."),
         command("Edict Index Stats", "vr_edictindex_stats")
-            .help("vr_edictindex_stats: the index's searches, rebuilds, edicts read again, searches verified and "
-                  "differences since the last time."),
-        toggle("Force Grab Search by Grid", vr_forcegrab_grid)
-            .help("vr_forcegrab_grid: the force grab's target search (each hand, every frame) tests only the entities "
-                  "linked near the hand and its images through teleporters (the same results). Off: it walks every entity."),
-        toggle("Verify Force Grab Search", vr_forcegrab_grid_verify)
-            .help("vr_forcegrab_grid_verify: every search walks as well; a difference is counted and printed, and the "
-                  "walk's answer used. Force Grab Search Stats prints the counts."),
+            .help("vr_edictindex_stats: the edict index (find() by classname and findflags() on monsters, clients, "
+                  "items, lit torches and bodies step straight to the next match): its searches, rebuilds and edicts "
+                  "read again since the last time."),
         command("Force Grab Search Stats", "vr_forcegrab_grid_stats")
-            .help("vr_forcegrab_grid_stats: the searches, the entities each tested, searches verified and differences "
-                  "since the last time."),
+            .help("vr_forcegrab_grid_stats: the force grab's target search (each hand, every frame, through the area "
+                  "grid): the searches and the entities each tested since the last time."),
         command("Game State Hash", "vr_bench_statehash")
             .help("vr_bench_statehash: one hash of every entity's QuakeC fields (and which are in use), printed with the "
                   "server's time: the same script on two builds gives the same hash when a change left the game the same."),
@@ -5113,6 +5072,11 @@ za::Vector<Item> pageDebugProfiling()
                   "Virtual Desktop), on a thread of its own. Off: only while profiling (Performance Profile, the Profiler Panel or its CSV Capture)."),
         command("Print Memory Now", "vr_memstats")
             .help("vr_memstats: video and system memory, the textures and models loaded, the frame times since the last one."),
+        command("Video Memory Report", "vr_vram_report diff")
+            .help("vr_vram_report [diff] [csv] [all]: the game's GPU memory by category (eye targets, post effects, world, "
+                  "lightmaps, model skins, text screens, wounds, buffers...) from every GL object's own size, against "
+                  "Windows' count for the process and the other programs (SteamVR, Virtual Desktop). diff: what was made "
+                  "and freed since the last report (a leak: a group that keeps growing). csv: every object to quakevr/profile."),
         command("Allocation Sites", "vr_alloc_sites 300")
             .help("vr_alloc_sites [frames] [lines] [peak]: the main thread's C++ and C heap events over the next 300 frames by where they "
                   "were asked for (the commonest first: a frame's, the place, its caller) in the console. To find the buffers "
@@ -5205,9 +5169,6 @@ za::Vector<Item> pageDebugReports()
         command("Bloody Hands and Washing", "vr_gore_hands_info")
             .help("vr_gore_hands_info: the blood on your hands and body (texels), the wounds kept to re-open, the wash and its re-opening, and the blood on your weapons and props."),
         command("Decals and Gore", "vr_decal_count").help("vr_decal_count: the decals and gore pieces in the world."),
-        command("Decals in Both Eyes", "vr_decal_eyes_test 90")
-            .help("vr_decal_eyes_test 90: for 90 frames a blood mark is made between the eyes' views; then whether both "
-                  "eyes drew the same marks each frame (console: 0 frames different)."),
         command("Particle Lighting", "vr_particle_light_report").help("vr_particle_light_report: the last frame's lit particles (Lit Particles), their mean light and colour against unlit, and the lightmap traces it took."),
         command("Model Lighting", "vr_model_ambient_show").help("vr_model_ambient_show: the six nearest entities' ambient light."),
         command("Ambient Occlusion", "vr_ao_show").help("vr_ao_show: the ambient occlusion's occluders and bake."),
@@ -5255,7 +5216,6 @@ za::Vector<Item> pageDebugReports()
         command("Relighting: Status", "vr_relight_status").help("vr_relight_status: the relighting's state (a batch's maps done, each light running: its stage and process id; the progress and time left), how the map in play is lit, the light.exe found."),
         command("Relighting: Tool Lookup", "vr_relight_get_tool status").help("vr_relight_get_tool status: the light.exe found (or not), the folder Download ericw-tools writes, the pinned file (version, size, sha256), its URL and the last download's result. vr_relight_tool_dir points both lookup and download at a test folder; vr_relight_tool_url at a test server."),
         command("Relighting: Batch's Maps", "vr_relight_batch -list").help("vr_relight_batch -list: the maps Graphics > Relighting's Relight These Maps would take (Maps, Episode, Game), with their files and sizes, without relighting them."),
-        command("Console Completion Timing", "vr_console_complete_bench vr_s").help("vr_console_complete_bench <text> [runs]: the console's completion hint timed as each of the text's beginnings is typed (v, vr, vr_, vr_s), the way it is done now and the old way (each match sorted in as found: about half a second a key for v), and whether both give the same hint and the same list Tab shows."),
         command("Menu Rows", "menu_vr rows").help("menu_vr rows: this page's rows as drawn (MROW: row, top, label), the scroll, the section gap, and whether the laser and mouse find each row where it is drawn."),
         toggle("Menu Links: Print, Do Not Open", vr_menu_link_dryrun)
             .help("vr_menu_link_dryrun: the version box's Support on Ko-fi link (bottom right of the menus) prints its address "
@@ -5731,7 +5691,7 @@ za::Vector<Item> pageMg3Tests()
     };
 }
 
-// Dawn of the Machine's weapons (MG3_PLAN.md M3-11..14): "mg3wtest:" lines with developer 1 (QC/vr_mg3_weapons_test.qc).
+// Dawn of the Machine's weapons (MG3.md M3-11..14): "mg3wtest:" lines with developer 1 (QC/vr_mg3_weapons_test.qc).
 // The Super Axe works in any campaign when the Dawn of the Machine data is there (its models are read from it in place).
 za::Vector<Item> pageMg3WeaponTests()
 {
@@ -5778,7 +5738,7 @@ za::Vector<Item> pageMg3WeaponTests()
     };
 }
 
-// Dawn of the Machine's monsters (MG3_PLAN.md M3-15..18): "mg3mtest:" lines with developer 1 (QC/vr_mg3_monsters_test.qc).
+// Dawn of the Machine's monsters (MG3.md M3-15..18): "mg3mtest:" lines with developer 1 (QC/vr_mg3_monsters_test.qc).
 // The infected are stock monsters (any campaign); MG3's own monsters need its data (their models read from it in place).
 za::Vector<Item> pageMg3MonsterTests()
 {
@@ -5820,7 +5780,7 @@ za::Vector<Item> pageMg3MonsterTests()
     };
 }
 
-// Dawn of the Machine's monsters, M3-19..23 (MG3_PLAN.md): "mg3btest:" lines with developer 1 (QC/vr_mg3_bestiary_test.qc).
+// Dawn of the Machine's monsters, M3-19..23 (MG3.md): "mg3btest:" lines with developer 1 (QC/vr_mg3_bestiary_test.qc).
 // They spawn in any campaign when the Dawn of the Machine data is there (read from it in place).
 za::Vector<Item> pageMg3BestiaryTests()
 {
@@ -5902,7 +5862,7 @@ za::Vector<Item> pageMg3ShubTests()
     };
 }
 
-// Dawn of the Machine's Chthon, M3-24/25 (MG3_PLAN.md): "mg3ctest:" lines with developer 1 (QC/vr_mg3_chthon_test.qc).
+// Dawn of the Machine's Chthon, M3-24/25 (MG3.md): "mg3ctest:" lines with developer 1 (QC/vr_mg3_chthon_test.qc).
 za::Vector<Item> pageMg3ChthonTests()
 {
     return {
@@ -6105,11 +6065,6 @@ za::Vector<Item> pageDebugTests()
                   "rifle taken into an empty hand, a chainsaw thrown up and three other weapons dropped: the burst rifles "
                   "and chainsaws lying about never pass Most Lying About (vr_enemy_weapon_drop_max), the held one, the "
                   "flying one and the others stay (dctest: lines, PASS or FAIL). vr_dropcap_test 2: the count lying about."),
-        command("Marksman Ogre: What It Is", "developer 1; vr_marksman_test 1")
-            .help("vr_marksman_test 1: the nearest marksman ogre's model (Honey's in a Honey map, else id's ogre: Dimension "
-                  "of the Machine's marksman), health, enemy and the grenades it has thrown, to the console (mkstest:)."),
-        command("Marksman Ogre: Kill It", "developer 1; vr_marksman_test 2; wait; wait; vr_marksman_test 3")
-            .help("vr_marksman_test 2, then 3: the nearest marksman ogre killed (not gibbed), then its body (ragdoll or not)."),
         command("A Knight's Ragdoll There", "vr_ragdoll 1; vr_test_spawn 5; vr_test_spawn_dead 1; impulse 241; wait; wait; wait; wait; wait; vr_test_spawn_dead 0")
             .help("Ragdolls on (Gibs and Corpses > Ragdoll Settings) and a knight killed at the Distance ahead: he goes limp as "
                   "he falls (his sword dropped)."),
@@ -6540,7 +6495,6 @@ za::Vector<Item> pageDebugTests()
         command("Quarter Stamina", "vr_stamina_set 0.25").help("vr_stamina_set 0.25: a quarter of your stamina left (the run a little slower: Slower When Tired)."),
         command("Restore Stamina", "vr_stamina_set 1").help("vr_stamina_set 1: rested."),
         toggle("Hold Stamina", vr_debug_stamina_hold).help("Keeps your stamina where it is, or where the buttons above put it: nothing spends it and it doesn't come back (vr_debug_stamina_hold)."),
-        toggle("Print Run Speed", vr_debug_stamina_speed).help("Prints your stamina, the most speed it lets you run at and your speed on the ground, twice a second (vr_debug_stamina_speed)."),
         header("Stuck in Walls"),
         toggle("Unstick", vr_unstick)
             .help("Found inside a wall, a door, a button or a lift, you're moved to the nearest free spot (vr_unstick). "
@@ -7093,7 +7047,7 @@ enum PageId
 };
 
 // Who a page is for (vr_menu_level, Menu Detail at the bottom of every page): links to a page above the level are left
-// out, and so are the rows marked advanced() or developer() (MENU_REVIEW.md). menu_vr <n> opens any page.
+// out, and so are the rows marked advanced() or developer() (archive/MENU_REVIEW.md). menu_vr <n> opens any page.
 enum MenuLevel
 {
     LevelStandard,  // what every player sets: comfort, height, the HUD, the headset, volume
@@ -7269,7 +7223,7 @@ const Page pages[] = {
     {"Ragdolls - Shambler", pageRagdollShambler, pageRagdolls, LevelDeveloper},                   // 129
     {"Ragdolls - Gremlin", pageRagdollGremlin, pageRagdolls, LevelDeveloper},                     // 130
     {"Ragdolls - Mummy", pageRagdollMummy, pageRagdolls, LevelDeveloper},                         // 131
-    {"Changed Settings", pageChanged, pageAdvanced, LevelStandard},                                    // 132 (MENU_REVIEW.md)
+    {"Changed Settings", pageChanged, pageAdvanced, LevelStandard},                                    // 132 (archive/MENU_REVIEW.md)
     {"Search", pageSearch, pageMain, LevelStandard},                                               // 133 (the corner's Search; vr_menu_search.inc)
     {"Console", pageConsole, pageMain, LevelStandard},                                             // 134 (the corner's Console; vr_menu_console.inc)
     {"Tips", pageTips, pageAdvanced, LevelStandard},                                                   // 135 (vr_tips.cpp)

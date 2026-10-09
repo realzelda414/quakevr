@@ -234,29 +234,17 @@ void() army_fire =
 
     sound(self, CHAN_WEAPON, "soldier/sattck1.wav", 1, ATTN_NORM);
 
-    // TODO VR: (P2) opportunity for extra difficulty
     // fire somewhat behind the player, so a dodging player is harder to hit
     en = self.enemy;
-
-    // TODO VR: (P2) this works
-    // self.scale = ((self.scale + '1 1 1') * 1.1) - '1 1 1';
 
     dir = en.origin - en.velocity*0.2;
     dir = normalize(dir - self.origin);
 
     EnemyFireBullets(4, dir, '0.1 0.1 0');
 
-    // TODO VR: (P2) nail shooting variant?
-    // makevectors(self.angles);
-    // src = self.origin - '0 0 19' + v_forward*14;
-    // vec = (self.enemy.origin + (200*v_forward)) - src;
-    // vec = normalize(vec);
-    // sound(self, CHAN_WEAPON, "weapons/rocket1i.wav", 1, ATTN_NORM);
-    // launch_spike (src, vec);
-
     // HONEY
-    // TODO VR: (P1) check how this works, also might be wrong in plasma and
-    // other missile fns
+    // (The weapon credited for the damage: FL_SPECIFICDAMAGE targets take only some; BACKLOG.md, "Old QuakeC
+    // notes".)
     self.damage_weapon = IT_SHOTGUN;
 };
 
@@ -374,10 +362,6 @@ void() monster_army =
     if((!MG_WorldCampaign() && (self.spawnflags & SPAWNFLAG_TRIGGER_SPAWN_MULTIPLE)) && !self.cnt){
         self.cnt = -1;
     }
-
-
-    // TODO VR: (P2) this works
-    // self.scale_origin = '0 0 25';
 
     self.health = 30;
 

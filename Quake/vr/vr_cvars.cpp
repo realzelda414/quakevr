@@ -137,7 +137,7 @@ const DefaultChange defaultChanges[] = {
     {65, &vr_climb_leniency, "6"},          // 2
     {65, &vr_2h_sticky_fast, "1"},          // 3.5
     {65, &vr_2h_sticky_fast_hold, "0.4"},   // 0.6
-    // and his pain knock (NOTES.md vrfiringrange_2026-10-01_00-19-04; ROUND21.md, "Pain feedback, second pass").
+    // and his pain knock (NOTES.md vrfiringrange_2026-10-01_00-19-04; ROUND21.md, "Misc: mid-air leniency").
     {65, &vr_pain_knock_strength, "0.3"},   // 0.75
     {65, &vr_pain_knock_max, "5"},          // 7.5
     {65, &vr_pain_knock_time, "0.35"},      // 0.6
@@ -447,7 +447,7 @@ const DefaultChange defaultChanges[] = {
     {95, &vr_messages_hologram_height, "5"},        // 10
     // 96: the menus' red as the author has it (his config, 2026-10-07; hue 0 and strength 1 as shipped already).
     {96, &vr_menu_recolor_saturation, "1.25"},      // 3
-    // 97: immersive manual reloading is the shipped mode (the author, 2026-10-07; docs/vr-port/RELOAD_PLAN.md): a config with
+    // 97: immersive manual reloading is the shipped mode (the author, 2026-10-07; docs/vr-port/RELOAD.md): a config with
     // the old default (Hip Holsters) takes it; one that chose Off or All Holsters keeps its choice.
     {97, &vr_reload_mode, "2"},                     // 3
     // 98: the author's reloading values (ROUND21.md, "Immersive reloading: magazines, both grips, the pull").
@@ -652,8 +652,11 @@ const DefaultChange defaultChanges[] = {
     {116, &vr_ammo_pouch_crouch_x, "0"},        // 2
     {116, &vr_ammo_pouch_crouch_z, "0"},        // 7
     {116, &vr_ammo_pouch_crouch_pitch, "0"},    // 29
+    // 117: an 8192 shadow atlas (the author, 2026-10-09: eight lights' shadows at full size; with 4096 a retro hard
+    // shadow showed halving): compiled in now (vr_defaults.cfg had it), and a config at the old 4096 takes it.
+    {117, &vr_shadow_atlas, "4096"},
 };
-constexpr int configVersion = 116;
+constexpr int configVersion = 117;
 
 // Two settings' values the same (as numbers when both are).
 [[nodiscard]] bool sameValue(const char* a, const char* b)
@@ -1085,7 +1088,7 @@ void registerCvars()
 constexpr const char* retiredCvars[] = {
     "vr_throw_lookahead", // 2026-10-06: unused since the throw's window ends at the release (ROUND21.md, "Throws at any frame rate")
     "vr_throw_slowmo_flick_spin", // 2026-10-08: vr_throw_slowmo_flick_arm (ROUND21.md, "Wrist flicks in bullet time: the arm tells the tempo")
-    "vr_foegrab_throw_topple_hold", // 2026-10-09: vr_foegrab_throw_feet_speed (ROUND21.md, "The judo throw sweeps the feet")
+    "vr_foegrab_throw_topple_hold", // 2026-10-09: vr_foegrab_throw_feet_speed (ROUND21.md, "Holding enemies")
     // 2026-10-09: vr_knockdown_shove_travel, _topple_angle, _topple_time, _feet_lag, _max_spin (ROUND21.md, "A shove's
     // knockdown: travel and a quarter turn").
     "vr_knockdown_shove_topple",
