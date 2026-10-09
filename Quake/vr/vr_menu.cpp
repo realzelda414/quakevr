@@ -940,6 +940,13 @@ int campaignsBloodyShown = -1;
             .help("How hard the thrown enemy is sent along the throw (times Knockdowns' Push)."),
         slider("Throw Lift", vr_foegrab_throw_lift, 0.f, 400.f, 10.f, "%.0f units/s")
             .help("And up."),
+        slider("Topple", vr_foegrab_throw_topple, 0.f, 600.f, 10.f, "%.0f deg/s").extend(0.f, 2000.f)
+            .help("The thrown enemy loses its footing: it is turned over about its feet towards the throw this fast, a "
+                  "sweep, and the push and lift go to its top, not its feet. Off: pushed whole, as a shove's knockdown."),
+        slider("Feet Held", vr_foegrab_throw_topple_hold, 0.f, 1.f, 0.05f, "%.2f s")
+            .help("How long its feet stay where they stood (no sliding) as it topples over them."),
+        slider("Twist Spin", vr_foegrab_throw_spin, 0.f, 2.f, 0.05f, "%.2f")
+            .help("Share of your hands' twist of it about the vertical it spins on with as it falls (at most 720 deg/s)."),
     };
 }
 
@@ -4523,6 +4530,10 @@ za::Vector<Item> pageDebugLogging()
                   "its speed, stepped on), and where the hand was: how far from the button and from you (a far one is a "
                   "stray press). And Weapon Lines: every frame, each held weapon's line that presses buttons "
                   "(from its pommel or butt to its tip or muzzle). Needs Developer Messages."),
+        cycle("Monster Poses", vr_debug_pose_check, {{0.f, "Off"}, {1.f, "Squashed Bodies"}, {3.f, "And a Screenshot"}, {2.f, "Every Frame"}})
+            .help("vr_debug_pose_check: a monster drawn squashed between two poses for over 0.2 s (\"posecheck:\"; a "
+                  "parried ogre was, for half a second), drawn with a pose out of its model's range or a broken blend; "
+                  "And a Screenshot: a picture at each; Every Frame: each monster's drawn poses and how flat (a lot)."),
         toggle("Shots and Damage", vr_debug_shots)
             .help("Each hitscan shot (where it starts, its direction, what its pellets hit, headshots), each damage you deal "
                   "(and when Quad's sound plays) and each prop a shot pushes. Needs Developer Messages."),
@@ -5053,6 +5064,7 @@ za::Vector<Item> pageDebugTools()
         command("Blood from a Blow", "vr_gore_spatter_test blow").help("vr_gore_spatter_test blow: a blow's blood thrown onto what the main hand holds, the hand and the arm (Gore > Blood on You and Your Gear)."),
         command("List Clean Weapon Skins", "vr_cleanskins").help("vr_cleanskins: the weapon skins with a clean version (a patch beside the model: progs/<model>_<skin>.clean), whether it applies to your files, how often it was applied (Gore > Clean Weapon Skins)."),
         command("Blood from a Blow on Your Prop", "vr_gore_spatter_test prop").help("vr_gore_spatter_test prop: a blow on what the main hand holds (a weapon, a box, a crate, a brick), on its side facing you: the blood on held props (Gore > Blood on You and Your Gear)."),
+        command("Blood from a Blow on the Off Hand's Prop", "vr_gore_spatter_test propoff").help("vr_gore_spatter_test propoff: as Blood from a Blow on Your Prop, on what the off hand holds (the super shotgun's blood stays on it broken open and shut)."),
         command("Blood from a Chainsaw Cut", "vr_gore_spatter_test saw").help("vr_gore_spatter_test saw: a chainsaw cut's spray just ahead of the main hand."),
         command("Blood from a Close Shot", "vr_gore_spatter_test shot").help("vr_gore_spatter_test shot: a shot hitting 40 units ahead of your eyes."),
         command("Marks on Your Main Forearm", "vr_gore_spatter_test arm main").help("vr_gore_spatter_test arm main: three bleeding marks on the main forearm alone: none on the other arm (chunky or fine)."),
@@ -5163,6 +5175,10 @@ za::Vector<Item> pageDebugTools()
             .help("vr_decap_test 1: the nearest live monster's health 1, a sword's slash across its neck: it is beheaded "
                   "(decaptest: in the console)."),
         command("Axe Slash at Its Head", "vr_decap_test 9").help("vr_decap_test 9: the same with the axe's head."),
+        command("Axe Swept Through Its Neck", "vr_decap_test 61")
+            .help("vr_decap_test 61: the axe's slash, its blade swept through the neck as a hand's blow finds what it "
+                  "strikes (a knocked-down one's ragdoll too: Knock Down the Nearest first): struck or missed, then "
+                  "beheaded at health 1."),
         command("Stab at Its Head", "vr_decap_test 2").help("vr_decap_test 2: the blade driven along its line: killed, not beheaded."),
         command("Pommel at Its Head", "vr_decap_test 3").help("vr_decap_test 3: the pommel strikes: killed, not beheaded."),
         command("Slow Slash at Its Head", "vr_decap_test 4").help("vr_decap_test 4: half the Least Swing Speed: not beheaded."),
@@ -5880,6 +5896,14 @@ za::Vector<Item> pageDebugTests()
                   "a death knight, an ogre or a fiend can then be thrown (Combat > Holding Enemies, Hurt Below)."),
         command("Heal the Held", "vr_foegrab_hurt 1")
             .help("vr_foegrab_hurt 1: the enemy you hold (else the one nearest you) at its full health again."),
+        command("Throw the Nearest Left", "vr_foegrab_throw_test 0")
+            .help("vr_foegrab_throw_test 0: the monster nearest you thrown to your left as both hands' turn would (its kind "
+                  "and health decide; no hands needed). The console traces its fall: its torso's lean, its feet, its head "
+                  "(Combat > Holding Enemies > Topple)."),
+        command("Throw the Nearest Right", "vr_foegrab_throw_test 1")
+            .help("vr_foegrab_throw_test 1: the same, to your right."),
+        command("Throw the Nearest at You", "vr_foegrab_throw_test 2")
+            .help("vr_foegrab_throw_test 2: the same, towards you."),
         header("Enemy Shoves"),
         command("Shove the Nearest Monster", "impulse 219")
             .help("impulse 219: the nearest monster within 200 units shoved as your two-handed shove does (knocked away, "

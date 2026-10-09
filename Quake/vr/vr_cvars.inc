@@ -2418,6 +2418,9 @@ QVR_CVAR(vr_foegrab_throw_mass_always, "140", CVAR_ARCHIVE) // kg, by mass: this
 QVR_CVAR(vr_foegrab_throw_mass_hurt, "300", CVAR_ARCHIVE)   // kg: this light or lighter only when hurt; heavier never (a vore, an overlord never)
 QVR_CVAR(vr_foegrab_throw_push, "220", CVAR_ARCHIVE)      // units/s: the thrown enemy's launch along the throw (times vr_knockdown_push)
 QVR_CVAR(vr_foegrab_throw_lift, "100", CVAR_ARCHIVE)      // units/s: and up
+QVR_CVAR(vr_foegrab_throw_topple, "120", CVAR_ARCHIVE)    // degrees/s: the thrown ragdoll turned over about its feet towards the throw, a sweep (push and lift shared by height); 0: pushed whole, as a shove's
+QVR_CVAR(vr_foegrab_throw_topple_hold, "0.3", CVAR_ARCHIVE) // s: its feet held on the floor (no sliding) as it topples over them
+QVR_CVAR(vr_foegrab_throw_spin, "0.5", CVAR_ARCHIVE)      // share of the hands' twist of it about the vertical it spins on with (at most 720 degrees/s)
 QVR_CVAR(vr_foegrab_debug, "0", CVAR_NONE)                      // 1: logs holds taken and let go (and why); 2: and each held frame
 QVR_CVAR(vr_push, "0.5", CVAR_ARCHIVE)                    // knockback: all of it (the others scale this)
 QVR_CVAR(vr_hit_push, "1", CVAR_ARCHIVE)                 // heavy weapon hits shove monsters
@@ -2719,6 +2722,15 @@ QVR_CVAR(vr_reload_contact_angle, "35", CVAR_ARCHIVE)
 // grenade goes in lying within vr_reload_front_angle degrees of the barrel, its nose out of the muzzle.
 QVR_CVAR(vr_reload_front, "1", CVAR_ARCHIVE)
 QVR_CVAR(vr_reload_front_angle, "45", CVAR_ARCHIVE)
+// A launcher's round's turn in the hand as it is taken from the ammo pouch (the author's note vrfiringrange_2026-10-08_
+// 22-18-19: the same for every round, easy to load): every round, whatever its Held Object Offsets, its middle in the
+// fist's grip channel, its long axis along the hand's forward, its nose ahead (the multi-grenade's too), then turned about
+// its middle (pitch up, yaw left, roll right; mirrored for the left hand), as the grenade pouch's vr_grenade_pouch_hold_*. 90: standing in the fist, nose up
+// out of its thumb side, butt down out of its little finger's: the thumb turned forward, it lies along the barrel, butt to
+// the muzzle.
+QVR_CVAR(vr_reload_front_hold_pitch, "90", CVAR_ARCHIVE)
+QVR_CVAR(vr_reload_front_hold_yaw, "0", CVAR_ARCHIVE)
+QVR_CVAR(vr_reload_front_hold_roll, "0", CVAR_ARCHIVE)
 // The grenades' size (the author's notes vrfiringrange_2026-10-08_10-34-52 .. 10-37-30: the original models, "around
 // 25% smaller", the same in the hand and in flight): progs/grenade.mdl, the multi-grenade's progs/mervup.mdl and the
 // proximity grenade's progs/proxbomb.mdl drawn at this size wherever they are (the launchers' shots, the pouches' grenades
@@ -2979,6 +2991,8 @@ QVR_CVAR(vr_stealth_marks, "0", CVAR_ARCHIVE)        // a "?" over a monster tur
 QVR_CVAR(vr_stealth_debug, "0", CVAR_NONE)           // 1: state changes printed; 2: each sighting's meter and each noise heard
 QVR_CVAR(vr_monster_lerp_continue, "1", CVAR_ARCHIVE) // a monster's next step drawn on from where it is drawn, not from its last step's end (no snap: the dogs' turns)
 QVR_CVAR(vr_debug_drawn_moves, "", CVAR_NONE)       // a part of model names (progs/dog): those monsters drawn jumping between frames logged ("drawnmove:")
+QVR_CVAR(vr_debug_pose_check, "0", CVAR_NONE)        // 1: monsters drawn collapsed logged ("posecheck:": held squashed between two poses over 0.2 s, a pose out of range, a blend not in 0..1, an uneven scale; vr_posecheck.cpp); 2: every frame of theirs; 3: as 1, and a screenshot at each long squash
+QVR_CVAR(vr_debug_pose_check_model, "", CVAR_NONE)  // ... only models whose names contain this (progs/knight)
 QVR_CVAR(vr_stealth_debug_meters, "0", CVAR_NONE)    // each monster's state and suspicion meter drawn over it (Debug > Tests > Stealth AI)
 QVR_CVAR(vr_stealth_debug_meters_range, "2000", CVAR_NONE) // units from your head within which they are drawn
 QVR_CVAR(vr_stealth_light_force, "-1", CVAR_NONE)    // tests: the players' light level as this (-1: measured)

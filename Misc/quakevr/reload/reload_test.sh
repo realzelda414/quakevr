@@ -187,6 +187,28 @@ check $(echo "$log" | grep -q "broken open by a hit from above" && echo "$log" |
 # chambers it loads (no hit).
 log=$(bash $KIT/run.sh $AGENT -Script "$SSG;$FIRE;$POUCH;$GRIP;$HITDOWN;$REP;$HITUP;$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
 check $(echo "$log" | grep -q "broken open by a hit from above" && echo "$log" | grep -q "closed by a hit from below at .*: 0 loaded" && [ "$(opens "$log")" = 10 ] && echo "$log" | grep "^reload: off hand" | tail -1 | grep -q "clip 0 .*holds a round of 2" && echo 1 || echo 0) "a pouch pair in the hand hits it open from above, shut from below, kept in the hand ($(opens "$log"), want 10)"
+# The same with shells in the hand as with it empty (the author's note vrfiringrange_2026-10-08_22-11-35: with them it took
+# more force and a more precise hit): the same tracked swings, glided (their speed exact), from the same poses after the
+# same visit to the pouch, empty or holding a pouch pair: from below the open gun, from above the shut one, at 2.5 m/s
+# (under Hit Speed) and 3.8 m/s: the same outcome at the same speed. And a pair 4-7 units from the open chambers no
+# longer refuses a hit from below (it did within the port's radius and 4 units more, as far as the hit zone's start).
+SAMEHIT=""
+for row in "close -0.197 -0.74" "open -0.197 -0.80"; do
+    set -- $row
+    for t in 0.3 0.2; do
+        for hold in empty shells; do
+            if [ $1 = open ]; then y0=1.40; d=-24; pre="$SSG;$FIRE"; else y0=0.66; d=24; pre="$SSG;$FIRE;$BY"; fi
+            take="$GRIP"; [ $hold = empty ] && take="wait10"
+            log=$(bash $KIT/run.sh $AGENT -Script "$pre;$POUCH;$take;vr_mock_hand main $2 $y0 $3 0 0 0;wait15;vr_mock_hand_glide $t;vr_mock_hand_to main by 0 0 $d;wait60;vr_mock_hand_glide 0;toggleconsole;quit" -Filter "by a hit" 2>&1)
+            SAMEHIT="$SAMEHIT$(echo "$log" | grep -c "by a hit")$(echo "$log" | grep "by a hit" | sed -n 's/.* at \([0-9.]*\) m\/s.*/@\1/p' | head -1),"
+        done
+        SAMEHIT="$SAMEHIT "
+    done
+done
+check $(echo "$SAMEHIT" | awk '{ ok = NF == 4; for(i = 1; i <= NF; i++) { split($i, a, ","); if(a[1] != a[2]) ok = 0 } print ok }') "the same swings with shells in the hand as empty: the same hits (empty,shells per swing: $SAMEHIT)"
+NEAR=$(for i in $(seq 14); do printf "vr_mock_hand_to main by 0 0 2.5;wait1;"; done)
+log=$(bash $KIT/run.sh $AGENT -Script "$SSG;$FIRE;$BY;$POUCH;$GRIP;vr_mock_hand_to main held 0.7 0;wait3;vr_mock_hand_to main held 0.7 0;wait3;vr_mock_hand_to main by 0 0 -10;wait10;$NEAR wait20;toggleconsole;quit" -Filter "$F7" 2>&1)
+check $(echo "$log" | grep -q "closed by a hit from below.*: 0 loaded" && echo 1 || echo 0) "a pair held near the open chambers (not in them) doesn't refuse a hit from below ($(echo "$log" | grep -o "closed by a hit.*" | head -1))"
 # Shut straight after loading (the author's note of 2026-10-08: a long wait before the flick shut it): a pair loaded
 # while the gun hand turns (150 deg/s, over the old 86 deg/s rest), flicked 0.15 s after it went in, real time: shut
 # (Flick Rest Speed 180, the flick's bit held 0.12 s); a hit from below straight after the load shuts it (Hit After
@@ -240,6 +262,15 @@ check $(echo "$s2" | awk '{ok = 1; for(i = 2; i <= NF; i++) { split($i, a, "/");
 log=$(bash $KIT/run.sh $AGENT -Script "$SSG;vr_reload_ssg_break 0;$FIRE;$REP;$FLICK;$REP;toggleconsole;quit" -Filter "$F7" 2>&1)
 holds=$(echo "$log" | grep "^reload: off hand")
 check $(h 1 | grep -q "weapon 5 clip 0 " && h 2 | grep -q "weapon 5 clip 2 " && ! echo "$log" | grep -q "broken open" && echo 1 || echo 0) "Break Open off: the flick reloads it as before"
+# The blood on the super shotgun stays on it broken open (the author's note vrfiringrange_2026-10-08_22-03-33: its parts
+# read the gun's mask, their taller skin's rows mapped): shot shut, open, shut again, bloody (vr_gore_gear 1) and clean
+# (0: the hand's blood alone); the gun's own blood (the difference) open at least 60% of what it is shut.
+BLOODY="vr_gore_spatter_test propoff;wait2;vr_gore_spatter_test propoff;wait2;vr_gore_spatter_test propoff -1;wait10"
+for gear in 1 0; do
+    bash $KIT/run.sh $AGENT -Clean -Script "${SSG/vr_reload_debug 1/vr_reload_debug 0;vr_gore_gear $gear};$SEE;$FIRE;$BLOODY;screenshot;$BY;screenshot;$FLICK;screenshot;toggleconsole;quit" -Filter "^x" > /dev/null 2>&1
+    [ $gear = 1 ] && b1=$($PY Misc/quakevr/reload/ssg_checks.py blood $(ls -tr $SHOTS/*.png | tail -3)) || b0=$($PY Misc/quakevr/reload/ssg_checks.py blood $(ls -tr $SHOTS/*.png | tail -3))
+done
+check $(echo "$b1 $b0" | awk '{ shut = $2 - $6; open = $3 - $7; again = $4 - $8; print (shut > 300 && open > 0.6 * shut && again > 0.6 * shut) ? 1 : 0 }') "the super shotgun's blood stays on it open and shut again (bloody $b1, clean $b0: shut, open, shut)"
 
 # 8. The author's magazine notes (ROUND21.md, "Immersive reloading: magazines, both grips, the pull"): the gun in the MAIN
 #    hand, grip mode Hold (vr_weapon_grip_mode 0, the default: its grip held all the while), the off hand on it.
